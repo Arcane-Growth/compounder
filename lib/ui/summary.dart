@@ -1,0 +1,93 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../data/store.dart';
+import '../domain/domain.dart';
+import 'widgets.dart';
+
+class SummaryScreen extends StatelessWidget {
+  final int workoutId;
+  const SummaryScreen(this.workoutId, {super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final store = context.watch<AppStore>();
+    final scheme = Theme.of(context).colorScheme;
+
+    return FutureBuilder<WorkoutDetail?>(
+      future: store.workoutDetail(workoutId),
+      builder: (context, snap) {
+        final detail = snap.data;
+        if (detail == null) {
+          return const Scaffold(body: Center(child: Text('Workout not found')));
+        }
+        final volume = detail.volume;
+        final allSets = detail.exercises
+            .expand((e) => e.sets)
+            .map((s) => (weightKg: s.weightKg, reps: s.reps, isWarmup: s.isWarmup))
+            .toList();
+        final working = detail.exercises
+            .expand((e) => e.sets)
+            .where((s) => !s.isWarmup && s.completedAt != null)
+            .map((s) => (s.weightKg, s.reps))
+            .toList();
+        final bestE1rm = working.isEmpty ? 0.0 : formatE1rm(e1rmMaxOf(working));
+        final totals = volumeOf(allSets);
+
+        return Scaffold(
+          appBar: AppBar(title: Text('${detail.workout.name} · summary')),
+          body: ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              ScreenIntro(
+                eyebrow: 'SESSION COMPLETE',
+                title: detail.workout.name,
+                subtitle:
+                    '${formatDateTime(detail.workout.startedAt)} · ${formatDuration(detail.workout.startedAt, detail.workout.endedAt)}',
+              ),
+              const SizedBox(height: 20),
+              Row(children: [
+                Expanded(
+                    child: StatCard(
+                        label: 'Total volume (${store.unit.label})',
+                        value: trimZero(fromKg(totals.totalKg, store.unit)))),
+                const SizedBox(width: 8),
+                Expanded(
+                    child: StatCard(label: 'Best e1RM (kg)', value: trimZero(bestE1rm))),
+              ]),
+              const SizedBox(height: 8),
+              Row(children: [
+                Expanded(child: StatCard(label: 'Working sets', value: '${volume.sets}')),
+                const SizedBox(width: 8),
+                Expanded(child: StatCard(label: 'Total reps', value: '${volume.reps}')),
+              ]),
+              const SizedBox(height: 16),
+              const SectionHeader('Exercises'),
+              ...detail.exercises.map((view) {
+                final v = volumeOf(view.sets
+                    .map((s) => (weightKg: s.weightKg, reps: s.reps, isWarmup: s.isWarmup))
+                    .toList());
+                return CardRow(
+                  icon: Icons.fitness_center,
+                  title: view.exercise.name,
+                  subtitle: '${view.exercise.muscleGroup} · ${v.sets} sets · ${v.reps} reps',
+                  trailing: '${trimZero(fromKg(v.totalKg, store.unit))} ${store.unit.label}',
+                );
+              }),
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(foregroundColor: scheme.error),
+                icon: Icon(Icons.delete_outline, color: scheme.error),
+                label: Text('Delete workout', style: TextStyle(color: scheme.error)),
+                onPressed: () async {
+                  await store.deleteWorkout(workoutId);
+                  if (context.mounted) Navigator.of(context).pop();
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
