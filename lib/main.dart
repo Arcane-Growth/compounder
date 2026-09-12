@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -14,7 +16,9 @@ Future<void> main() async {
   final store = await AppStore.open(prefs);
   await seedExercises(store);
   final notify = NotifyService();
-  await notify.rescheduleDaily(store);
+  // Never block startup on notification scheduling: it can touch the network
+  // to polish the digest text, and the user's endpoint may be unreachable.
+  unawaited(notify.rescheduleDaily(store));
   runApp(
     MultiProvider(
       providers: [

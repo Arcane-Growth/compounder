@@ -348,7 +348,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 24),
           Center(
             child: Text(
-              'Compounder v0.2.0 · MIT · Open source, no tracking, no ads.',
+              'Compounder v0.2.1 · MIT · Open source, no tracking, no ads.',
               style: t.labelMedium?.copyWith(color: scheme.onSurfaceVariant),
             ),
           ),

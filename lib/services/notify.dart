@@ -1,3 +1,5 @@
+import 'dart:async';
+
 
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
@@ -94,12 +96,13 @@ class NotifyService {
     final ai = store.ai;
     if (!ai.configured) return facts;
     try {
-      final polished = await ChatClient(ai.baseUrl, ai.apiKey, ai.model).simple(
+      final polished = await ChatClient(ai.baseUrl, ai.apiKey, ai.model)
+          .simple(
         'You are Compounder\'s personal life coach writing a daily push notification. '
         'Rewrite the user\'s stats as one short, warm, motivating sentence (under 140 chars). '
         'Only use the provided numbers; never invent data.',
         facts,
-      );
+      ).timeout(const Duration(seconds: 15));
       return polished.isEmpty || polished.length > 300 ? facts : polished;
     } catch (_) {
       return facts;
@@ -118,19 +121,46 @@ class NotifyService {
     var when = DateTime(now.year, now.month, now.day,
         store.coachMinutes ~/ 60, store.coachMinutes % 60);
     if (!when.isAfter(now)) when = when.add(const Duration(days: 1));
-    final body = await polishDigest(store);
     final tzWhen = tz.TZDateTime.from(when, tz.local);
-    await _plugin.zonedSchedule(
-      _id,
-      'Compounder coach',
-      body,
-      tzWhen,
-      const NotificationDetails(android: _channel),
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
-      matchDateTimeComponents: DateTimeComponents.time,
-    );
+
+    // Schedule instantly with the on-device digest; then (never blocking the
+    // caller) upgrade the text with an AI polish when the endpoint answers.
+    await _scheduleDigest(tzWhen, NotifyService.buildDigest(store));
+    unawaited(() async {
+      try {
+        final polished = await polishDigest(store);
+        await _scheduleDigest(tzWhen, polished);
+      } catch (_) {}
+    }());
+  }
+
+  Future<void> _scheduleDigest(tz.TZDateTime when, String body) async {
+    try {
+      await _plugin.zonedSchedule(
+        _id,
+        'Compounder coach',
+        body,
+        when,
+        const NotificationDetails(android: _channel),
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+        matchDateTimeComponents: DateTimeComponents.time,
+      );
+    } catch (_) {
+      // Exact alarms can be denied by the OS; fall back to an inexact schedule.
+      await _plugin.zonedSchedule(
+        _id,
+        'Compounder coach',
+        body,
+        when,
+        const NotificationDetails(android: _channel),
+        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+        matchDateTimeComponents: DateTimeComponents.time,
+      );
+    }
   }
 
   Future<void> _showNow(String body) async {
@@ -146,16 +176,31 @@ class NotifyService {
     await init();
     final when = DateTime.fromMillisecondsSinceEpoch(reminder.dueAt);
     if (!when.isAfter(DateTime.now())) return;
-    await _plugin.zonedSchedule(
-      1000 + reminder.id,
-      'Compounder reminder',
-      reminder.text,
-      tz.TZDateTime.from(when, tz.local),
-      const NotificationDetails(android: _channel),
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
-    );
+    final details = const NotificationDetails(android: _channel);
+    final tzWhen = tz.TZDateTime.from(when, tz.local);
+    try {
+      await _plugin.zonedSchedule(
+        1000 + reminder.id,
+        'Compounder reminder',
+        reminder.text,
+        tzWhen,
+        details,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+      );
+    } catch (_) {
+      await _plugin.zonedSchedule(
+        1000 + reminder.id,
+        'Compounder reminder',
+        reminder.text,
+        tzWhen,
+        details,
+        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+      );
+    }
   }
 
   Future<void> cancelReminder(int reminderId) async {
