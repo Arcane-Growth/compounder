@@ -335,3 +335,24 @@ class WorkoutSummary {
     required this.exerciseCount,
   });
 }
+
+class Reminder {
+  final int id;
+  final String text;
+  final int dueAt;
+  final int createdAt;
+
+  const Reminder({
+    required this.id,
+    required this.text,
+    required this.dueAt,
+    required this.createdAt,
+  });
+
+  factory Reminder.fromMap(Map<String, Object?> m) => Reminder(
+        id: m['id'] as int,
+        text: m['text'] as String,
+        dueAt: m['due_at'] as int,
+        createdAt: m['created_at'] as int,
+      );
+}

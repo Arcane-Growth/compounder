@@ -126,4 +126,44 @@ void main() {
       );
     });
   });
+
+  group('finance', () {
+    test('future value compounds principal and contributions', () {
+      // 10k at 0% for 5 years stays 10k
+      expect(
+        Finance.futureValue(
+            principal: 10000, annualPercent: 0, years: 5),
+        closeTo(10000, 0.01),
+      );
+      // 10k at 12% for 1 year = 11268.25 (monthly compounding)
+      expect(
+        Finance.futureValue(principal: 10000, annualPercent: 12, years: 1),
+        closeTo(11268.25, 1),
+      );
+      // 100/month at 6% for 10 years
+      expect(
+        Finance.futureValue(
+            principal: 0,
+            monthlyContribution: 100,
+            annualPercent: 6,
+            years: 10),
+        closeTo(16387.9, 5),
+      );
+    });
+
+    test('payoff months with and without interest', () {
+      expect(Finance.payoffMonths(principal: 1200, monthlyPayment: 100, annualPercent: 0), 12);
+      expect(Finance.payoffMonths(principal: 10000, monthlyPayment: 300, annualPercent: 12),
+          greaterThan(37));
+      // Payment below monthly interest never pays off.
+      expect(Finance.payoffMonths(principal: 10000, monthlyPayment: 100, annualPercent: 12), isNull);
+      expect(Finance.payoffMonths(principal: 0, monthlyPayment: 100, annualPercent: 5), 0);
+    });
+
+    test('investing beats paying a 0% debt at 7% returns', () {
+      final upside = Finance.upsideVsInvest(
+          principal: 5000, debtPercent: 0, investPercent: 7, years: 3);
+      expect(upside, greaterThan(0));
+    });
+  });
 }

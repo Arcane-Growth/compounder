@@ -124,6 +124,58 @@ class Wealth {
   }
 }
 
+// ---------------------------------------------------------------- finance
+
+class Finance {
+  /// Value of [principal] plus a fixed [monthlyContribution] after [years]
+  /// at [annualPercent] percent, compounding monthly (contributions at month end).
+  static double futureValue({
+    required double principal,
+    double monthlyContribution = 0,
+    required double annualPercent,
+    required int years,
+  }) {
+    if (years < 0) throw ArgumentError('years must be >= 0');
+    final r = annualPercent / 100 / 12;
+    final n = years * 12;
+    final growth = math.pow(1 + r, n).toDouble();
+    final contributed = r == 0
+        ? monthlyContribution * n
+        : monthlyContribution * (growth - 1) / r;
+    return principal * growth + contributed;
+  }
+
+  /// Months to pay off [principal] at [annualPercent] with a fixed
+  /// [monthlyPayment]; null when the payment never beats the interest.
+  static int? payoffMonths({
+    required double principal,
+    required double monthlyPayment,
+    required double annualPercent,
+  }) {
+    if (principal <= 0) return 0;
+    if (monthlyPayment <= 0) return null;
+    final r = annualPercent / 100 / 12;
+    if (r == 0) return (principal / monthlyPayment).ceil();
+    if (monthlyPayment <= principal * r) return null;
+    final months = -math.log(1 - principal * r / monthlyPayment) / math.log(1 + r);
+    return months.ceil();
+  }
+
+  /// Extra interest avoided by paying off [principal] early over [years]
+  /// versus letting the same cash grow at [annualPercent] (negative = better
+  /// to invest when returns beat the debt rate).
+  static double upsideVsInvest({
+    required double principal,
+    required double debtPercent,
+    required double investPercent,
+    required int years,
+  }) {
+    final owed = futureValue(principal: principal, annualPercent: debtPercent, years: years);
+    final grown = futureValue(principal: principal, annualPercent: investPercent, years: years);
+    return grown - owed;
+  }
+}
+
 // ---------------------------------------------------------------- mind
 
 class Mind {

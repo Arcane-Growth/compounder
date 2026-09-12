@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../data/models.dart';
+import '../services/notify.dart';
 import '../data/store.dart';
 import '../domain/domain.dart';
 import '../llm/llm.dart';
@@ -391,5 +392,192 @@ class AddSetTool extends CoachTool {
       'weightKg': num1(weightKg),
       'reps': reps,
     });
+  }
+}
+
+class NetWorthHistoryTool extends CoachTool {
+  final AppStore store;
+  NetWorthHistoryTool(this.store);
+
+  @override
+  ToolSpec get spec => const ToolSpec('getNetWorthHistory',
+      'Net worth over time from balance snapshots (recorded whenever an account is updated). '
+      'Returns one point per month: {month: YYYY-MM, netWorth}. No arguments needed.',
+      {'type': 'object'});
+
+  @override
+  Future<String> run(Map<String, Object?> args) async {
+    final rows = await store.snapshots();
+    if (rows.isEmpty) return '{"points":[],"note":"No balance snapshots yet. Update an account to start a history."}';
+    final latest = <int, double>{};
+    final byMonth = <String, double>{};
+    for (final r in rows) {
+      latest[r['account_id'] as int] = (r['balance'] as num).toDouble();
+      final taken = DateTime.fromMillisecondsSinceEpoch(r['taken_at'] as int);
+      final month = '${taken.year}-${taken.month.toString().padLeft(2, '0')}';
+      byMonth[month] = latest.values.fold(0.0, (a, b) => a + b);
+    }
+    final months = byMonth.keys.toList()..sort();
+    return jsonEncode({
+      'points': [for (final m in months) {'month': m, 'netWorth': num1(byMonth[m]!)}],
+    });
+  }
+}
+
+class ProjectUpsideTool extends CoachTool {
+  final AppStore store;
+  ProjectUpsideTool(this.store);
+
+  @override
+  ToolSpec get spec => ToolSpec('projectUpside',
+      "Financial upside math, two modes. mode='grow': future value of principal plus monthly "
+      "contributions at an annual percent (defaults to the user's current net worth as principal). "
+      "mode='payoff': months needed to pay off a principal with a fixed monthly payment. "
+      "All compounding is monthly; money is in the user's account currency.",
+      {
+        'type': 'object',
+        'properties': {
+          'mode': {'type': 'string', 'enum': ['grow', 'payoff']},
+          'principal': {'type': 'number', 'description': 'Amount to project or debt balance. For grow, omit to use current net worth.'},
+          'monthlyContribution': {'type': 'number', 'description': 'grow mode: added monthly'},
+          'monthlyPayment': {'type': 'number', 'description': 'payoff mode: fixed monthly payment'},
+          'annualPercent': {'type': 'number', 'description': 'grow: expected return (default 7). payoff: debt APR'},
+          'years': {'type': 'integer', 'description': 'grow mode horizon (default 10)'},
+        },
+        'required': ['mode'],
+      });
+
+  @override
+  Future<String> run(Map<String, Object?> args) async {
+    final mode = (args['mode'] as String?) ?? 'grow';
+    if (mode == 'payoff') {
+      final principal = (args['principal'] as num?)?.toDouble();
+      final payment = (args['monthlyPayment'] as num?)?.toDouble();
+      if (principal == null || payment == null) {
+        return '{"error":"payoff mode needs principal and monthlyPayment"}';
+      }
+      final months = Finance.payoffMonths(
+          principal: principal, monthlyPayment: payment, annualPercent: (args['annualPercent'] as num?)?.toDouble() ?? 0);
+      if (months == null) {
+        return '{"error":"monthlyPayment never beats the interest"}';
+      }
+      return jsonEncode({
+        'mode': 'payoff',
+        'months': months,
+        'years': double.parse((months / 12).toStringAsFixed(1)),
+        'totalPaid': num1(payment * months),
+        'interestPaid': num1(payment * months - principal),
+      });
+    }
+
+    final entries = store.accounts.map((a) => (a.balance, a.isLiability)).toList();
+    final netWorth = Wealth.netWorth(entries);
+    final principal = (args['principal'] as num?)?.toDouble() ?? netWorth;
+    final contribution = (args['monthlyContribution'] as num?)?.toDouble() ?? 0;
+    final percent = (args['annualPercent'] as num?)?.toDouble() ?? 7;
+    final years = (args['years'] as num?)?.toInt() ?? 10;
+    final future = Finance.futureValue(
+        principal: principal, monthlyContribution: contribution, annualPercent: percent, years: years);
+    final invested = principal + contribution * years * 12;
+    return jsonEncode({
+      'mode': 'grow',
+      'principal': num1(principal),
+      'monthlyContribution': num1(contribution),
+      'annualPercent': percent,
+      'years': years,
+      'futureValue': num1(future),
+      'invested': num1(invested),
+      'growth': num1(future - invested),
+    });
+  }
+}
+
+class SetReminderTool extends CoachTool {
+  final AppStore store;
+  final NotifyService notify;
+
+  SetReminderTool(this.store, this.notify);
+
+  @override
+  ToolSpec get spec => ToolSpec('setReminder',
+      'Set a reminder that fires as a device notification. Provide "text" and either "when" '
+      '(local date-time YYYY-MM-DDTHH:MM) or "inMinutes" from now. Confirm with the user before creating.',
+      {
+        'type': 'object',
+        'properties': {
+          'text': {'type': 'string', 'description': 'What to remind about, e.g. "Restock protein".'},
+          'when': {'type': 'string', 'description': 'YYYY-MM-DDTHH:MM local time'},
+          'inMinutes': {'type': 'integer', 'description': 'Alternatively, minutes from now'},
+        },
+        'required': ['text'],
+      });
+
+  @override
+  Future<String> run(Map<String, Object?> args) async {
+    final text = args['text'] as String?;
+    if (text == null || text.trim().isEmpty) return '{"error":"text is required"}';
+    final inMinutes = (args['inMinutes'] as num?)?.toInt();
+    final when = DateTime.tryParse((args['when'] as String?) ?? '');
+    int dueAt;
+    if (inMinutes != null && inMinutes > 0) {
+      dueAt = DateTime.now().add(Duration(minutes: inMinutes)).millisecondsSinceEpoch;
+    } else if (when != null) {
+      dueAt = when.millisecondsSinceEpoch;
+    } else {
+      return '{"error":"provide when (YYYY-MM-DDTHH:MM) or inMinutes"}';
+    }
+    if (dueAt <= DateTime.now().millisecondsSinceEpoch) {
+      return '{"error":"reminder time is in the past"}';
+    }
+    final reminder = await store.addReminder(text.trim(), dueAt);
+    await notify.scheduleReminder(reminder);
+    return jsonEncode({'ok': true, 'id': reminder.id, 'text': reminder.text, 'due': isoDate(dueAt)});
+  }
+}
+
+class ListRemindersTool extends CoachTool {
+  final AppStore store;
+  ListRemindersTool(this.store);
+
+  @override
+  ToolSpec get spec => const ToolSpec('listReminders',
+      'All pending reminders the app will notify about: {id, text, due}. No arguments.',
+      {'type': 'object'});
+
+  @override
+  Future<String> run(Map<String, Object?> args) async => jsonEncode({
+        'reminders': [
+          for (final r in store.reminders)
+            {'id': r.id, 'text': r.text, 'due': isoDate(r.dueAt)}
+        ],
+      });
+}
+
+class CancelReminderTool extends CoachTool {
+  final AppStore store;
+  final NotifyService notify;
+
+  CancelReminderTool(this.store, this.notify);
+
+  @override
+  ToolSpec get spec => ToolSpec('cancelReminder',
+      'Delete a pending reminder by id (use listReminders first to find it).',
+      {
+        'type': 'object',
+        'properties': {
+          'id': {'type': 'integer'},
+        },
+        'required': ['id'],
+      });
+
+  @override
+  Future<String> run(Map<String, Object?> args) async {
+    final id = (args['id'] as num?)?.toInt();
+    if (id == null) return '{"error":"id is required"}';
+    final exists = store.reminders.any((r) => r.id == id);
+    if (!exists) return '{"error":"no pending reminder with id $id"}';
+    await notify.cancelReminder(id);
+    await store.deleteReminder(id);
+    return jsonEncode({'ok': true, 'cancelled': id});
   }
 }

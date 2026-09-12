@@ -49,13 +49,15 @@ class AppStore extends ChangeNotifier {
   List<MoodEntry> moods = [];
   List<MeditationEntry> meditations = [];
   List<ThoughtRecord> thoughts = [];
+  List<Reminder> reminders = [];
   List<int> usageOrder = [];
 
   AppStore._(this.db, this.prefs);
 
   static Future<AppStore> open(SharedPreferences prefs) async {
     final path = p.join(await getDatabasesPath(), 'compounder.db');
-    final db = await openDatabase(path, version: 1, onCreate: _createSchema);
+    final db = await openDatabase(path, version: 2,
+        onCreate: _createSchema, onUpgrade: _upgradeSchema);
     final store = AppStore._(db, prefs);
     await store.refreshAll();
     return store;
@@ -90,6 +92,25 @@ class AppStore extends ChangeNotifier {
     await db.execute('''CREATE TABLE thought_records(
       id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp INTEGER NOT NULL, situation TEXT NOT NULL,
       thought TEXT NOT NULL, reframe TEXT NOT NULL DEFAULT '')''');
+    await _createV2Tables(db);
+  }
+
+  static Future<void> _createV2Tables(Database db) async {
+    await db.execute('''CREATE TABLE balance_snapshots(
+      id INTEGER PRIMARY KEY AUTOINCREMENT, account_id INTEGER NOT NULL,
+      balance REAL NOT NULL, taken_at INTEGER NOT NULL)''');
+    await db.execute('''CREATE TABLE reminders(
+      id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, due_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL)''');
+  }
+
+  static Future<void> _upgradeSchema(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await _createV2Tables(db);
+      // Give every existing account a starting point so trends have a baseline.
+      await db.execute(
+          'INSERT INTO balance_snapshots(account_id, balance, taken_at) SELECT id, balance, updated_at FROM accounts');
+    }
   }
 
   Future<void> refreshAll() async {
@@ -110,6 +131,9 @@ class AppStore extends ChangeNotifier {
     moods = (await db.query('moods', orderBy: 'timestamp DESC')).map(MoodEntry.fromMap).toList();
     meditations = (await db.query('meditations', orderBy: 'timestamp DESC')).map(MeditationEntry.fromMap).toList();
     thoughts = (await db.query('thought_records', orderBy: 'timestamp DESC')).map(ThoughtRecord.fromMap).toList();
+    reminders = (await db.query('reminders', where: 'due_at > ?', whereArgs: [DateTime.now().millisecondsSinceEpoch], orderBy: 'due_at'))
+        .map(Reminder.fromMap)
+        .toList();
     final usageRows = await db.rawQuery('''
         SELECT we.exercise_id eid, COUNT(*) c FROM workout_exercises we
         JOIN workout_sets s ON s.workout_exercise_id = we.id GROUP BY eid ORDER BY c DESC''');
@@ -397,12 +421,31 @@ class AppStore extends ChangeNotifier {
   // ------------------------------------------------------------ wealth
 
   Future<void> saveAccount(Account a) async {
-    final map = a.toMap()..['updated_at'] = DateTime.now().millisecondsSinceEpoch;
-    if (a.id == 0) {
-      await db.insert('accounts', map);
-    } else {
-      await db.update('accounts', map, where: 'id = ?', whereArgs: [a.id]);
-    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final map = a.toMap()..['updated_at'] = now;
+    final id = a.id == 0
+        ? await db.insert('accounts', map)
+        : (await db.update('accounts', map, where: 'id = ?', whereArgs: [a.id]) > 0 ? a.id : 0);
+    await db.insert('balance_snapshots',
+        {'account_id': id, 'balance': a.balance, 'taken_at': now});
+    await refreshAll();
+  }
+
+  Future<List<Map<String, Object?>>> snapshots() =>
+      db.query('balance_snapshots', orderBy: 'taken_at');
+
+  // ------------------------------------------------------------ reminders
+
+  Future<Reminder> addReminder(String text, int dueAt) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final id = await db.insert('reminders', {'text': text, 'due_at': dueAt, 'created_at': now});
+    final reminder = Reminder(id: id, text: text, dueAt: dueAt, createdAt: now);
+    await refreshAll();
+    return reminder;
+  }
+
+  Future<void> deleteReminder(int id) async {
+    await db.delete('reminders', where: 'id = ?', whereArgs: [id]);
     await refreshAll();
   }
 

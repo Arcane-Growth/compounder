@@ -1,9 +1,15 @@
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:gpt_markdown/gpt_markdown.dart';
 import 'package:provider/provider.dart';
 
 import '../coach/agent.dart';
 import '../coach/tools.dart';
 import '../data/store.dart';
+import '../llm/attachments.dart';
 import '../llm/llm.dart';
 import '../services/notify.dart';
 
@@ -26,57 +32,103 @@ class _CoachTabState extends State<CoachTab> {
   List<CoachMessage> messages = [
     const CoachMessage(
       ChatMessage.roleAssistant,
-      "Hi! I'm your Compounder coach. Ask me about your training, meals, net worth or mood — "
-          "for example \"How is my deadlift progressing?\", \"What's my net worth?\" or "
-          "\"How have I been feeling this week?\"",
+      "Hi! I'm your Compounder coach. Ask me about your training, meals, money or mood — "
+          "or attach a photo, PDF or CSV and I'll read it. Try \"What's my net worth trend?\" "
+          "or \"Remind me to restock protein Friday at 5pm.\"",
     ),
   ];
+  List<Attachment> attachments = [];
   bool thinking = false;
+  bool attaching = false;
   String? activeTool;
   String? error;
   CoachAgent? agent;
 
-  CoachAgent _buildAgent(AppStore store) => CoachAgent(
+  CoachAgent _buildAgent(AppStore store, NotifyService notify) => CoachAgent(
         toolList: [
           NutritionTool(store),
           WorkoutTool(store),
           ExerciseProgressTool(store),
           NetWorthTool(store),
+          NetWorthHistoryTool(store),
+          ProjectUpsideTool(store),
           MindLogTool(store),
           LogMealTool(store),
           LogMoodTool(store),
           StartWorkoutTool(store),
           AddSetTool(store),
+          SetReminderTool(store, notify),
+          ListRemindersTool(store),
+          CancelReminderTool(store, notify),
         ],
         onToolRun: (name) => setState(() => activeTool = name),
       );
 
+  Future<void> _attachFiles() async {
+    setState(() => attaching = true);
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: Attachment.supportedExtensions,
+        allowMultiple: true,
+        withData: true,
+      );
+      if (result == null) return;
+      final picked = <Attachment>[];
+      for (final file in result.files) {
+        final bytes = file.bytes ?? await _readFromPath(file);
+        if (bytes != null) picked.add(Attachment(file.name, bytes));
+      }
+      setState(() => attachments = [...attachments, ...picked]);
+    } finally {
+      if (mounted) setState(() => attaching = false);
+    }
+  }
+
+  Future<Uint8List?> _readFromPath(PlatformFile file) async {
+    final path = file.path;
+    if (path == null) return null;
+    try {
+      return await File(path).readAsBytes();
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _send() async {
     final text = input.text.trim();
-    if (text.isEmpty || thinking) return;
+    if ((text.isEmpty && attachments.isEmpty) || thinking) return;
     final store = context.read<AppStore>();
+    final notify = context.read<NotifyService>();
     final ai = store.ai;
     if (!ai.configured) {
       setState(() => error = 'Set your AI endpoint and key in Settings before using the coach.');
       return;
     }
+    final sentAttachments = attachments;
     input.clear();
+    final display = text + (sentAttachments.isEmpty
+        ? ''
+        : '\n\n[attached: ${sentAttachments.map((a) => a.name).join(', ')}]');
     setState(() {
-      messages = [...messages, CoachMessage(ChatMessage.roleUser, text)];
+      messages = [...messages, CoachMessage(ChatMessage.roleUser, display.trim())];
+      attachments = [];
       thinking = true;
       error = null;
       activeTool = null;
     });
     try {
-      agent ??= _buildAgent(store);
-      final reply = await agent!.reply(ChatClient(ai.baseUrl, ai.apiKey, ai.model), text);
+      final userMessage = await buildUserMessage(text, sentAttachments);
+      agent ??= _buildAgent(store, notify);
+      final reply =
+          await agent!.replyMessage(ChatClient(ai.baseUrl, ai.apiKey, ai.model), userMessage);
       if (!mounted) return;
       setState(() {
         messages = [...messages, CoachMessage(ChatMessage.roleAssistant, reply)];
         thinking = false;
         activeTool = null;
       });
-      context.read<NotifyService>().rescheduleDaily(store);
+      notify.rescheduleDaily(store);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -110,6 +162,11 @@ class _CoachTabState extends State<CoachTab> {
       appBar: AppBar(
         title: const Text('Coach'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.attach_file),
+            tooltip: 'Attach image, CSV or PDF',
+            onPressed: attaching ? null : _attachFiles,
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'New conversation',
@@ -151,8 +208,14 @@ class _CoachTabState extends State<CoachTab> {
                 final isUser = m.role == ChatMessage.roleUser;
                 return _Bubble(
                   isUser: isUser,
-                  child: Text(m.text,
-                      style: t.bodyMedium?.copyWith(color: isUser ? scheme.onPrimary : scheme.onSurface)),
+                  child: isUser
+                      ? Text(m.text,
+                          style: t.bodyMedium?.copyWith(color: scheme.onPrimary))
+                      : GptMarkdown(
+                          m.text,
+                          style: t.bodyMedium?.copyWith(color: scheme.onSurface),
+                          isStreaming: false,
+                        ),
                 );
               },
             ),
@@ -170,6 +233,33 @@ class _CoachTabState extends State<CoachTab> {
                   trailing: TextButton(
                       onPressed: () => setState(() => error = null), child: const Text('Dismiss')),
                 ),
+              ),
+            ),
+          if (attachments.isNotEmpty)
+            SizedBox(
+              height: 44,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                children: [
+                  for (final a in attachments)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: InputChip(
+                        avatar: Icon(
+                          a.isImage
+                              ? Icons.image_outlined
+                              : a.isPdf
+                                  ? Icons.picture_as_pdf_outlined
+                                  : Icons.description_outlined,
+                          size: 18,
+                        ),
+                        label: Text('${a.name} (${(a.bytes.length / 1024).round()} KB)'),
+                        onDeleted: () =>
+                            setState(() => attachments = attachments.where((x) => x != a).toList()),
+                      ),
+                    ),
+                ],
               ),
             ),
           Padding(
@@ -217,7 +307,7 @@ class _Bubble extends StatelessWidget {
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 6),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        constraints: const BoxConstraints(maxWidth: 460),
+        constraints: const BoxConstraints(maxWidth: 520),
         decoration: BoxDecoration(
           color: isUser ? scheme.primary : scheme.surfaceContainerHigh,
           borderRadius: BorderRadius.only(

@@ -4,6 +4,7 @@ import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 
+import '../data/models.dart';
 import '../data/store.dart';
 import '../domain/domain.dart';
 import '../llm/llm.dart';
@@ -139,6 +140,27 @@ class NotifyService {
       body,
       const NotificationDetails(android: _channel),
     );
+  }
+
+  Future<void> scheduleReminder(Reminder reminder) async {
+    await init();
+    final when = DateTime.fromMillisecondsSinceEpoch(reminder.dueAt);
+    if (!when.isAfter(DateTime.now())) return;
+    await _plugin.zonedSchedule(
+      1000 + reminder.id,
+      'Compounder reminder',
+      reminder.text,
+      tz.TZDateTime.from(when, tz.local),
+      const NotificationDetails(android: _channel),
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+    );
+  }
+
+  Future<void> cancelReminder(int reminderId) async {
+    await init();
+    await _plugin.cancel(1000 + reminderId);
   }
 
   Future<void> testNotification(AppStore store) async {

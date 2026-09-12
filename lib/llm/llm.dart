@@ -22,17 +22,29 @@ class ChatMessage {
   final String? toolCallId;
   final List<ToolCall> toolCalls;
 
-  const ChatMessage(this.role, {this.content, this.toolCallId, this.toolCalls = const []});
+  /// Multimodal content parts (text + image_url blocks) for user messages
+  /// carrying attachments. Takes precedence over [content] when present.
+  final List<Map<String, Object?>> parts;
+
+  const ChatMessage(this.role,
+      {this.content, this.toolCallId, this.toolCalls = const [], this.parts = const []});
 
   factory ChatMessage.system(String content) => ChatMessage(roleSystem, content: content);
   factory ChatMessage.user(String content) => ChatMessage(roleUser, content: content);
+  factory ChatMessage.userWithParts(String text, List<String> imageDataUrls) => ChatMessage(
+        roleUser,
+        parts: [
+          if (text.isNotEmpty) {'type': 'text', 'text': text},
+          for (final url in imageDataUrls) {'type': 'image_url', 'image_url': {'url': url}},
+        ],
+      );
   factory ChatMessage.assistant(String? content, [List<ToolCall> calls = const []]) =>
       ChatMessage(roleAssistant, content: content, toolCalls: calls);
   factory ChatMessage.tool(String id, String content) => ChatMessage(roleTool, content: content, toolCallId: id);
 
   Map<String, Object?> toWire() => {
         'role': role,
-        if (content != null) 'content': content,
+        if (parts.isNotEmpty) 'content': parts else if (content != null) 'content': content,
         if (toolCallId != null) 'tool_call_id': toolCallId,
         if (toolCalls.isNotEmpty)
           'tool_calls': toolCalls

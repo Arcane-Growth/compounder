@@ -256,6 +256,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ]),
           ),
           const SizedBox(height: 16),
+          const SectionHeader('Reminders'),
+          const SizedBox(height: 8),
+          Card(
+            color: scheme.surfaceContainerLow,
+            child: Column(children: [
+              if (store.reminders.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(20),
+                  child: Text('No pending reminders. Ask your coach to set one.',
+                      style: TextStyle(fontSize: 13)),
+                )
+              else
+                for (final r in store.reminders)
+                  ListTile(
+                    leading: const Icon(Icons.notifications_outlined),
+                    title: Text(r.text),
+                    subtitle: Text(formatDateTime(r.dueAt)),
+                    trailing: IconButton(
+                      icon: Icon(Icons.delete_outline, color: scheme.outline),
+                      onPressed: () async {
+                        await notify.cancelReminder(r.id);
+                        await store.deleteReminder(r.id);
+                      },
+                    ),
+                  ),
+            ]),
+          ),
+          const SizedBox(height: 16),
           const SectionHeader('Your data'),
           const SizedBox(height: 8),
           Card(
@@ -320,7 +348,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 24),
           Center(
             child: Text(
-              'Compounder v0.1.0 · MIT · Open source, no tracking, no ads.',
+              'Compounder v0.2.0 · MIT · Open source, no tracking, no ads.',
               style: t.labelMedium?.copyWith(color: scheme.onSurfaceVariant),
             ),
           ),

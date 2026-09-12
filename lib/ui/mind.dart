@@ -1,10 +1,9 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../data/store.dart';
 import '../domain/domain.dart';
+import 'breathing.dart';
 import 'widgets.dart';
 
 class MindTab extends StatefulWidget {
@@ -28,42 +27,16 @@ class _MindTabState extends State<MindTab> {
   final moodNote = TextEditingController();
 
   int _minutes = 10;
-  int _secondsLeft = 0;
-  bool _running = false;
-  Timer? _timer;
 
   @override
   void dispose() {
-    _timer?.cancel();
     moodNote.dispose();
     super.dispose();
   }
 
   void _beginSession() {
-    setState(() {
-      _secondsLeft = _minutes * 60;
-      _running = true;
-    });
-    _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!mounted) return;
-      setState(() {
-        _secondsLeft--;
-        if (_secondsLeft <= 0) {
-          timer.cancel();
-          _running = false;
-          context.read<AppStore>().logMeditation(_minutes);
-        }
-      });
-    });
-  }
-
-  void _cancelSession() {
-    _timer?.cancel();
-    setState(() {
-      _running = false;
-      _secondsLeft = 0;
-    });
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => BreathingSession(minutes: _minutes)));
   }
 
   @override
@@ -174,47 +147,33 @@ class _MindTabState extends State<MindTab> {
                   Expanded(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Text('Sit with it', style: t.titleMedium),
-                      Text('Pick a length and breathe. The session is logged when the timer completes.',
+                      Text('Pick a length and follow the bubble: breathe in, hold, breathe out. '
+                          'Finished sessions are logged.',
                           style: t.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
                     ]),
                   ),
                 ]),
                 const SizedBox(height: 14),
-                if (!_running)
-                  Row(children: [
-                    for (final m in [3, 5, 10, 20])
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 3),
-                          child: ChoiceChip(
-                            label: Text('$m min'),
-                            selected: _minutes == m,
-                            onSelected: (_) => setState(() => _minutes = m),
-                          ),
+                Row(children: [
+                  for (final m in [3, 5, 10, 20])
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 3),
+                        child: ChoiceChip(
+                          label: Text('$m min'),
+                          selected: _minutes == m,
+                          onSelected: (_) => setState(() => _minutes = m),
                         ),
                       ),
-                  ]),
-                const SizedBox(height: 10),
-                if (_running) ...[
-                  Center(
-                    child: Text(
-                      '${_secondsLeft ~/ 60}:${(_secondsLeft % 60).toString().padLeft(2, '0')}',
-                      style: t.displayMedium?.copyWith(color: scheme.primary),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  OutlinedButton(
-                    onPressed: _cancelSession,
-                    style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
-                    child: const Text('Cancel session'),
-                  ),
-                ] else
-                  FilledButton.icon(
-                    onPressed: _beginSession,
-                    icon: const Icon(Icons.self_improvement),
-                    label: Text('Begin $_minutes-minute session'),
-                  ),
-                if (store.meditations.isNotEmpty && !_running) ...[
+                ]),
+                const SizedBox(height: 10),
+                FilledButton.icon(
+                  onPressed: _beginSession,
+                  icon: const Icon(Icons.self_improvement),
+                  label: Text('Begin guided $_minutes-minute session'),
+                ),
+                if (store.meditations.isNotEmpty) ...[
                   const SizedBox(height: 10),
                   Text(
                     'Last session: ${store.meditations.first.minutes} min · '
