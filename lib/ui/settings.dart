@@ -5,8 +5,11 @@ import 'package:share_plus/share_plus.dart';
 
 import '../data/store.dart';
 import '../domain/domain.dart';
+import '../health/categories.dart';
+import '../health/service.dart';
 import '../services/backup.dart';
 import '../services/notify.dart';
+import 'health.dart';
 import 'widgets.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -25,11 +28,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController goalCarbs;
   late final TextEditingController goalFat;
   bool showApiKey = false;
+  late Set<HealthCategory> healthCategories;
+  late bool healthAutoSync;
+  late bool healthHistory;
+  HealthAvailability? healthAvailability;
+  bool healthBusy = false;
 
   @override
   void initState() {
     super.initState();
     final store = context.read<AppStore>();
+    final health = context.read<HealthService>();
+    healthCategories = {...health.categories};
+    healthAutoSync = health.autoSync;
+    healthHistory = health.historyRequested;
+    health.availability().then((value) {
+      if (mounted) setState(() => healthAvailability = value);
+    });
     final ai = store.ai;
     final goals = store.goals;
     baseUrl = TextEditingController(text: ai.baseUrl);
@@ -43,7 +58,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   void dispose() {
-    for (final c in [baseUrl, apiKey, model, goalCal, goalProtein, goalCarbs, goalFat]) {
+    for (final c in [
+      baseUrl,
+      apiKey,
+      model,
+      goalCal,
+      goalProtein,
+      goalCarbs,
+      goalFat
+    ]) {
       c.dispose();
     }
     super.dispose();
@@ -52,12 +75,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final store = context.watch<AppStore>();
+    final health = context.watch<HealthService>();
     final notify = context.read<NotifyService>();
     final scheme = Theme.of(context).colorScheme;
     final t = Theme.of(context).textTheme;
 
-    void snack(String text) =>
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    void snack(String text) => ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(text)));
 
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
@@ -77,13 +101,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Padding(
               padding: const EdgeInsets.all(20),
               child: Column(children: [
-                Text('Your connection powers meal photo analysis and the coach. '
+                Text(
+                    'Your connection powers meal photo analysis and the coach. '
                     'Data is sent only to this endpoint — never anywhere else.',
-                    style: t.bodyMedium?.copyWith(color: scheme.onSurfaceVariant)),
+                    style:
+                        t.bodyMedium?.copyWith(color: scheme.onSurfaceVariant)),
                 const SizedBox(height: 12),
                 TextField(
                     controller: baseUrl,
-                    decoration: const InputDecoration(labelText: 'Base URL', hintText: 'http://…/v1')),
+                    decoration: const InputDecoration(
+                        labelText: 'Base URL', hintText: 'http://…/v1')),
                 const SizedBox(height: 12),
                 TextField(
                   controller: apiKey,
@@ -91,7 +118,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   decoration: InputDecoration(
                     labelText: 'API token',
                     suffixIcon: IconButton(
-                      icon: Icon(showApiKey ? Icons.visibility_off : Icons.visibility),
+                      icon: Icon(
+                          showApiKey ? Icons.visibility_off : Icons.visibility),
                       onPressed: () => setState(() => showApiKey = !showApiKey),
                     ),
                   ),
@@ -100,7 +128,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 TextField(
                     controller: model,
                     decoration: const InputDecoration(
-                        labelText: 'Model', hintText: 'any vision + tool-calling model')),
+                        labelText: 'Model',
+                        hintText: 'any vision + tool-calling model')),
                 const SizedBox(height: 12),
                 FilledButton(
                   onPressed: () async {
@@ -129,25 +158,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       child: TextField(
                           controller: goalCal,
                           keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(labelText: 'kcal'))),
+                          decoration:
+                              const InputDecoration(labelText: 'kcal'))),
                   const SizedBox(width: 8),
                   Expanded(
                       child: TextField(
                           controller: goalProtein,
                           keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(labelText: 'Protein g'))),
+                          decoration:
+                              const InputDecoration(labelText: 'Protein g'))),
                   const SizedBox(width: 8),
                   Expanded(
                       child: TextField(
                           controller: goalCarbs,
                           keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(labelText: 'Carbs g'))),
+                          decoration:
+                              const InputDecoration(labelText: 'Carbs g'))),
                   const SizedBox(width: 8),
                   Expanded(
                       child: TextField(
                           controller: goalFat,
                           keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(labelText: 'Fat g'))),
+                          decoration:
+                              const InputDecoration(labelText: 'Fat g'))),
                 ]),
                 const SizedBox(height: 12),
                 FilledButton(
@@ -193,7 +226,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 16),
                 Row(children: [
                   Expanded(
-                      child: Text('Default rest between sets: ${store.restSeconds}s',
+                      child: Text(
+                          'Default rest between sets: ${store.restSeconds}s',
                           style: t.bodyMedium)),
                   SizedBox(
                     width: 180,
@@ -207,6 +241,278 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ]),
               ]),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const SectionHeader('Health data (Android)'),
+          const SizedBox(height: 8),
+          Card(
+            color: scheme.surfaceContainerLow,
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Read sleep, heart rate, activity, body and vitals from Google Health Connect. '
+                      'The data stays in the local database; only the summaries you ask the coach about '
+                      'are sent to your AI endpoint.',
+                      style: t.bodyMedium
+                          ?.copyWith(color: scheme.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      switch (healthAvailability) {
+                        null => 'Checking Health Connect…',
+                        HealthAvailability.unsupported =>
+                          'Health Connect is not available on this device.',
+                        HealthAvailability.installRequired =>
+                          'Health Connect needs to be installed or updated.',
+                        HealthAvailability.available =>
+                          'Health Connect is available.',
+                      },
+                      style: t.bodySmall,
+                    ),
+                    if (healthAvailability ==
+                        HealthAvailability.installRequired) ...[
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                        onPressed: healthBusy
+                            ? null
+                            : () async {
+                                await health.installHealthConnect();
+                                final value = await health.availability();
+                                if (mounted) {
+                                  setState(() => healthAvailability = value);
+                                }
+                              },
+                        icon: const Icon(Icons.download),
+                        label: const Text('Install Health Connect'),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    for (final category in HealthCategory.values)
+                      CheckboxListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        value: healthCategories.contains(category),
+                        title: Text(category.label),
+                        subtitle: Text(category.description),
+                        onChanged: healthBusy
+                            ? null
+                            : (value) async {
+                                setState(() {
+                                  if (value == true) {
+                                    healthCategories.add(category);
+                                  } else {
+                                    healthCategories.remove(category);
+                                  }
+                                });
+                                await health.saveCategories(healthCategories);
+                              },
+                      ),
+                    SwitchListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Import full history'),
+                      subtitle: const Text(
+                          'Ask Health Connect for data older than 30 days.'),
+                      value: healthHistory,
+                      onChanged: healthBusy
+                          ? null
+                          : (value) async {
+                              setState(() => healthHistory = value);
+                              if (value && health.enabled) {
+                                try {
+                                  await health.requestHistoryAccess();
+                                  if (context.mounted) {
+                                    snack('Full history access granted');
+                                  }
+                                } catch (e) {
+                                  if (mounted) {
+                                    setState(() => healthHistory = false);
+                                  }
+                                  await health.setHistoryRequested(false);
+                                  if (context.mounted) snack(e.toString());
+                                }
+                              } else if (!value) {
+                                await health.setHistoryRequested(false);
+                              }
+                            },
+                    ),
+                    SwitchListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Sync when the app opens'),
+                      subtitle: const Text(
+                          'No background worker; syncs on launch/resume and on demand.'),
+                      value: healthAutoSync,
+                      onChanged: healthBusy
+                          ? null
+                          : (value) async {
+                              setState(() => healthAutoSync = value);
+                              await health.setAutoSync(value);
+                            },
+                    ),
+                    const SizedBox(height: 8),
+                    if (!health.enabled)
+                      FilledButton.icon(
+                        onPressed: healthBusy ||
+                                healthAvailability !=
+                                    HealthAvailability.available
+                            ? null
+                            : () async {
+                                setState(() => healthBusy = true);
+                                try {
+                                  await health.connect(
+                                    categories: healthCategories,
+                                    requestHistory: healthHistory,
+                                  );
+                                  if (context.mounted) {
+                                    snack('Health Connect connected');
+                                  }
+                                } catch (e) {
+                                  if (context.mounted) snack(e.toString());
+                                } finally {
+                                  if (mounted) {
+                                    setState(() => healthBusy = false);
+                                  }
+                                }
+                              },
+                        icon: const Icon(Icons.link),
+                        label: const Text('Connect Health Connect'),
+                      )
+                    else ...[
+                      FutureBuilder<DateTime?>(
+                        future: health.repository.lastSync(),
+                        builder: (context, snapshot) => Text(
+                          snapshot.data == null
+                              ? 'Not synced yet.'
+                              : 'Last sync: ${formatDateTime(snapshot.data!.millisecondsSinceEpoch)}',
+                          style: t.bodySmall,
+                        ),
+                      ),
+                      if (health.lastError != null) ...[
+                        const SizedBox(height: 4),
+                        Text(health.lastError!,
+                            style: t.bodySmall?.copyWith(color: scheme.error)),
+                      ],
+                      const SizedBox(height: 8),
+                      Wrap(spacing: 8, runSpacing: 8, children: [
+                        FilledButton.icon(
+                          onPressed: healthBusy || health.syncing
+                              ? null
+                              : () async {
+                                  setState(() => healthBusy = true);
+                                  try {
+                                    final result = await health.syncNow();
+                                    if (context.mounted) {
+                                      snack(result.ok
+                                          ? 'Synced ${result.records} health records'
+                                          : 'Synced with ${result.errors.length} error(s)');
+                                    }
+                                  } catch (e) {
+                                    if (context.mounted) snack(e.toString());
+                                  } finally {
+                                    if (mounted) {
+                                      setState(() => healthBusy = false);
+                                    }
+                                  }
+                                },
+                          icon: const Icon(Icons.sync),
+                          label: const Text('Sync now'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: healthBusy
+                              ? null
+                              : () async {
+                                  setState(() => healthBusy = true);
+                                  try {
+                                    await health.connect(
+                                      categories: healthCategories,
+                                      requestHistory: healthHistory,
+                                    );
+                                    if (context.mounted) {
+                                      snack('Health permissions updated');
+                                    }
+                                  } catch (e) {
+                                    if (context.mounted) snack(e.toString());
+                                  } finally {
+                                    if (mounted) {
+                                      setState(() => healthBusy = false);
+                                    }
+                                  }
+                                },
+                          icon: const Icon(Icons.lock_open),
+                          label: const Text('Update permissions'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (_) => const HealthDataScreen())),
+                          icon: const Icon(Icons.monitor_heart),
+                          label: const Text('View data'),
+                        ),
+                      ]),
+                      const SizedBox(height: 8),
+                      Row(children: [
+                        TextButton.icon(
+                          onPressed: healthBusy
+                              ? null
+                              : () async {
+                                  await health.disconnect();
+                                  if (context.mounted) {
+                                    snack('Health Connect disconnected');
+                                  }
+                                },
+                          icon: const Icon(Icons.link_off),
+                          label: const Text('Disconnect'),
+                        ),
+                        TextButton.icon(
+                          onPressed: healthBusy
+                              ? null
+                              : () async {
+                                  final ok = await showDialog<bool>(
+                                    context: context,
+                                    builder: (context) => AlertDialog(
+                                      title: const Text(
+                                          'Delete imported health data?'),
+                                      content: const Text(
+                                          'This removes every Health Connect record imported into Compounder. '
+                                          'Your Health Connect data is not affected.'),
+                                      actions: [
+                                        TextButton(
+                                            onPressed: () =>
+                                                Navigator.pop(context, false),
+                                            child: const Text('Cancel')),
+                                        FilledButton(
+                                            onPressed: () =>
+                                                Navigator.pop(context, true),
+                                            child: const Text('Delete')),
+                                      ],
+                                    ),
+                                  );
+                                  if (ok == true) {
+                                    await health.deleteAllData();
+                                    if (context.mounted) {
+                                      snack('Imported health data deleted');
+                                    }
+                                  }
+                                },
+                          icon: const Icon(Icons.delete_outline),
+                          label: const Text('Delete imported data'),
+                        ),
+                      ]),
+                    ],
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                              builder: (_) => const HealthRationaleScreen())),
+                      icon: const Icon(Icons.privacy_tip_outlined),
+                      label: const Text('How health data is used'),
+                    ),
+                  ]),
             ),
           ),
           const SizedBox(height: 16),
@@ -234,10 +540,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   final picked = await showTimePicker(
                     context: context,
                     initialTime: TimeOfDay(
-                        hour: store.coachMinutes ~/ 60, minute: store.coachMinutes % 60),
+                        hour: store.coachMinutes ~/ 60,
+                        minute: store.coachMinutes % 60),
                   );
                   if (picked != null) {
-                    await store.setCoach(minutes: picked.hour * 60 + picked.minute);
+                    await store.setCoach(
+                        minutes: picked.hour * 60 + picked.minute);
                     await notify.rescheduleDaily(store);
                   }
                 },
@@ -245,7 +553,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                 child: OutlinedButton.icon(
-                  icon: const Icon(Icons.notifications_active_outlined, size: 18),
+                  icon:
+                      const Icon(Icons.notifications_active_outlined, size: 18),
                   label: const Text('Send test notification'),
                   onPressed: () async {
                     await notify.testNotification(store);
@@ -264,7 +573,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               if (store.reminders.isEmpty)
                 const Padding(
                   padding: EdgeInsets.all(20),
-                  child: Text('No pending reminders. Ask your coach to set one.',
+                  child: Text(
+                      'No pending reminders. Ask your coach to set one.',
                       style: TextStyle(fontSize: 13)),
                 )
               else
@@ -291,8 +601,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Padding(
               padding: const EdgeInsets.all(20),
               child: Column(children: [
-                Text('Everything lives on this device. Export one JSON backup, or restore from one.',
-                    style: t.bodyMedium?.copyWith(color: scheme.onSurfaceVariant)),
+                Text(
+                    'Everything lives on this device. Export one JSON backup, or restore from one.',
+                    style:
+                        t.bodyMedium?.copyWith(color: scheme.onSurfaceVariant)),
                 const SizedBox(height: 12),
                 FilledButton.icon(
                   icon: const Icon(Icons.ios_share),
@@ -309,12 +621,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const SizedBox(height: 8),
                 OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+                  style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(48)),
                   icon: const Icon(Icons.file_upload_outlined),
                   label: const Text('Import backup (replaces local data)'),
                   onPressed: () async {
-                    final picked = await FilePicker.platform
-                        .pickFiles(type: FileType.custom, allowedExtensions: ['json']);
+                    final picked = await FilePicker.platform.pickFiles(
+                        type: FileType.custom, allowedExtensions: ['json']);
                     final path = picked?.files.single.path;
                     if (path == null || !context.mounted) return;
                     final ok = await showDialog<bool>(
@@ -348,7 +661,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 24),
           Center(
             child: Text(
-              'Compounder v0.2.1 · MIT · Open source, no tracking, no ads.',
+              'Compounder v0.3.0 · MIT · Open source, no tracking, no ads.',
               style: t.labelMedium?.copyWith(color: scheme.onSurfaceVariant),
             ),
           ),

@@ -5,6 +5,8 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'data/store.dart';
+import 'health/repository.dart';
+import 'health/service.dart';
 import 'seeder.dart';
 import 'services/notify.dart';
 import 'ui/shell.dart';
@@ -16,13 +18,17 @@ Future<void> main() async {
   final store = await AppStore.open(prefs);
   await seedExercises(store);
   final notify = NotifyService();
-  // Never block startup on notification scheduling: it can touch the network
-  // to polish the digest text, and the user's endpoint may be unreachable.
+  final healthRepo = HealthRepository(store.db);
+  final health = HealthService(store: store, repository: healthRepo);
+  // Never block startup on notification scheduling or health sync: both can
+  // touch slow platform services, and the AI endpoint may be unreachable.
   unawaited(notify.rescheduleDaily(store));
+  unawaited(health.syncIfDue());
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: store),
+        ChangeNotifierProvider.value(value: health),
         Provider.value(value: notify),
       ],
       child: const CompounderApp(),

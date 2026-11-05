@@ -23,6 +23,12 @@ TOOLS
 - getNetWorthHistory(): monthly net worth trend from balance snapshots.
 - projectUpside(mode grow|payoff, ...): future-value projections and debt payoff math.
 - getMindLog(start, end): mood check-ins, meditation minutes and thought records.
+- getHealthOverview(start, end): Health Connect summary — sleep, heart rate, activity, body and vitals.
+- getSleep(start, end): per-night sleep stages, bedtime, wake time and efficiency.
+- getHeartRate(start, end, includeHourly): daily heart rate, resting HR, HRV and optional hourly averages.
+- getHealthMetric(metric, start, end): any imported Health Connect metric (steps, weight, SpO2, glucose, etc.).
+- getHealthWorkouts(start, end): exercise sessions imported from Health Connect.
+- getHealthSyncStatus(): whether Health Connect is connected, last sync and available metrics.
 - setReminder(text, when|inMinutes) / listReminders() / cancelReminder(id): device reminders.
 - logMeal(dish, calories, protein, carbs, fat, date): add a nutrition entry (date YYYY-MM-DD).
 - logMood(mood, note, date): log a mood check-in (mood is 1 rough .. 5 great).
@@ -38,6 +44,10 @@ RULES
 - Always fetch real data before giving numbers or advice; never invent figures.
 - Dates are YYYY-MM-DD. If no range is given, use a sensible default (today or the last 7 days).
 - Weights are stored and reported in kg. Note the unit when quoting them.
+- Health Connect data is imported from the user's Android device. For recovery, sleep, training readiness
+  and heart questions, fetch health tools first. Sleep is reported in minutes/hours, heart rate in bpm,
+  distance in metres and energy in kcal. If health data is missing or stale, say so and suggest
+  connecting or syncing Health Connect in Settings; never invent health figures.
 - Be concise and concrete: summarize totals and trends, and give one actionable suggestion with reasons.
 - Before any write tool (logMeal, logMood, startWorkout, addSet, setReminder), first briefly tell
   the user what you're about to do and confirm with them before calling it. After writing, confirm the change.
@@ -53,7 +63,10 @@ RULES
   final String systemPrompt;
   final List<ChatMessage> _history = [];
 
-  CoachAgent({required List<CoachTool> toolList, this.onToolRun, this.systemPrompt = defaultSystemPrompt})
+  CoachAgent(
+      {required List<CoachTool> toolList,
+      this.onToolRun,
+      this.systemPrompt = defaultSystemPrompt})
       : tools = {for (final t in toolList) t.spec.name: t};
 
   void reset() => _history.clear();
@@ -69,7 +82,9 @@ RULES
       );
 
       if (result.toolCalls.isEmpty) {
-        final text = (result.content?.trim().isNotEmpty ?? false) ? result.content! : 'Done.';
+        final text = (result.content?.trim().isNotEmpty ?? false)
+            ? result.content!
+            : 'Done.';
         _history.add(ChatMessage.assistant(text));
         _trim();
         return text;
@@ -83,7 +98,8 @@ RULES
       _trim();
     }
 
-    const fallback = 'I hit the step limit while working on that. Could you make the request a bit more specific?';
+    const fallback =
+        'I hit the step limit while working on that. Could you make the request a bit more specific?';
     _history.add(ChatMessage.assistant(fallback));
     return fallback;
   }

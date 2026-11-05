@@ -16,6 +16,10 @@ your device, and you can export/import a single backup JSON file whenever you wa
   picker, custom exercises, e1RM (Epley) progress charts, workout summaries and history.
 - **Nutrition tracker** — snap a meal photo, your vision-capable AI endpoint drafts the macros,
   you review and edit before anything is saved. Daily goal dashboard, meal history and gallery.
+- **Google Health Connect (Android)** — optional, read-only import of sleep, heart rate, HRV,
+  steps, distance, calories, workouts, body measurements and vitals. The coach can query all of it
+  through dedicated health tools. Health Connect data stays on-device; full-history access and
+  per-category permissions are user-controlled.
 
 ### Wealth
 - Track accounts, assets and debts (Cash, Bank, Brokerage, Retirement, Crypto, Property, Debt).
@@ -40,7 +44,11 @@ your device, and you can export/import a single backup JSON file whenever you wa
 
 - **No trackers, analytics or ads.** Network access exists solely to reach the AI endpoint *you*
   configure — meal photos and conversation data go only there.
-- **Local-only storage** (SQLite via `sqflite` + `shared_preferences`).
+- **Local-only storage** (SQLite via `sqflite` + `shared_preferences`). Health Connect is read
+  on-device with Google's local API; no Google account or cloud sync is involved.
+- **Health data is opt-in.** When you ask the coach about sleep, heart rate or recovery, summarized
+  health data is sent to your configured AI endpoint. Raw records stay in the local database and
+  can be deleted from Settings.
 - MIT-licensed, auditable Flutter source: the entire network surface is `lib/llm/llm.dart`.
 
 ## Getting started
@@ -94,6 +102,7 @@ lib/
 ├── data/                models + AppStore (sqflite + shared_preferences)
 ├── llm/                 BYO-AI chat, tool specs, vision meal drafts
 ├── coach/               agent tool loop + health/wealth/mind tools
+├── health/              Health Connect categories, sync, analysis and local repository
 ├── services/            backup (JSON) + daily coach notifications
 └── ui/                  shell (5 tabs: Health, Macros, Wealth, Mind, Coach)
                          home, workout, picker, summary, history, progress,

@@ -64,7 +64,7 @@ class AppStore extends ChangeNotifier {
   static Future<AppStore> open(SharedPreferences prefs) async {
     final path = p.join(await getDatabasesPath(), 'compounder.db');
     final db = await openDatabase(path,
-        version: 2, onCreate: _createSchema, onUpgrade: _upgradeSchema);
+        version: 3, onCreate: _createSchema, onUpgrade: _upgradeSchema);
     final store = AppStore._(db, prefs);
     await store.refreshAll();
     return store;
@@ -100,6 +100,7 @@ class AppStore extends ChangeNotifier {
       id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp INTEGER NOT NULL, situation TEXT NOT NULL,
       thought TEXT NOT NULL, reframe TEXT NOT NULL DEFAULT '')''');
     await _createV2Tables(db);
+    await _createV3Tables(db);
   }
 
   static Future<void> _createV2Tables(Database db) async {
@@ -119,6 +120,45 @@ class AppStore extends ChangeNotifier {
       await db.execute(
           'INSERT INTO balance_snapshots(account_id, balance, taken_at) SELECT id, balance, updated_at FROM accounts');
     }
+    if (oldVersion < 3) {
+      await _createV3Tables(db);
+    }
+  }
+
+  static Future<void> _createV3Tables(Database db) async {
+    await db.execute('''CREATE TABLE IF NOT EXISTS health_records(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      uuid TEXT NOT NULL UNIQUE,
+      type TEXT NOT NULL,
+      value REAL,
+      unit TEXT NOT NULL DEFAULT '',
+      date_from INTEGER NOT NULL,
+      date_to INTEGER NOT NULL,
+      source_id TEXT NOT NULL DEFAULT '',
+      source_name TEXT NOT NULL DEFAULT '',
+      platform TEXT NOT NULL DEFAULT '',
+      recording_method INTEGER NOT NULL DEFAULT 0,
+      raw_json TEXT NOT NULL DEFAULT '',
+      synced_at INTEGER NOT NULL)''');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_health_records_type_date ON health_records(type, date_from)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_health_records_date ON health_records(date_from)');
+    await db.execute('''CREATE TABLE IF NOT EXISTS health_daily(
+      day TEXT NOT NULL,
+      metric TEXT NOT NULL,
+      count INTEGER NOT NULL DEFAULT 0,
+      sum REAL NOT NULL DEFAULT 0,
+      avg REAL,
+      min REAL,
+      max REAL,
+      detail_json TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY(day, metric))''');
+    await db.execute('''CREATE TABLE IF NOT EXISTS health_sync_state(
+      metric TEXT PRIMARY KEY,
+      last_synced_at INTEGER,
+      last_success_at INTEGER,
+      last_error TEXT)''');
   }
 
   Future<void> refreshAll() async {

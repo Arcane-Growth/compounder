@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../health/service.dart';
 
 import 'coach.dart';
 import 'home.dart';
@@ -13,8 +16,30 @@ class ShellScreen extends StatefulWidget {
   State<ShellScreen> createState() => _ShellScreenState();
 }
 
-class _ShellScreenState extends State<ShellScreen> {
+class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
   int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) context.read<HealthService>().syncIfDue();
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      context.read<HealthService>().syncIfDue();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -33,11 +58,13 @@ class _ShellScreenState extends State<ShellScreen> {
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.fitness_center), label: 'Health'),
+          NavigationDestination(
+              icon: Icon(Icons.fitness_center), label: 'Health'),
           NavigationDestination(icon: Icon(Icons.restaurant), label: 'Macros'),
           NavigationDestination(icon: Icon(Icons.insights), label: 'Wealth'),
           NavigationDestination(icon: Icon(Icons.psychology), label: 'Mind'),
-          NavigationDestination(icon: Icon(Icons.support_agent), label: 'Coach'),
+          NavigationDestination(
+              icon: Icon(Icons.support_agent), label: 'Coach'),
         ],
       ),
     );

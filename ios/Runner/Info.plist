@@ -26,6 +26,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Compounder reads your health data to give your coach better sleep, recovery and training insights.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Compounder can write workouts and meals back to Apple Health (optional; read-only import is used today).</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

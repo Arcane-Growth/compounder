@@ -7,8 +7,10 @@ import 'package:gpt_markdown/gpt_markdown.dart';
 import 'package:provider/provider.dart';
 
 import '../coach/agent.dart';
+import '../coach/health_tools.dart';
 import '../coach/tools.dart';
 import '../data/store.dart';
+import '../health/service.dart';
 import '../llm/attachments.dart';
 import '../llm/llm.dart';
 import '../services/notify.dart';
@@ -32,9 +34,9 @@ class _CoachTabState extends State<CoachTab> {
   List<CoachMessage> messages = [
     const CoachMessage(
       ChatMessage.roleAssistant,
-      "Hi! I'm your Compounder coach. Ask me about your training, meals, money or mood — "
-          "or attach a photo, PDF or CSV and I'll read it. Try \"What's my net worth trend?\" "
-          "or \"Remind me to restock protein Friday at 5pm.\"",
+      "Hi! I'm your Compounder coach. Ask me about your training, meals, money, mood, sleep or heart data — "
+      "or attach a photo, PDF or CSV and I'll read it. Try \"How did I sleep this week?\" "
+      "or \"What's my net worth trend?\"",
     ),
   ];
   List<Attachment> attachments = [];
@@ -44,8 +46,16 @@ class _CoachTabState extends State<CoachTab> {
   String? error;
   CoachAgent? agent;
 
-  CoachAgent _buildAgent(AppStore store, NotifyService notify) => CoachAgent(
+  CoachAgent _buildAgent(
+          AppStore store, NotifyService notify, HealthService health) =>
+      CoachAgent(
         toolList: [
+          HealthOverviewTool(health.repository, health),
+          SleepTool(health.repository),
+          HeartRateTool(health.repository),
+          HealthMetricTool(health.repository),
+          HealthWorkoutsTool(health.repository),
+          HealthSyncStatusTool(health),
           NutritionTool(store),
           WorkoutTool(store),
           ExerciseProgressTool(store),
@@ -100,18 +110,24 @@ class _CoachTabState extends State<CoachTab> {
     if ((text.isEmpty && attachments.isEmpty) || thinking) return;
     final store = context.read<AppStore>();
     final notify = context.read<NotifyService>();
+    final health = context.read<HealthService>();
     final ai = store.ai;
     if (!ai.configured) {
-      setState(() => error = 'Set your AI endpoint and key in Settings before using the coach.');
+      setState(() => error =
+          'Set your AI endpoint and key in Settings before using the coach.');
       return;
     }
     final sentAttachments = attachments;
     input.clear();
-    final display = text + (sentAttachments.isEmpty
-        ? ''
-        : '\n\n[attached: ${sentAttachments.map((a) => a.name).join(', ')}]');
+    final display = text +
+        (sentAttachments.isEmpty
+            ? ''
+            : '\n\n[attached: ${sentAttachments.map((a) => a.name).join(', ')}]');
     setState(() {
-      messages = [...messages, CoachMessage(ChatMessage.roleUser, display.trim())];
+      messages = [
+        ...messages,
+        CoachMessage(ChatMessage.roleUser, display.trim())
+      ];
       attachments = [];
       thinking = true;
       error = null;
@@ -119,12 +135,15 @@ class _CoachTabState extends State<CoachTab> {
     });
     try {
       final userMessage = await buildUserMessage(text, sentAttachments);
-      agent ??= _buildAgent(store, notify);
-      final reply =
-          await agent!.replyMessage(ChatClient(ai.baseUrl, ai.apiKey, ai.model), userMessage);
+      agent ??= _buildAgent(store, notify, health);
+      final reply = await agent!.replyMessage(
+          ChatClient(ai.baseUrl, ai.apiKey, ai.model), userMessage);
       if (!mounted) return;
       setState(() {
-        messages = [...messages, CoachMessage(ChatMessage.roleAssistant, reply)];
+        messages = [
+          ...messages,
+          CoachMessage(ChatMessage.roleAssistant, reply)
+        ];
         thinking = false;
         activeTool = null;
       });
@@ -174,7 +193,8 @@ class _CoachTabState extends State<CoachTab> {
               agent?.reset();
               setState(() {
                 messages = [
-                  const CoachMessage(ChatMessage.roleAssistant, 'Fresh start. What are we working on?')
+                  const CoachMessage(ChatMessage.roleAssistant,
+                      'Fresh start. What are we working on?')
                 ];
                 error = null;
               });
@@ -195,11 +215,16 @@ class _CoachTabState extends State<CoachTab> {
                     isUser: false,
                     child: Row(children: [
                       const SizedBox(
-                          width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2)),
                       const SizedBox(width: 12),
                       Text(
-                        activeTool == null ? 'Thinking…' : 'Reading your $activeTool data…',
-                        style: t.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                        activeTool == null
+                            ? 'Thinking…'
+                            : 'Reading your $activeTool data…',
+                        style: t.bodyMedium
+                            ?.copyWith(color: scheme.onSurfaceVariant),
                       ),
                     ]),
                   );
@@ -210,10 +235,12 @@ class _CoachTabState extends State<CoachTab> {
                   isUser: isUser,
                   child: isUser
                       ? Text(m.text,
-                          style: t.bodyMedium?.copyWith(color: scheme.onPrimary))
+                          style:
+                              t.bodyMedium?.copyWith(color: scheme.onPrimary))
                       : GptMarkdown(
                           m.text,
-                          style: t.bodyMedium?.copyWith(color: scheme.onSurface),
+                          style:
+                              t.bodyMedium?.copyWith(color: scheme.onSurface),
                           isStreaming: false,
                         ),
                 );
@@ -231,7 +258,8 @@ class _CoachTabState extends State<CoachTab> {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(color: scheme.onErrorContainer)),
                   trailing: TextButton(
-                      onPressed: () => setState(() => error = null), child: const Text('Dismiss')),
+                      onPressed: () => setState(() => error = null),
+                      child: const Text('Dismiss')),
                 ),
               ),
             ),
@@ -254,9 +282,10 @@ class _CoachTabState extends State<CoachTab> {
                                   : Icons.description_outlined,
                           size: 18,
                         ),
-                        label: Text('${a.name} (${(a.bytes.length / 1024).round()} KB)'),
-                        onDeleted: () =>
-                            setState(() => attachments = attachments.where((x) => x != a).toList()),
+                        label: Text(
+                            '${a.name} (${(a.bytes.length / 1024).round()} KB)'),
+                        onDeleted: () => setState(() => attachments =
+                            attachments.where((x) => x != a).toList()),
                       ),
                     ),
                 ],

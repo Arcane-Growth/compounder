@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../data/models.dart';
 import '../data/store.dart';
 import '../domain/domain.dart';
+import 'health.dart';
 import 'history.dart';
 import 'progress.dart';
 import 'settings.dart';
@@ -55,15 +56,18 @@ class HomeTab extends StatelessWidget {
                 Card(
                   color: scheme.primaryContainer,
                   child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 12),
                     onTap: () => _openWorkout(context, active.id),
                     title: Text(active.name,
-                        style: t.headlineSmall?.copyWith(color: scheme.onPrimaryContainer)),
+                        style: t.headlineSmall
+                            ?.copyWith(color: scheme.onPrimaryContainer)),
                     subtitle: Text(
                       'Started ${formatDateTime(active.startedAt)} · tap to pick up where you left off',
                       style: TextStyle(color: scheme.onPrimaryContainer),
                     ),
-                    trailing: Icon(Icons.play_arrow, color: scheme.onPrimaryContainer),
+                    trailing: Icon(Icons.play_arrow,
+                        color: scheme.onPrimaryContainer),
                   ),
                 )
               else
@@ -82,7 +86,8 @@ class HomeTab extends StatelessWidget {
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const HistoryScreen())),
+                        MaterialPageRoute(
+                            builder: (_) => const HistoryScreen())),
                     icon: const Icon(Icons.history, size: 18),
                     label: const Text('History'),
                   ),
@@ -91,19 +96,23 @@ class HomeTab extends StatelessWidget {
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const ProgressScreen())),
+                        MaterialPageRoute(
+                            builder: (_) => const ProgressScreen())),
                     icon: const Icon(Icons.show_chart, size: 18),
                     label: const Text('Progress'),
                   ),
                 ),
               ]),
               const SizedBox(height: 24),
+              const HealthSummaryCard(),
+              const SizedBox(height: 24),
               const SectionHeader('Recent sessions'),
               const SizedBox(height: 8),
               if (store.history.isEmpty)
                 const EmptyState(
                   title: 'No sessions yet',
-                  subtitle: 'Create a workout and log your first lifts to see them here.',
+                  subtitle:
+                      'Create a workout and log your first lifts to see them here.',
                   icon: Icons.fitness_center,
                 )
               else
@@ -142,9 +151,12 @@ Future<String?> _askWorkoutName(BuildContext context) async {
         decoration: const InputDecoration(labelText: 'Name'),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel')),
         FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text), child: const Text('Start')),
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Start')),
       ],
     ),
   );

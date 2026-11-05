@@ -13,7 +13,7 @@ class BackupService {
   static Future<String> export(AppStore store) async {
     final db = store.db;
     final data = {
-      'format': 1,
+      'format': 2,
       'app': 'compounder',
       'exportedAt': DateTime.now().toIso8601String(),
       'workouts': await db.query('workouts'),
@@ -25,16 +25,23 @@ class BackupService {
       'moods': await db.query('moods'),
       'meditations': await db.query('meditations'),
       'thoughtRecords': await db.query('thought_records'),
+      'healthRecords': await db.query('health_records'),
+      'healthDaily': await db.query('health_daily'),
+      'healthSyncState': await db.query('health_sync_state'),
     };
     final dir = await getApplicationDocumentsDirectory();
-    final file = File(p.join(dir.path, 'compounder-backup-${DateTime.now().millisecondsSinceEpoch}.json'));
+    final file = File(p.join(dir.path,
+        'compounder-backup-${DateTime.now().millisecondsSinceEpoch}.json'));
     await file.writeAsString(const JsonEncoder.withIndent('  ').convert(data));
     return file.path;
   }
 
   static Future<int> import(AppStore store, String path) async {
-    final data = jsonDecode(await File(path).readAsString()) as Map<String, Object?>;
-    if (data['app'] != 'compounder') throw Exception('Not a Compounder backup file');
+    final data =
+        jsonDecode(await File(path).readAsString()) as Map<String, Object?>;
+    if (data['app'] != 'compounder') {
+      throw Exception('Not a Compounder backup file');
+    }
     final db = store.db;
 
     List<Map<String, Object?>> rows(String key) =>
@@ -42,31 +49,56 @@ class BackupService {
 
     await db.transaction((txn) async {
       for (final table in [
-        'workout_sets', 'workout_exercises', 'workouts',
-        'meals', 'accounts', 'moods', 'meditations', 'thought_records',
+        'workout_sets',
+        'workout_exercises',
+        'workouts',
+        'meals',
+        'accounts',
+        'moods',
+        'meditations',
+        'thought_records',
+        'health_records',
+        'health_daily',
+        'health_sync_state',
       ]) {
         await txn.delete(table);
       }
       await txn.delete('exercises', where: 'is_custom = 1');
       for (final r in rows('customExercises')) {
-        await txn.insert('exercises', r, conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.insert('exercises', r,
+            conflictAlgorithm: ConflictAlgorithm.replace);
       }
       for (final r in rows('workouts')) {
-        await txn.insert('workouts', r, conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.insert('workouts', r,
+            conflictAlgorithm: ConflictAlgorithm.replace);
       }
       for (final r in rows('workoutExercises')) {
-        await txn.insert('workout_exercises', r, conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.insert('workout_exercises', r,
+            conflictAlgorithm: ConflictAlgorithm.replace);
       }
       for (final r in rows('workoutSets')) {
-        await txn.insert('workout_sets', r, conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.insert('workout_sets', r,
+            conflictAlgorithm: ConflictAlgorithm.replace);
       }
       for (final key in ['meals', 'accounts', 'moods', 'meditations']) {
         for (final r in rows(key)) {
-          await txn.insert(key, r, conflictAlgorithm: ConflictAlgorithm.replace);
+          await txn.insert(key, r,
+              conflictAlgorithm: ConflictAlgorithm.replace);
         }
       }
       for (final r in rows('thoughtRecords')) {
-        await txn.insert('thought_records', r, conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.insert('thought_records', r,
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      for (final entry in {
+        'healthRecords': 'health_records',
+        'healthDaily': 'health_daily',
+        'healthSyncState': 'health_sync_state',
+      }.entries) {
+        for (final r in rows(entry.key)) {
+          await txn.insert(entry.value, r,
+              conflictAlgorithm: ConflictAlgorithm.replace);
+        }
       }
     });
     await store.refreshAll();
