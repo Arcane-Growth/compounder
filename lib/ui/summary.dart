@@ -21,16 +21,19 @@ class SummaryScreen extends StatelessWidget {
         if (detail == null) {
           return const Scaffold(body: Center(child: Text('Workout not found')));
         }
-        final volume = detail.volume;
-        final allSets = detail.exercises
+        final completed = detail.exercises
             .expand((e) => e.sets)
-            .map((s) => (weightKg: s.weightKg, reps: s.reps, isWarmup: s.isWarmup))
+            .where((s) => s.completedAt != null)
             .toList();
-        final working = detail.exercises
-            .expand((e) => e.sets)
-            .where((s) => !s.isWarmup && s.completedAt != null)
+        final allSets = completed
+            .map((s) =>
+                (weightKg: s.weightKg, reps: s.reps, isWarmup: s.isWarmup))
+            .toList();
+        final working = completed
+            .where((s) => !s.isWarmup)
             .map((s) => (s.weightKg, s.reps))
             .toList();
+        final volume = volumeOf(allSets);
         final bestE1rm = working.isEmpty ? 0.0 : formatE1rm(e1rmMaxOf(working));
         final totals = volumeOf(allSets);
 
@@ -53,32 +56,45 @@ class SummaryScreen extends StatelessWidget {
                         value: trimZero(fromKg(totals.totalKg, store.unit)))),
                 const SizedBox(width: 8),
                 Expanded(
-                    child: StatCard(label: 'Best e1RM (kg)', value: trimZero(bestE1rm))),
+                    child: StatCard(
+                        label: 'Best e1RM (kg)', value: trimZero(bestE1rm))),
               ]),
               const SizedBox(height: 8),
               Row(children: [
-                Expanded(child: StatCard(label: 'Working sets', value: '${volume.sets}')),
+                Expanded(
+                    child: StatCard(
+                        label: 'Working sets', value: '${volume.sets}')),
                 const SizedBox(width: 8),
-                Expanded(child: StatCard(label: 'Total reps', value: '${volume.reps}')),
+                Expanded(
+                    child:
+                        StatCard(label: 'Total reps', value: '${volume.reps}')),
               ]),
               const SizedBox(height: 16),
               const SectionHeader('Exercises'),
               ...detail.exercises.map((view) {
                 final v = volumeOf(view.sets
-                    .map((s) => (weightKg: s.weightKg, reps: s.reps, isWarmup: s.isWarmup))
+                    .where((s) => s.completedAt != null)
+                    .map((s) => (
+                          weightKg: s.weightKg,
+                          reps: s.reps,
+                          isWarmup: s.isWarmup
+                        ))
                     .toList());
                 return CardRow(
                   icon: Icons.fitness_center,
                   title: view.exercise.name,
-                  subtitle: '${view.exercise.muscleGroup} · ${v.sets} sets · ${v.reps} reps',
-                  trailing: '${trimZero(fromKg(v.totalKg, store.unit))} ${store.unit.label}',
+                  subtitle:
+                      '${view.exercise.muscleGroup} · ${v.sets} sets · ${v.reps} reps',
+                  trailing:
+                      '${trimZero(fromKg(v.totalKg, store.unit))} ${store.unit.label}',
                 );
               }),
               const SizedBox(height: 16),
               OutlinedButton.icon(
                 style: OutlinedButton.styleFrom(foregroundColor: scheme.error),
                 icon: Icon(Icons.delete_outline, color: scheme.error),
-                label: Text('Delete workout', style: TextStyle(color: scheme.error)),
+                label: Text('Delete workout',
+                    style: TextStyle(color: scheme.error)),
                 onPressed: () async {
                   await store.deleteWorkout(workoutId);
                   if (context.mounted) Navigator.of(context).pop();

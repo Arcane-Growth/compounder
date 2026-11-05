@@ -7,7 +7,8 @@ class CompounderTheme {
   static ThemeData dark() => _build(Brightness.dark);
 
   static ThemeData _build(Brightness brightness) {
-    final scheme = ColorScheme.fromSeed(seedColor: _seed, brightness: brightness);
+    final scheme =
+        ColorScheme.fromSeed(seedColor: _seed, brightness: brightness);
     final typography = Typography.material2021(colorScheme: scheme);
     return ThemeData(
       useMaterial3: true,
@@ -34,19 +35,26 @@ class CompounderTheme {
 
 class ScreenIntro extends StatelessWidget {
   final String eyebrow, title, subtitle;
-  const ScreenIntro({super.key, required this.eyebrow, required this.title, required this.subtitle});
+  const ScreenIntro(
+      {super.key,
+      required this.eyebrow,
+      required this.title,
+      required this.subtitle});
 
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text(eyebrow.toUpperCase(),
-          style: t.labelMedium?.copyWith(color: Theme.of(context).colorScheme.primary)),
+          style: t.labelMedium
+              ?.copyWith(color: Theme.of(context).colorScheme.primary)),
       const SizedBox(height: 8),
-      Text(title, style: t.headlineMedium?.copyWith(fontWeight: FontWeight.w600)),
+      Text(title,
+          style: t.headlineMedium?.copyWith(fontWeight: FontWeight.w600)),
       const SizedBox(height: 8),
       Text(subtitle,
-          style: t.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+          style: t.bodyMedium?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant)),
     ]);
   }
 }
@@ -60,7 +68,10 @@ class SectionHeader extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return Row(children: [
       Text(text.toUpperCase(),
-          style: Theme.of(context).textTheme.labelMedium?.copyWith(color: scheme.primary)),
+          style: Theme.of(context)
+              .textTheme
+              .labelMedium
+              ?.copyWith(color: scheme.primary)),
       const SizedBox(width: 12),
       Expanded(child: Divider(color: scheme.outlineVariant)),
     ]);
@@ -70,7 +81,8 @@ class SectionHeader extends StatelessWidget {
 class TintedIconCircle extends StatelessWidget {
   final IconData icon;
   final Color? background, foreground;
-  const TintedIconCircle(this.icon, {super.key, this.background, this.foreground});
+  const TintedIconCircle(this.icon,
+      {super.key, this.background, this.foreground});
 
   @override
   Widget build(BuildContext context) {
@@ -82,7 +94,8 @@ class TintedIconCircle extends StatelessWidget {
         color: background ?? scheme.secondaryContainer,
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Icon(icon, size: 22, color: foreground ?? scheme.onSecondaryContainer),
+      child: Icon(icon,
+          size: 22, color: foreground ?? scheme.onSecondaryContainer),
     );
   }
 }
@@ -90,7 +103,8 @@ class TintedIconCircle extends StatelessWidget {
 class EmptyState extends StatelessWidget {
   final String title, subtitle;
   final IconData? icon;
-  const EmptyState({super.key, required this.title, required this.subtitle, this.icon});
+  const EmptyState(
+      {super.key, required this.title, required this.subtitle, this.icon});
 
   @override
   Widget build(BuildContext context) {
@@ -147,6 +161,7 @@ class CardRow extends StatelessWidget {
   final IconData icon;
   final String title, subtitle;
   final String? trailing;
+  final Widget? trailingAction;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
   const CardRow({
@@ -155,6 +170,7 @@ class CardRow extends StatelessWidget {
     required this.title,
     required this.subtitle,
     this.trailing,
+    this.trailingAction,
     this.onTap,
     this.onLongPress,
   });
@@ -171,11 +187,20 @@ class CardRow extends StatelessWidget {
         onLongPress: onLongPress,
         leading: TintedIconCircle(icon),
         title: Text(title, style: t.titleMedium),
-        subtitle: Text(subtitle, style: t.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
-        trailing: trailing != null
-            ? Text(trailing!,
-                style: t.labelLarge?.copyWith(color: scheme.primary), textAlign: TextAlign.end)
-            : Icon(Icons.chevron_right, color: scheme.primary),
+        subtitle: Text(subtitle,
+            style: t.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
+        trailing: trailing == null && trailingAction == null
+            ? Icon(Icons.chevron_right, color: scheme.primary)
+            : Row(mainAxisSize: MainAxisSize.min, children: [
+                if (trailing != null)
+                  Text(trailing!,
+                      style: t.labelLarge?.copyWith(color: scheme.primary),
+                      textAlign: TextAlign.end),
+                if (trailingAction != null) ...[
+                  if (trailing != null) const SizedBox(width: 4),
+                  trailingAction!,
+                ],
+              ]),
       ),
     );
   }
@@ -184,19 +209,46 @@ class CardRow extends StatelessWidget {
 String formatDate(int millis) {
   final d = DateTime.fromMillisecondsSinceEpoch(millis);
   const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec'
+  ];
   return '${weekdays[d.weekday - 1]}, ${months[d.month - 1]} ${d.day}, ${d.year}';
 }
 
 String formatDateTime(int millis) {
   final d = DateTime.fromMillisecondsSinceEpoch(millis);
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec'
+  ];
   return '${months[d.month - 1]} ${d.day}, ${d.year} · '
       '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
 }
 
 String formatDuration(int startMs, int? endMs) {
-  final total = ((endMs ?? DateTime.now().millisecondsSinceEpoch) - startMs) ~/ 1000;
+  final total =
+      ((endMs ?? DateTime.now().millisecondsSinceEpoch) - startMs) ~/ 1000;
   final m = total ~/ 60, s = total % 60;
   if (m >= 60) return '${m ~/ 60}h ${m % 60}m';
   return '$m:${s.toString().padLeft(2, '0')}';

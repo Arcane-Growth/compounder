@@ -11,14 +11,19 @@ import 'models.dart';
 
 class MacroGoals {
   final double calories, protein, carbs, fat;
-  const MacroGoals({this.calories = 2000, this.protein = 150, this.carbs = 250, this.fat = 70});
+  const MacroGoals(
+      {this.calories = 2000,
+      this.protein = 150,
+      this.carbs = 250,
+      this.fat = 70});
 }
 
 class AiSettings {
   final String baseUrl, apiKey, model;
   const AiSettings({this.baseUrl = '', this.apiKey = '', this.model = ''});
 
-  bool get configured => baseUrl.isNotEmpty && apiKey.isNotEmpty && model.isNotEmpty;
+  bool get configured =>
+      baseUrl.isNotEmpty && apiKey.isNotEmpty && model.isNotEmpty;
 }
 
 class ExerciseView {
@@ -33,8 +38,9 @@ class WorkoutDetail {
   final List<ExerciseView> exercises;
   const WorkoutDetail(this.workout, this.exercises);
 
-  Volume get volume => volumeOf(exercises.expand((e) => e.sets).map(
-      (s) => (weightKg: s.weightKg, reps: s.reps, isWarmup: s.isWarmup)));
+  Volume get volume => volumeOf(exercises
+      .expand((e) => e.sets)
+      .map((s) => (weightKg: s.weightKg, reps: s.reps, isWarmup: s.isWarmup)));
 }
 
 /// Single source of truth: owns the database, cached lists and settings.
@@ -46,6 +52,7 @@ class AppStore extends ChangeNotifier {
   List<WorkoutSummary> history = [];
   List<Meal> meals = [];
   List<Account> accounts = [];
+  List<NetWorthPoint> netWorthHistory = [];
   List<MoodEntry> moods = [];
   List<MeditationEntry> meditations = [];
   List<ThoughtRecord> thoughts = [];
@@ -56,8 +63,8 @@ class AppStore extends ChangeNotifier {
 
   static Future<AppStore> open(SharedPreferences prefs) async {
     final path = p.join(await getDatabasesPath(), 'compounder.db');
-    final db = await openDatabase(path, version: 2,
-        onCreate: _createSchema, onUpgrade: _upgradeSchema);
+    final db = await openDatabase(path,
+        version: 2, onCreate: _createSchema, onUpgrade: _upgradeSchema);
     final store = AppStore._(db, prefs);
     await store.refreshAll();
     return store;
@@ -104,7 +111,8 @@ class AppStore extends ChangeNotifier {
       created_at INTEGER NOT NULL)''');
   }
 
-  static Future<void> _upgradeSchema(Database db, int oldVersion, int newVersion) async {
+  static Future<void> _upgradeSchema(
+      Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
       await _createV2Tables(db);
       // Give every existing account a starting point so trends have a baseline.
@@ -114,24 +122,56 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> refreshAll() async {
-    exercises = (await db.query('exercises', orderBy: 'name')).map(Exercise.fromMap).toList();
+    exercises = (await db.query('exercises', orderBy: 'name'))
+        .map(Exercise.fromMap)
+        .toList();
     history = await loadHistory();
     meals = (await db.query('meals', orderBy: 'timestamp DESC')).map((m) {
       final meal = Meal.fromMap(m);
       return Meal(
-        id: meal.id, timestamp: meal.timestamp, imagePath: meal.imagePath, dish: meal.dish,
-        calories: meal.calories, protein: meal.protein, carbs: meal.carbs, fat: meal.fat,
+        id: meal.id,
+        timestamp: meal.timestamp,
+        imagePath: meal.imagePath,
+        dish: meal.dish,
+        calories: meal.calories,
+        protein: meal.protein,
+        carbs: meal.carbs,
+        fat: meal.fat,
         foods: (jsonDecode(m['foods_json'] as String) as List)
             .map((f) => Food.fromJson(f.cast<String, Object?>()))
             .toList(),
         isAuto: meal.isAuto,
       );
     }).toList();
-    accounts = (await db.query('accounts', orderBy: 'balance DESC')).map(Account.fromMap).toList();
-    moods = (await db.query('moods', orderBy: 'timestamp DESC')).map(MoodEntry.fromMap).toList();
-    meditations = (await db.query('meditations', orderBy: 'timestamp DESC')).map(MeditationEntry.fromMap).toList();
-    thoughts = (await db.query('thought_records', orderBy: 'timestamp DESC')).map(ThoughtRecord.fromMap).toList();
-    reminders = (await db.query('reminders', where: 'due_at > ?', whereArgs: [DateTime.now().millisecondsSinceEpoch], orderBy: 'due_at'))
+    accounts = (await db.query('accounts', orderBy: 'balance DESC'))
+        .map(Account.fromMap)
+        .toList();
+    final snapshotRows = await db.rawQuery('''
+        SELECT s.account_id, s.balance, s.taken_at, a.type
+        FROM balance_snapshots s
+        JOIN accounts a ON a.id = s.account_id
+        ORDER BY s.taken_at''');
+    netWorthHistory = netWorthSeries(snapshotRows
+        .map((r) => (
+              accountId: r['account_id'] as int,
+              balance: (r['balance'] as num).toDouble(),
+              isLiability: (r['type'] as String) == 'Debt',
+              takenAt: r['taken_at'] as int,
+            ))
+        .toList());
+    moods = (await db.query('moods', orderBy: 'timestamp DESC'))
+        .map(MoodEntry.fromMap)
+        .toList();
+    meditations = (await db.query('meditations', orderBy: 'timestamp DESC'))
+        .map(MeditationEntry.fromMap)
+        .toList();
+    thoughts = (await db.query('thought_records', orderBy: 'timestamp DESC'))
+        .map(ThoughtRecord.fromMap)
+        .toList();
+    reminders = (await db.query('reminders',
+            where: 'due_at > ?',
+            whereArgs: [DateTime.now().millisecondsSinceEpoch],
+            orderBy: 'due_at'))
         .map(Reminder.fromMap)
         .toList();
     final usageRows = await db.rawQuery('''
@@ -193,29 +233,36 @@ class AppStore extends ChangeNotifier {
   int get coachMinutes => prefs.getInt('coachMinutes') ?? 18 * 60;
   Future<void> setCoach({bool? enabled, int? minutes}) async {
     if (enabled != null) await prefs.setBool('coachEnabled', enabled);
-    if (minutes != null) await prefs.setInt('coachMinutes', minutes.clamp(0, 24 * 60 - 1));
+    if (minutes != null) {
+      await prefs.setInt('coachMinutes', minutes.clamp(0, 24 * 60 - 1));
+    }
     notifyListeners();
   }
 
   // ------------------------------------------------------------ workouts
 
   Future<Workout?> activeWorkout() async {
-    final rows = await db.query('workouts', where: 'ended_at IS NULL', limit: 1);
+    final rows =
+        await db.query('workouts', where: 'ended_at IS NULL', limit: 1);
     return rows.isEmpty ? null : Workout.fromMap(rows.first);
   }
 
   Future<WorkoutDetail?> workoutDetail(int id) async {
-    final rows = await db.query('workouts', where: 'id = ?', whereArgs: [id], limit: 1);
+    final rows =
+        await db.query('workouts', where: 'id = ?', whereArgs: [id], limit: 1);
     if (rows.isEmpty) return null;
     final workout = Workout.fromMap(rows.first);
     final entries = await db.query('workout_exercises',
         where: 'workout_id = ?', whereArgs: [id], orderBy: 'position');
     final views = <ExerciseView>[];
     for (final e in entries.map(WorkoutExercise.fromMap)) {
-      final exRows = await db.query('exercises', where: 'id = ?', whereArgs: [e.exerciseId], limit: 1);
+      final exRows = await db.query('exercises',
+          where: 'id = ?', whereArgs: [e.exerciseId], limit: 1);
       if (exRows.isEmpty) continue;
       final sets = (await db.query('workout_sets',
-              where: 'workout_exercise_id = ?', whereArgs: [e.id], orderBy: 'position'))
+              where: 'workout_exercise_id = ?',
+              whereArgs: [e.id],
+              orderBy: 'position'))
           .map(WorkoutSet.fromMap)
           .toList();
       views.add(ExerciseView(e, Exercise.fromMap(exRows.first), sets));
@@ -223,78 +270,115 @@ class AppStore extends ChangeNotifier {
     return WorkoutDetail(workout, views);
   }
 
-  Future<int> createWorkout(String name) => db.insert('workouts', {
-        'name': name.trim().isEmpty ? 'Workout' : name.trim(),
-        'started_at': DateTime.now().millisecondsSinceEpoch,
-      });
+  Future<int> createWorkout(String name) async {
+    final id = await db.insert('workouts', {
+      'name': name.trim().isEmpty ? 'Workout' : name.trim(),
+      'started_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    await refreshAll();
+    return id;
+  }
 
-  Future<void> finishWorkout(int id) => db.update('workouts',
-      {'ended_at': DateTime.now().millisecondsSinceEpoch},
-      where: 'id = ?', whereArgs: [id]);
+  Future<void> finishWorkout(int id) async {
+    await db.update(
+        'workouts', {'ended_at': DateTime.now().millisecondsSinceEpoch},
+        where: 'id = ?', whereArgs: [id]);
+    await refreshAll();
+  }
 
   Future<void> deleteWorkout(int id) async {
     await db.delete('workout_sets',
-        where: 'workout_exercise_id IN (SELECT id FROM workout_exercises WHERE workout_id = ?)',
+        where:
+            'workout_exercise_id IN (SELECT id FROM workout_exercises WHERE workout_id = ?)',
         whereArgs: [id]);
-    await db.delete('workout_exercises', where: 'workout_id = ?', whereArgs: [id]);
+    await db
+        .delete('workout_exercises', where: 'workout_id = ?', whereArgs: [id]);
     await db.delete('workouts', where: 'id = ?', whereArgs: [id]);
     await refreshAll();
   }
 
   /// Adds an exercise, pre-filling set placeholders from the most recent session.
-  Future<int> addExerciseToWorkout(int workoutId, int exerciseId) async {
+  /// When there is no history and [seedDefaultSet] is true, one incomplete 0 x 0
+  /// set is created so the user can start editing immediately.
+  Future<int> addExerciseToWorkout(int workoutId, int exerciseId,
+      {bool seedDefaultSet = false}) async {
     final posRows = await db.rawQuery(
-        'SELECT MAX(position) m FROM workout_exercises WHERE workout_id = ?', [workoutId]);
+        'SELECT MAX(position) m FROM workout_exercises WHERE workout_id = ?',
+        [workoutId]);
     final position = ((posRows.first['m'] as int?) ?? -1) + 1;
-    final entryId = await db.insert('workout_exercises',
-        {'workout_id': workoutId, 'exercise_id': exerciseId, 'position': position});
+    final entryId = await db.insert('workout_exercises', {
+      'workout_id': workoutId,
+      'exercise_id': exerciseId,
+      'position': position
+    });
 
     final latest = await db.rawQuery('''
         SELECT we.id FROM workout_exercises we
         JOIN workouts w ON w.id = we.workout_id
         WHERE we.exercise_id = ? AND w.ended_at IS NOT NULL
         ORDER BY w.started_at DESC LIMIT 1''', [exerciseId]);
+    var seeded = false;
     if (latest.isNotEmpty) {
       final prev = (await db.query('workout_sets',
-              where: 'workout_exercise_id = ?', whereArgs: [latest.first['id']], orderBy: 'position'))
+              where: 'workout_exercise_id = ?',
+              whereArgs: [latest.first['id']],
+              orderBy: 'position'))
           .map(WorkoutSet.fromMap)
           .toList();
       for (var i = 0; i < prev.length; i++) {
-        await db.insert('workout_sets', WorkoutSet(
-          id: 0,
-          workoutExerciseId: entryId,
-          position: i,
-          weightKg: prev[i].weightKg,
-          reps: prev[i].reps,
-          isWarmup: prev[i].isWarmup,
-        ).toMap());
+        await db.insert(
+            'workout_sets',
+            WorkoutSet(
+              id: 0,
+              workoutExerciseId: entryId,
+              position: i,
+              weightKg: prev[i].weightKg,
+              reps: prev[i].reps,
+              isWarmup: prev[i].isWarmup,
+            ).toMap());
+        seeded = true;
       }
+    }
+    if (!seeded && seedDefaultSet) {
+      await db.insert(
+          'workout_sets',
+          WorkoutSet(
+            id: 0,
+            workoutExerciseId: entryId,
+            position: 0,
+            weightKg: 0,
+            reps: 0,
+          ).toMap());
     }
     await refreshAll();
     return entryId;
   }
 
-  Future<int> addSet(int entryId, double weightKg, int reps, {bool warmup = false}) async {
+  Future<int> addSet(int entryId, double weightKg, int reps,
+      {bool warmup = false, bool completed = true}) async {
     final posRows = await db.rawQuery(
-        'SELECT MAX(position) m FROM workout_sets WHERE workout_exercise_id = ?', [entryId]);
+        'SELECT MAX(position) m FROM workout_sets WHERE workout_exercise_id = ?',
+        [entryId]);
     final position = ((posRows.first['m'] as int?) ?? -1) + 1;
     final id = await db.insert('workout_sets', {
       'workout_exercise_id': entryId,
       'position': position,
       'weight_kg': weightKg,
       'reps': reps,
-      'completed_at': DateTime.now().millisecondsSinceEpoch,
+      'completed_at': completed ? DateTime.now().millisecondsSinceEpoch : null,
       'is_warmup': warmup ? 1 : 0,
     });
     await refreshAll();
     return id;
   }
 
-  Future<void> updateSet(int id, {double? weightKg, int? reps, int? completedAt, bool? warmup}) async {
+  Future<void> updateSet(int id,
+      {double? weightKg, int? reps, int? completedAt, bool? warmup}) async {
     final values = <String, Object?>{
       if (weightKg != null) 'weight_kg': weightKg,
       if (reps != null) 'reps': reps,
-      if (completedAt != null) 'completed_at': completedAt == 0 ? null : completedAt,
+      if (completedAt != null)
+        'completed_at': completedAt == 0 ? null : completedAt,
       if (warmup != null) 'is_warmup': warmup ? 1 : 0,
     };
     if (values.isEmpty) return;
@@ -308,12 +392,14 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> removeExercise(int entryId) async {
-    await db.delete('workout_sets', where: 'workout_exercise_id = ?', whereArgs: [entryId]);
+    await db.delete('workout_sets',
+        where: 'workout_exercise_id = ?', whereArgs: [entryId]);
     await db.delete('workout_exercises', where: 'id = ?', whereArgs: [entryId]);
     await refreshAll();
   }
 
-  Future<void> createExercise(String name, String muscleGroup, String equipment) async {
+  Future<void> createExercise(
+      String name, String muscleGroup, String equipment) async {
     await db.insert('exercises', {
       'name': name.trim(),
       'muscle_group': muscleGroup,
@@ -328,13 +414,17 @@ class AppStore extends ChangeNotifier {
     final q = query.trim().toLowerCase();
     if (q.isNotEmpty) {
       list = list
-          .where((e) => e.name.toLowerCase().contains(q) || e.muscleGroup.toLowerCase().contains(q))
+          .where((e) =>
+              e.name.toLowerCase().contains(q) ||
+              e.muscleGroup.toLowerCase().contains(q))
           .toList();
     }
     final byUsage = <int, int>{
-      for (var i = 0; i < usageOrder.length; i++) usageOrder[i]: usageOrder.length - i,
+      for (var i = 0; i < usageOrder.length; i++)
+        usageOrder[i]: usageOrder.length - i,
     };
-    list = [...list]..sort((a, b) => (byUsage[b.id] ?? 0).compareTo(byUsage[a.id] ?? 0));
+    list = [...list]
+      ..sort((a, b) => (byUsage[b.id] ?? 0).compareTo(byUsage[a.id] ?? 0));
     return list;
   }
 
@@ -425,7 +515,11 @@ class AppStore extends ChangeNotifier {
     final map = a.toMap()..['updated_at'] = now;
     final id = a.id == 0
         ? await db.insert('accounts', map)
-        : (await db.update('accounts', map, where: 'id = ?', whereArgs: [a.id]) > 0 ? a.id : 0);
+        : (await db.update('accounts', map,
+                    where: 'id = ?', whereArgs: [a.id]) >
+                0
+            ? a.id
+            : 0);
     await db.insert('balance_snapshots',
         {'account_id': id, 'balance': a.balance, 'taken_at': now});
     await refreshAll();
@@ -438,7 +532,8 @@ class AppStore extends ChangeNotifier {
 
   Future<Reminder> addReminder(String text, int dueAt) async {
     final now = DateTime.now().millisecondsSinceEpoch;
-    final id = await db.insert('reminders', {'text': text, 'due_at': dueAt, 'created_at': now});
+    final id = await db.insert(
+        'reminders', {'text': text, 'due_at': dueAt, 'created_at': now});
     final reminder = Reminder(id: id, text: text, dueAt: dueAt, createdAt: now);
     await refreshAll();
     return reminder;
@@ -450,6 +545,8 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> deleteAccount(int id) async {
+    await db
+        .delete('balance_snapshots', where: 'account_id = ?', whereArgs: [id]);
     await db.delete('accounts', where: 'id = ?', whereArgs: [id]);
     await refreshAll();
   }
@@ -474,7 +571,8 @@ class AppStore extends ChangeNotifier {
     await refreshAll();
   }
 
-  Future<void> logThought(String situation, String thought, String reframe) async {
+  Future<void> logThought(
+      String situation, String thought, String reframe) async {
     await db.insert('thought_records', {
       'timestamp': DateTime.now().millisecondsSinceEpoch,
       'situation': situation,
@@ -496,12 +594,14 @@ class AppStore extends ChangeNotifier {
 
   // ------------------------------------------------------------ helpers
 
-  Future<List<Map<String, Object?>>> finishedWorkoutRows(int from, int to) => db.rawQuery('''
+  Future<List<Map<String, Object?>>> finishedWorkoutRows(int from, int to) =>
+      db.rawQuery('''
       SELECT w.id, w.name, w.started_at, w.ended_at FROM workouts w
       WHERE w.ended_at IS NOT NULL AND w.started_at >= ? AND w.started_at < ?
       ORDER BY w.started_at''', [from, to]);
 
-  Future<List<Map<String, Object?>>> workoutExerciseRows(int workoutId) => db.rawQuery('''
+  Future<List<Map<String, Object?>>> workoutExerciseRows(int workoutId) =>
+      db.rawQuery('''
       SELECT e.name, e.muscle_group, s.weight_kg, s.reps, s.is_warmup, s.completed_at
       FROM workout_exercises we
       JOIN exercises e ON e.id = we.exercise_id

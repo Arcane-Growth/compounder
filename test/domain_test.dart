@@ -52,7 +52,24 @@ void main() {
     });
 
     test('round-trip through lb', () {
-      expect(toKg(fromKg(82.5, WeightUnit.lb), WeightUnit.lb), closeTo(82.5, 0.05));
+      expect(toKg(fromKg(82.5, WeightUnit.lb), WeightUnit.lb),
+          closeTo(82.5, 0.05));
+    });
+
+    test('parsed display weight is stored in kg', () {
+      expect(parseWeightKg('82.5', WeightUnit.kg), closeTo(82.5, 0.001));
+      expect(parseWeightKg('100', WeightUnit.lb), closeTo(45.3592, 0.001));
+    });
+
+    test('parsed lb weight round-trips through display without drift', () {
+      final kg = parseWeightKg('100', WeightUnit.lb)!;
+      expect(fromKg(kg, WeightUnit.lb), closeTo(100, 0.05));
+      expect(trimZero(fromKg(kg, WeightUnit.lb)), '100');
+    });
+
+    test('unparseable weight returns null', () {
+      expect(parseWeightKg('', WeightUnit.kg), isNull);
+      expect(parseWeightKg('abc', WeightUnit.lb), isNull);
     });
 
     test('unit lookup falls back to kg', () {
@@ -89,6 +106,18 @@ void main() {
       expect(Wealth.formatAmount(1234567.891), '1,234,567.89');
       expect(Wealth.formatAmount(-1234.5), '-1,234.50');
     });
+
+    test('history series carries balances forward and subtracts debts', () {
+      final points = netWorthSeries([
+        (accountId: 1, balance: 15000, isLiability: false, takenAt: 300),
+        (accountId: 1, balance: 10000, isLiability: false, takenAt: 100),
+        (accountId: 2, balance: 12000, isLiability: true, takenAt: 200),
+      ]);
+      expect(points.length, 3);
+      expect(points[0].value, closeTo(10000, 0.001));
+      expect(points[1].value, closeTo(-2000, 0.001));
+      expect(points[2].value, closeTo(3000, 0.001));
+    });
   });
 
   group('mind', () {
@@ -110,7 +139,9 @@ void main() {
     });
 
     test('streak is zero without a check-in today', () {
-      expect(Mind.moodStreak([DateTime(2026, 5, 9)], today: DateTime(2026, 5, 10)), 0);
+      expect(
+          Mind.moodStreak([DateTime(2026, 5, 9)], today: DateTime(2026, 5, 10)),
+          0);
     });
 
     test('minutes between windows', () {
@@ -131,8 +162,7 @@ void main() {
     test('future value compounds principal and contributions', () {
       // 10k at 0% for 5 years stays 10k
       expect(
-        Finance.futureValue(
-            principal: 10000, annualPercent: 0, years: 5),
+        Finance.futureValue(principal: 10000, annualPercent: 0, years: 5),
         closeTo(10000, 0.01),
       );
       // 10k at 12% for 1 year = 11268.25 (monthly compounding)
@@ -152,12 +182,23 @@ void main() {
     });
 
     test('payoff months with and without interest', () {
-      expect(Finance.payoffMonths(principal: 1200, monthlyPayment: 100, annualPercent: 0), 12);
-      expect(Finance.payoffMonths(principal: 10000, monthlyPayment: 300, annualPercent: 12),
+      expect(
+          Finance.payoffMonths(
+              principal: 1200, monthlyPayment: 100, annualPercent: 0),
+          12);
+      expect(
+          Finance.payoffMonths(
+              principal: 10000, monthlyPayment: 300, annualPercent: 12),
           greaterThan(37));
       // Payment below monthly interest never pays off.
-      expect(Finance.payoffMonths(principal: 10000, monthlyPayment: 100, annualPercent: 12), isNull);
-      expect(Finance.payoffMonths(principal: 0, monthlyPayment: 100, annualPercent: 5), 0);
+      expect(
+          Finance.payoffMonths(
+              principal: 10000, monthlyPayment: 100, annualPercent: 12),
+          isNull);
+      expect(
+          Finance.payoffMonths(
+              principal: 0, monthlyPayment: 100, annualPercent: 5),
+          0);
     });
 
     test('investing beats paying a 0% debt at 7% returns', () {
