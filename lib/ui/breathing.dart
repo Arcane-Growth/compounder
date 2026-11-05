@@ -121,7 +121,8 @@ class _BreathingSessionState extends State<BreathingSession>
               builder: (context, _) {
                 final cycle = _breath.value * _cycleSeconds;
                 final phase = _phase(cycle);
-                final remaining = _phaseSeconds - (cycle % _phaseSeconds);
+                final remaining =
+                    (_phaseSeconds - (cycle % _phaseSeconds)).ceil();
                 return Column(mainAxisSize: MainAxisSize.min, children: [
                   SizedBox(
                     height: 320,

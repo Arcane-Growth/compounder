@@ -126,8 +126,26 @@ class MacrosTab extends StatelessWidget {
       _snack(context, 'Configure your AI endpoint in Settings to analyze meal photos.');
       return;
     }
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: const Icon(Icons.photo_camera),
+            title: const Text('Take a photo'),
+            onTap: () => Navigator.of(sheetContext).pop(ImageSource.camera),
+          ),
+          ListTile(
+            leading: const Icon(Icons.photo_library_outlined),
+            title: const Text('Choose from gallery'),
+            onTap: () => Navigator.of(sheetContext).pop(ImageSource.gallery),
+          ),
+        ]),
+      ),
+    );
+    if (source == null) return;
     final picked = await ImagePicker().pickImage(
-        source: ImageSource.camera, maxWidth: 1280, imageQuality: 82);
+        source: source, maxWidth: 1280, imageQuality: 82);
     if (picked == null) return;
     final bytes = await picked.readAsBytes();
     if (!context.mounted) return;
