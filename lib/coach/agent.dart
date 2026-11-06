@@ -268,9 +268,25 @@ RULES
     }
   }
 
+  /// Drops the oldest turns once the history exceeds [_maxHistory].
+  ///
+  /// The cut is made only at a turn boundary — an index whose message has
+  /// role `user` — so the request always starts with a user message and no
+  /// `tool` message is ever separated from the assistant `tool_calls` message
+  /// it answers. OpenAI-compatible endpoints reject both shapes.
   void _trim() {
-    while (_history.length > _maxHistory) {
-      _history.removeAt(0);
+    if (_history.length <= _maxHistory) return;
+
+    // Walk back from the newest index that would satisfy the size cap to the
+    // nearest turn boundary at or before it.
+    var start = _history.length - _maxHistory;
+    while (start > 0 && _history[start].role != ChatMessage.roleUser) {
+      start--;
     }
+    // A single turn longer than the cap has no boundary to cut at: keep it
+    // whole rather than orphan a tool result. Growth is bounded by
+    // _maxIterations and the tools per turn.
+    if (start == 0) return;
+    _history.removeRange(0, start);
   }
 }

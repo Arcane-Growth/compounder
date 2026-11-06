@@ -319,6 +319,62 @@ void main() {
       expect(() => agent.approve(client), throwsStateError);
     });
 
+    test('trimming cuts on turn boundaries: the request starts with a user '
+        'message and never orphans a tool result', () async {
+      // 12 turns of (user, assistant with 4 tool calls, 4 tool results, final)
+      // = 84 messages, well past the 60-message cap. Trimming by raw count
+      // used to leave a tool result at the head of the request.
+      final script = <ChatResult>[];
+      for (var turn = 0; turn < 12; turn++) {
+        script.add(ChatResult(null, [
+          for (var i = 0; i < 4; i++)
+            ToolCall('t${turn}c$i', 'getNutrition',
+                '{"start":"2026-01-01","end":"2026-01-01"}'),
+        ]));
+        script.add(_final('turn $turn done'));
+      }
+      final client = _ScriptedClient(script);
+      final agent = agentWith(client);
+
+      for (var turn = 0; turn < 12; turn++) {
+        await agent.replyMessage(client, ChatMessage.user('question $turn'));
+      }
+
+      expect(client.sent, hasLength(24));
+      for (final sent in client.sent) {
+        // _loop prepends the system prompt; the conversation itself must open
+        // with a user message.
+        final history =
+            sent.where((m) => m.role != ChatMessage.roleSystem).toList();
+        expect(history.first.role, ChatMessage.roleUser,
+            reason: 'every request must open with a user message');
+        // A tool result may only follow the assistant message whose tool_calls
+        // it answers; a user message starts a fresh turn.
+        final answered = <String>{};
+        for (var i = 0; i < history.length; i++) {
+          final m = history[i];
+          if (m.role == ChatMessage.roleAssistant) {
+            answered.addAll(m.toolCalls.map((c) => c.id));
+          } else if (m.role == ChatMessage.roleTool) {
+            expect(answered, contains(m.toolCallId),
+                reason: 'tool ${m.toolCallId} at index $i has no preceding '
+                    'assistant tool_calls message');
+          } else if (m.role == ChatMessage.roleUser) {
+            answered.clear();
+          }
+        }
+      }
+
+      // The trim did run, and it kept the history near the cap instead of
+      // dropping messages one at a time.
+      final last = client.sent.last
+          .where((m) => m.role != ChatMessage.roleSystem)
+          .toList();
+      expect(last.length, lessThan(84), reason: 'the cap must still apply');
+      expect(last.length, lessThanOrEqualTo(66),
+          reason: 'at most one turn (7 messages) may be kept past the cap');
+    });
+
     test('a failed follow-up after approval still reports the write landed',
         () async {
       final client = _ScriptedClient([
