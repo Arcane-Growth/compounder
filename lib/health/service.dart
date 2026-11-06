@@ -445,9 +445,13 @@ class HealthService extends ChangeNotifier {
             historyRequested && await source.isHistoryAuthorized();
         start = fullHistory
             ? DateTime(2000)
-            : now.subtract(const Duration(days: 30));
+            : DateTime(now.year, now.month, now.day - 30, now.hour,
+                now.minute, now.second, now.millisecond, now.microsecond);
       } else {
-        start = last.subtract(const Duration(days: 1));
+        // Calendar step, not a 24-hour subtraction: across a DST boundary the
+        // latter lands at 23:00/01:00 and can skip or double a day.
+        start = DateTime(last.year, last.month, last.day - 1, last.hour,
+            last.minute, last.second, last.millisecond, last.microsecond);
       }
 
       final resumeStates = await repository.syncStates();
@@ -472,8 +476,9 @@ class HealthService extends ChangeNotifier {
       await repository.setSyncState('__all__',
           lastSyncedAt: stamp, lastSuccessAt: stamp);
       try {
-        await repository.compactOlderThan(
-            now.subtract(const Duration(days: _retentionDays)));
+        await repository.compactOlderThan(DateTime(now.year, now.month,
+            now.day - _retentionDays, now.hour, now.minute, now.second,
+            now.millisecond, now.microsecond));
       } catch (e) {
         errors['compaction'] = e.toString();
       }
@@ -520,10 +525,8 @@ class HealthService extends ChangeNotifier {
 
   Future<Map<String, dynamic>> todaySummary() async {
     final now = DateTime.now();
-    final from = DateTime(now.year, now.month, now.day)
-        .subtract(const Duration(days: 2));
-    final to =
-        DateTime(now.year, now.month, now.day).add(const Duration(days: 1));
+    final from = DateTime(now.year, now.month, now.day - 2);
+    final to = DateTime(now.year, now.month, now.day + 1);
     return repository.overview(
       from: from.millisecondsSinceEpoch,
       to: to.millisecondsSinceEpoch,

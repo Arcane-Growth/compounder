@@ -16,7 +16,7 @@ import 'agent.dart';
   final hi = end.isBefore(start) ? start : end;
   return (
     from: DateTime(lo.year, lo.month, lo.day).millisecondsSinceEpoch,
-    to: DateTime(hi.year, hi.month, hi.day).add(const Duration(days: 1)).millisecondsSinceEpoch,
+    to: DateTime(hi.year, hi.month, hi.day + 1).millisecondsSinceEpoch,
   );
 }
 
@@ -219,10 +219,8 @@ class MindLogTool extends CoachTool {
     if (args['start'] == null && args['end'] == null) {
       final now = DateTime.now();
       r = (
-        from: DateTime(now.year, now.month, now.day).subtract(const Duration(days: 6)).millisecondsSinceEpoch,
-        to: DateTime(now.year, now.month, now.day)
-            .add(const Duration(days: 1))
-            .millisecondsSinceEpoch
+        from: DateTime(now.year, now.month, now.day - 6).millisecondsSinceEpoch,
+        to: DateTime(now.year, now.month, now.day + 1).millisecondsSinceEpoch
       );
     }
     final moods = store.moods.where((m) => m.timestamp >= r.from && m.timestamp < r.to).toList();

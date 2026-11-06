@@ -13,8 +13,7 @@ import 'tools.dart';
   final now = DateTime.now();
   final startRaw = args['start'] as String?;
   final start = DateTime.tryParse(startRaw ?? '') ??
-      DateTime(now.year, now.month, now.day)
-          .subtract(Duration(days: defaultDays - 1));
+      DateTime(now.year, now.month, now.day - (defaultDays - 1));
   final endRaw = args['end'] as String?;
   final end =
       DateTime.tryParse(endRaw ?? '') ?? (startRaw == null ? now : start);
@@ -22,9 +21,7 @@ import 'tools.dart';
   final hi = end.isBefore(start) ? start : end;
   return (
     from: DateTime(lo.year, lo.month, lo.day).millisecondsSinceEpoch,
-    to: DateTime(hi.year, hi.month, hi.day)
-        .add(const Duration(days: 1))
-        .millisecondsSinceEpoch,
+    to: DateTime(hi.year, hi.month, hi.day + 1).millisecondsSinceEpoch,
   );
 }
 

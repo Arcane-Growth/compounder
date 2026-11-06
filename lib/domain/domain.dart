@@ -246,6 +246,14 @@ class Finance {
 
 // ---------------------------------------------------------------- mind
 
+/// Previous calendar day at local midnight.
+///
+/// Calendar arithmetic, not `Duration(days: 1)`: a 24-hour subtraction from
+/// midnight lands on 23:00 (or 01:00) across a DST boundary, so the result is
+/// not a day key and day-walking loops miss a day.
+DateTime previousDayKey(DateTime day) =>
+    DateTime(day.year, day.month, day.day - 1);
+
 class Mind {
   static double? averageMood(List<int> moods) =>
       moods.isEmpty ? null : moods.reduce((a, b) => a + b) / moods.length;
@@ -261,7 +269,7 @@ class Mind {
     var cursor = DateTime(dayKey.year, dayKey.month, dayKey.day);
     while (days.contains(cursor)) {
       streak++;
-      cursor = cursor.subtract(const Duration(days: 1));
+      cursor = previousDayKey(cursor);
     }
     return streak;
   }

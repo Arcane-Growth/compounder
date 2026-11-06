@@ -46,7 +46,7 @@ class NotifyService {
   /// Deterministic 7-day summary across all four domains.
   static String buildDigest(AppStore store) {
     final now = DateTime.now();
-    final from = DateTime(now.year, now.month, now.day).subtract(const Duration(days: 6));
+    final from = DateTime(now.year, now.month, now.day - 6);
     final fromMs = from.millisecondsSinceEpoch;
 
     final finished = store.history.where((h) => h.startedAt >= fromMs).toList();
@@ -121,7 +121,10 @@ class NotifyService {
     final now = DateTime.now();
     var when = DateTime(now.year, now.month, now.day,
         store.coachMinutes ~/ 60, store.coachMinutes % 60);
-    if (!when.isAfter(now)) when = when.add(const Duration(days: 1));
+    if (!when.isAfter(now)) {
+      when = DateTime(now.year, now.month, now.day + 1,
+          store.coachMinutes ~/ 60, store.coachMinutes % 60);
+    }
     final tzWhen = tz.TZDateTime.from(when, tz.local);
 
     // Schedule instantly with the on-device digest; then (never blocking the
