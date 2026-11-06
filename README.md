@@ -1,12 +1,13 @@
 # Compounder
 
-A privacy-first, open-source **life tracker that compounds** — health, wealth and mind in one app,
-for **Android and iOS**, powered by **whatever AI you bring**. Built with Flutter.
+**A life assistant that does the work, not just the tracking.** Tell it what you ate and it drafts
+the meal entry. Say "starting push day" and it creates the workout and adds your sets. Ask how your
+training and your mood have actually been trending and it answers from your own data — health,
+wealth and mind in one app, for **Android and iOS**.
 
-Compounder grew out of [OpenFit](https://github.com/barrydeen/openfit) (lifting + macro tracking)
-and expands it into a single place for every area of life you want to get 1% better at, every day.
-It has no accounts, no cloud, no trackers, no ads. All data lives in a local SQLite database on
-your device, and you can export/import a single backup JSON file whenever you want.
+Every change stays yours to approve: the coach says what it is about to write, then waits for your
+OK. Compounder grew out of [OpenFit](https://github.com/barrydeen/openfit) (lifting + macro
+tracking) and expands it into one place for every area of life you want to get 1% better at.
 
 ## The four domains
 
@@ -36,16 +37,23 @@ your device, and you can export/import a single backup JSON file whenever you wa
   `getWorkouts`, `getNutrition`, `getExerciseProgress`, `getNetWorth`, `getMindLog`, and write
   tools (`logMeal`, `logMood`, `startWorkout`, `addSet`) it will confirm before using.
 - Works with any OpenAI-compatible endpoint you configure (Ollama, llama.cpp, LM Studio,
-  LiteLLM, OpenRouter, …) — including fully offline LAN models.
+  LiteLLM, OpenRouter, …).
+- **Setup today:** the coach needs a base URL, API key and model name entered in Settings — it is
+  wired to whatever endpoint you point it at, not to a service of ours. A hosted option that works
+  out of the box is planned; until then, expect to bring a key.
 - Optional **daily digest notification** across workouts, meals, money and mood, scheduled
   entirely on-device (no push servers, no Google services).
 
-## Privacy
+## Trust and privacy
 
-- **No trackers, analytics or ads.** Network access exists solely to reach the AI endpoint *you*
-  configure — meal photos and conversation data go only there.
+- **No accounts, no cloud, no ads, no trackers.** There is nothing to sign up for and no server of
+  ours holding your life data.
+- **Your data is yours to take.** Everything lives in a local SQLite database on your device, and
+  you can export/import a single backup JSON file whenever you want.
 - **Local-only storage** (SQLite via `sqflite` + `shared_preferences`). Health Connect is read
   on-device with Google's local API; no Google account or cloud sync is involved.
+- **Network access is only the AI endpoint.** It exists solely to reach the endpoint *you*
+  configure — meal photos and conversation data go only there.
 - **Health data is opt-in.** When you ask the coach about sleep, heart rate or recovery, summarized
   health data is sent to your configured AI endpoint. Raw records stay in the local database and
   can be deleted from Settings.
@@ -90,7 +98,7 @@ flutter run --dart-define=LLM_BASE_URL=http://192.168.0.117:4000/v1 \
 - **Data** — single `compounder.db` (exercises, workouts, sets, meals, accounts, moods,
   meditations, thought records).
 - **AI** — `llm/llm.dart` (OpenAI-compatible chat + tool calling + vision meal analysis),
-  `coach/agent.dart` (tool loop), `coach/tools.dart` (nine tools across all domains).
+  `coach/agent.dart` (tool loop), `coach/tools.dart` (20 tools across all domains).
 - **Domain** — pure, unit-tested math in `domain/domain.dart` (e1RM, units, wealth, mind streaks).
 - **Services** — JSON backup export/import, on-device daily-notification scheduling.
 
