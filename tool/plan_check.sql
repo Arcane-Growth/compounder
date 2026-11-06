@@ -1,5 +1,7 @@
--- Reproduces the v7 schema from lib/data/store.dart and prints the query plans
--- for the five hot paths the baseline audit flagged (m1). Run with:
+-- Reproduces the non-health tables the five hot-path plans touch (baseline
+-- audit m1) and prints those plans before and after the v8/v9 indexes. It is
+-- not the full schema: health_daily and health_sync_state are omitted because
+-- none of the five plans reference them. Run with:
 --   sqlite3 :memory: < tool/plan_check.sql
 CREATE TABLE exercises(
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, muscle_group TEXT NOT NULL,
@@ -53,20 +55,20 @@ CREATE TABLE IF NOT EXISTS health_records(
 CREATE INDEX IF NOT EXISTS idx_health_records_type_date ON health_records(type, date_from);
 CREATE INDEX IF NOT EXISTS idx_health_records_date ON health_records(date_from);
 
-.print '=== workout_sets by workout_exercise_id (store.dart:348)'
+.print '=== workout_sets by workout_exercise_id (store.dart:408)'
 EXPLAIN QUERY PLAN SELECT * FROM workout_sets WHERE workout_exercise_id = 1 ORDER BY position;
-.print '=== workout_exercises by workout_id (store.dart:341)'
+.print '=== workout_exercises by workout_id (store.dart:401)'
 EXPLAIN QUERY PLAN SELECT * FROM workout_exercises WHERE workout_id = 1 ORDER BY position;
-.print '=== meals by timestamp (store.dart:224)'
+.print '=== meals by timestamp (store.dart:284)'
 EXPLAIN QUERY PLAN SELECT * FROM meals ORDER BY timestamp DESC;
-.print '=== balance_snapshots join (store.dart:235)'
+.print '=== balance_snapshots join (store.dart:297)'
 EXPLAIN QUERY PLAN SELECT s.account_id, s.balance, s.taken_at, a.type
   FROM balance_snapshots s JOIN accounts a ON a.id = s.account_id ORDER BY s.taken_at;
-.print '=== reminders due_at (store.dart:257)'
+.print '=== reminders due_at (store.dart:317)'
 EXPLAIN QUERY PLAN SELECT * FROM reminders WHERE due_at > 0 ORDER BY due_at;
 
 -- v8 migration (lib/data/store.dart _createV8Indexes)
-CREATE INDEX IF NOT EXISTS idx_workout_sets_exercise ON workout_sets(workout_exercise_id);
+CREATE INDEX IF NOT EXISTS idx_workout_sets_workout_exercise_id ON workout_sets(workout_exercise_id);
 CREATE INDEX IF NOT EXISTS idx_workout_exercises_workout ON workout_exercises(workout_id);
 CREATE INDEX IF NOT EXISTS idx_meals_timestamp ON meals(timestamp);
 CREATE INDEX IF NOT EXISTS idx_balance_snapshots_account_taken ON balance_snapshots(account_id, taken_at);
@@ -74,14 +76,25 @@ CREATE INDEX IF NOT EXISTS idx_reminders_due_at ON reminders(due_at);
 
 .print ''
 .print '=== AFTER v8 ==='
-.print '=== workout_sets by workout_exercise_id (store.dart:348)'
+.print '=== workout_sets by workout_exercise_id (store.dart:408)'
 EXPLAIN QUERY PLAN SELECT * FROM workout_sets WHERE workout_exercise_id = 1 ORDER BY position;
-.print '=== workout_exercises by workout_id (store.dart:341)'
+.print '=== workout_exercises by workout_id (store.dart:401)'
 EXPLAIN QUERY PLAN SELECT * FROM workout_exercises WHERE workout_id = 1 ORDER BY position;
-.print '=== meals by timestamp (store.dart:224)'
+.print '=== meals by timestamp (store.dart:284)'
 EXPLAIN QUERY PLAN SELECT * FROM meals ORDER BY timestamp DESC;
-.print '=== balance_snapshots join (store.dart:235)'
+.print '=== balance_snapshots join (store.dart:297)'
 EXPLAIN QUERY PLAN SELECT s.account_id, s.balance, s.taken_at, a.type
   FROM balance_snapshots s JOIN accounts a ON a.id = s.account_id ORDER BY s.taken_at;
-.print '=== reminders due_at (store.dart:257)'
+.print '=== reminders due_at (store.dart:317)'
 EXPLAIN QUERY PLAN SELECT * FROM reminders WHERE due_at > 0 ORDER BY due_at;
+
+-- v9 migration (lib/data/store.dart _createV9Indexes)
+CREATE INDEX IF NOT EXISTS idx_balance_snapshots_taken ON balance_snapshots(taken_at, account_id, balance);
+
+.print ''
+.print '=== AFTER v9 ==='
+.print '=== balance_snapshots join (store.dart:297)'
+EXPLAIN QUERY PLAN SELECT s.account_id, s.balance, s.taken_at, a.type
+  FROM balance_snapshots s JOIN accounts a ON a.id = s.account_id ORDER BY s.taken_at;
+.print '=== deleteAccount (store.dart:696)'
+EXPLAIN QUERY PLAN DELETE FROM balance_snapshots WHERE account_id = 7;

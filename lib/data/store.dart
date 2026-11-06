@@ -64,7 +64,7 @@ class AppStore extends ChangeNotifier {
   static Future<AppStore> open(SharedPreferences prefs, {String? path}) async {
     path ??= p.join(await getDatabasesPath(), 'compounder.db');
     final db = await openDatabase(path,
-        version: 8, onCreate: _createSchema, onUpgrade: _upgradeSchema);
+        version: 9, onCreate: _createSchema, onUpgrade: _upgradeSchema);
     final store = AppStore._(db, prefs);
     await store.refreshAll();
     return store;
@@ -103,6 +103,7 @@ class AppStore extends ChangeNotifier {
     await _createV2Tables(db);
     await _createV3Tables(db);
     await _createV8Indexes(db);
+    await _createV9Indexes(db);
   }
 
   static Future<void> _createV2Tables(Database db) async {
@@ -172,10 +173,33 @@ class AppStore extends ChangeNotifier {
     if (oldVersion < 8) {
       // Every non-health table was created without indexes, so the hot paths
       // (workout detail, meal list, net-worth series, due reminders) were full
-      // table scans plus a temp B-tree for the ORDER BY. Indexes are additive:
-      // no row is rewritten, so existing data is untouched. IF NOT EXISTS keeps
-      // the step safe to re-run on a partially applied migration.
+      // table scans. Indexes are additive: no row is rewritten, so existing
+      // data is untouched. IF NOT EXISTS keeps the step safe to re-run on a
+      // partially applied migration.
+      //
+      // What the indexes actually buy, measured with EXPLAIN QUERY PLAN on
+      // populated tables: `meals` and `reminders` become index scans/searches
+      // with no temp B-tree. `balance_snapshots` becomes a covering index scan
+      // ordered by taken_at, also with no temp B-tree. `workout_sets` and
+      // `workout_exercises` become index searches on the WHERE column but still
+      // build a temp B-tree to satisfy `ORDER BY position`, because the index
+      // does not carry `position`. That residual sort is small (one exercise's
+      // sets, one workout's entries) and is left as-is rather than widening the
+      // indexes to composite shapes.
       await _createV8Indexes(db);
+    }
+    if (oldVersion < 9) {
+      // v8 shipped `idx_balance_snapshots_account_taken(account_id, taken_at)`,
+      // which cannot serve the net-worth series: that query has no account_id
+      // predicate and orders by taken_at, so SQLite used the index only as a
+      // scan and still built a temp B-tree — measurably slower than no index at
+      // 300k rows. v9 adds the covering shape the query actually needs. The
+      // account_id-leading index is kept because deleteAccount filters on
+      // account_id alone and, without it, SQLite falls back to a full SCAN.
+      //
+      // Also renames the workout_sets index to match the column it indexes.
+      // Indexes hold no user data, so dropping and recreating them is safe.
+      await _createV9Indexes(db);
     }
   }
 
@@ -183,7 +207,7 @@ class AppStore extends ChangeNotifier {
   /// onCreate and a re-run of the 7->8 upgrade can call it.
   static Future<void> _createV8Indexes(Database db) async {
     await db.execute(
-        'CREATE INDEX IF NOT EXISTS idx_workout_sets_exercise ON workout_sets(workout_exercise_id)');
+        'CREATE INDEX IF NOT EXISTS idx_workout_sets_workout_exercise_id ON workout_sets(workout_exercise_id)');
     await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_workout_exercises_workout ON workout_exercises(workout_id)');
     await db.execute(
@@ -192,6 +216,18 @@ class AppStore extends ChangeNotifier {
         'CREATE INDEX IF NOT EXISTS idx_balance_snapshots_account_taken ON balance_snapshots(account_id, taken_at)');
     await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_reminders_due_at ON reminders(due_at)');
+  }
+
+  /// Schema v9: the covering index the net-worth series needs, plus the
+  /// workout_sets index rename. Idempotent, and safe to re-run.
+  static Future<void> _createV9Indexes(Database db) async {
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_balance_snapshots_taken ON balance_snapshots(taken_at, account_id, balance)');
+    // Rename: the v8 name did not match the column it indexes. DROP then
+    // CREATE, both idempotent; an index carries no user data.
+    await db.execute('DROP INDEX IF EXISTS idx_workout_sets_exercise');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_workout_sets_workout_exercise_id ON workout_sets(workout_exercise_id)');
   }
 
   /// Adds [column] to [table] only when it is absent, so a partially applied
