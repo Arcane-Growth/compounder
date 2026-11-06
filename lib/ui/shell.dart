@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../health/service.dart';
 
 import 'coach.dart';
+import 'drawer.dart';
 import 'home.dart';
 import 'macros.dart';
 import 'mind.dart';
@@ -17,6 +18,7 @@ class ShellScreen extends StatefulWidget {
 }
 
 class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
   int _index = 0;
 
   @override
@@ -44,15 +46,23 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(
-        index: _index,
-        children: const [
-          HomeTab(),
-          MacrosTab(),
-          WealthTab(),
-          MindTab(),
-          CoachTab(),
-        ],
+      key: _scaffoldKey,
+      drawer: AppDrawer(
+        currentIndex: _index,
+        onSelectTab: (i) => setState(() => _index = i),
+      ),
+      body: ShellNav(
+        openDrawer: () => _scaffoldKey.currentState?.openDrawer(),
+        child: IndexedStack(
+          index: _index,
+          children: const [
+            HomeTab(),
+            MacrosTab(),
+            WealthTab(),
+            MindTab(),
+            CoachTab(),
+          ],
+        ),
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../data/store.dart';
 import '../domain/domain.dart';
 import 'breathing.dart';
+import 'drawer.dart';
 import 'widgets.dart';
 
 class MindTab extends StatefulWidget {
@@ -53,6 +54,7 @@ class _MindTabState extends State<MindTab> {
 
     return Scaffold(
       appBar: AppBar(
+        leading: const DrawerMenuButton(),
         title: Row(children: [
           TintedIconCircle(Icons.psychology,
               background: scheme.primary, foreground: scheme.onPrimary),

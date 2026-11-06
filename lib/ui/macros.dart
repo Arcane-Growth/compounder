@@ -11,6 +11,7 @@ import '../data/models.dart';
 import '../data/store.dart';
 import '../domain/domain.dart';
 import '../llm/llm.dart';
+import 'drawer.dart';
 import 'widgets.dart';
 
 class MacrosTab extends StatelessWidget {
@@ -29,6 +30,7 @@ class MacrosTab extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
+        leading: const DrawerMenuButton(),
         title: Row(children: [
           TintedIconCircle(Icons.restaurant,
               background: scheme.primary, foreground: scheme.onPrimary),

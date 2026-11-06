@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../data/models.dart';
 import '../data/store.dart';
 import '../domain/domain.dart';
+import 'drawer.dart';
 import 'widgets.dart';
 
 class WealthTab extends StatelessWidget {
@@ -24,6 +25,7 @@ class WealthTab extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
+        leading: const DrawerMenuButton(),
         title: Row(children: [
           TintedIconCircle(Icons.insights,
               background: scheme.primary, foreground: scheme.onPrimary),

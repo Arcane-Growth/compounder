@@ -13,6 +13,7 @@ import '../health/service.dart';
 import '../llm/attachments.dart';
 import '../llm/llm.dart';
 import '../services/notify.dart';
+import 'drawer.dart';
 
 class CoachMessage {
   final String role;
@@ -174,6 +175,7 @@ class _CoachTabState extends State<CoachTab> {
 
     return Scaffold(
       appBar: AppBar(
+        leading: const DrawerMenuButton(),
         title: const Text('Coach'),
         actions: [
           IconButton(

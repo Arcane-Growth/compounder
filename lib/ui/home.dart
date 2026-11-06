@@ -4,10 +4,10 @@ import 'package:provider/provider.dart';
 import '../data/models.dart';
 import '../data/store.dart';
 import '../domain/domain.dart';
+import 'drawer.dart';
 import 'health.dart';
 import 'history.dart';
 import 'progress.dart';
-import 'settings.dart';
 import 'summary.dart';
 import 'widgets.dart';
 import 'workout.dart';
@@ -23,20 +23,13 @@ class HomeTab extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
+        leading: const DrawerMenuButton(),
         title: Row(children: [
           TintedIconCircle(Icons.fitness_center,
               background: scheme.primary, foreground: scheme.onPrimary),
           const SizedBox(width: 10),
           Text('Compounder', style: t.titleLarge),
         ]),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings),
-            tooltip: 'Settings',
-            onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const SettingsScreen())),
-          ),
-        ],
       ),
       body: FutureBuilder<Workout?>(
         future: store.activeWorkout(),
