@@ -67,8 +67,8 @@ EXPLAIN QUERY PLAN SELECT s.account_id, s.balance, s.taken_at, a.type
 .print '=== reminders due_at (store.dart:317)'
 EXPLAIN QUERY PLAN SELECT * FROM reminders WHERE due_at > 0 ORDER BY due_at;
 
--- v8 migration (lib/data/store.dart _createV8Indexes)
-CREATE INDEX IF NOT EXISTS idx_workout_sets_workout_exercise_id ON workout_sets(workout_exercise_id);
+-- v8 migration (lib/data/store.dart _createV8Indexes, as shipped in e84c232)
+CREATE INDEX IF NOT EXISTS idx_workout_sets_exercise ON workout_sets(workout_exercise_id);
 CREATE INDEX IF NOT EXISTS idx_workout_exercises_workout ON workout_exercises(workout_id);
 CREATE INDEX IF NOT EXISTS idx_meals_timestamp ON meals(timestamp);
 CREATE INDEX IF NOT EXISTS idx_balance_snapshots_account_taken ON balance_snapshots(account_id, taken_at);
@@ -88,8 +88,11 @@ EXPLAIN QUERY PLAN SELECT s.account_id, s.balance, s.taken_at, a.type
 .print '=== reminders due_at (store.dart:317)'
 EXPLAIN QUERY PLAN SELECT * FROM reminders WHERE due_at > 0 ORDER BY due_at;
 
--- v9 migration (lib/data/store.dart _createV9Indexes)
+-- v9 migration (lib/data/store.dart _createV9Indexes): adds the covering
+-- balance_snapshots index and renames the workout_sets index.
 CREATE INDEX IF NOT EXISTS idx_balance_snapshots_taken ON balance_snapshots(taken_at, account_id, balance);
+DROP INDEX IF EXISTS idx_workout_sets_exercise;
+CREATE INDEX IF NOT EXISTS idx_workout_sets_workout_exercise_id ON workout_sets(workout_exercise_id);
 
 .print ''
 .print '=== AFTER v9 ==='

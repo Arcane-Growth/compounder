@@ -203,7 +203,7 @@ class AppStore extends ChangeNotifier {
     }
   }
 
-  /// Indexes for the non-health tables (schema v8). Idempotent so both
+  /// Indexes for the non-health tables (schema v8/v9). Idempotent so both
   /// onCreate and a re-run of the 7->8 upgrade can call it.
   static Future<void> _createV8Indexes(Database db) async {
     await db.execute(

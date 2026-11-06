@@ -10,11 +10,25 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 /// These tests pin the upgrade path (existing data survives, indexes appear)
 /// and the query plans (no full scans, and no temp B-tree where the index can
 /// satisfy the ORDER BY).
+
+/// Index name -> the table it must be created on. The table is load-bearing:
+/// a name-only check would pass an index that was created on the wrong table.
 const _indexes = <String, String>{
   'idx_workout_sets_workout_exercise_id': 'workout_sets',
   'idx_workout_exercises_workout': 'workout_exercises',
   'idx_meals_timestamp': 'meals',
   'idx_balance_snapshots_taken': 'balance_snapshots',
+  'idx_balance_snapshots_account_taken': 'balance_snapshots',
+  'idx_reminders_due_at': 'reminders',
+};
+
+/// The v8 index set, as shipped in e84c232: the workout_sets index carried the
+/// old name. v8 and v9 have identical tables, so a database with these indexes
+/// and `user_version = 8` is exactly what an existing v8 install looks like.
+const _v8OnlyIndexes = <String, String>{
+  'idx_workout_sets_exercise': 'workout_sets',
+  'idx_workout_exercises_workout': 'workout_exercises',
+  'idx_meals_timestamp': 'meals',
   'idx_balance_snapshots_account_taken': 'balance_snapshots',
   'idx_reminders_due_at': 'reminders',
 };
@@ -54,6 +68,30 @@ const _plans = <String, ({String sql, bool avoidsTempBTree})>{
 Future<String> _plan(Database db, String sql) async {
   final rows = await db.rawQuery('EXPLAIN QUERY PLAN $sql');
   return rows.map((r) => r['detail'] as String).join('\n');
+}
+
+/// The table an index is actually defined on, or null when it does not exist.
+Future<String?> _indexTable(Database db, String index) async {
+  final rows = await db.rawQuery(
+      "SELECT tbl_name FROM sqlite_master WHERE type = 'index' AND name = ?",
+      [index]);
+  return rows.isEmpty ? null : rows.single['tbl_name'] as String;
+}
+
+/// The indexed columns in index order, as reported by SQLite itself.
+Future<List<String>> _indexColumns(Database db, String index) async {
+  final rows = await db.rawQuery('PRAGMA index_info($index)');
+  return rows.map((r) => r['name'] as String).toList();
+}
+
+/// Asserts every index in [expected] exists and is defined on the table it is
+/// declared for, so a name-only match cannot hide a misplaced index.
+Future<void> _expectIndexesOnTables(
+    Database db, Map<String, String> expected) async {
+  for (final entry in expected.entries) {
+    expect(await _indexTable(db, entry.key), entry.value,
+        reason: '${entry.key} must be an index on ${entry.value}');
+  }
 }
 
 /// True when [line] names an index, covering or otherwise. A covering index
@@ -138,14 +176,12 @@ void main() {
     final store = await AppStore.open(prefs, path: path);
     expect(await store.db.getVersion(), 9);
 
-    final rows = await store.db
-        .rawQuery("SELECT name FROM sqlite_master WHERE type = 'index'");
-    final names = rows.map((r) => r['name'] as String).toSet();
-    for (final index in _indexes.keys) {
-      expect(names, contains(index), reason: '$index must exist');
-    }
-    expect(names, isNot(contains('idx_workout_sets_exercise')),
+    await _expectIndexesOnTables(store.db, _indexes);
+    expect(await _indexTable(store.db, 'idx_workout_sets_exercise'), isNull,
         reason: 'the v8 index name must be gone after the v9 rename');
+    expect(await _indexColumns(store.db, 'idx_balance_snapshots_taken'),
+        ['taken_at', 'account_id', 'balance'],
+        reason: 'the net-worth index must be covering, in this column order');
     await store.db.close();
   });
 
@@ -271,13 +307,129 @@ void main() {
     final stamps = await store.db.query('health_sync_state');
     expect(stamps.map((r) => r['metric']).toSet(), {'STEPS', 'HEART_RATE'});
 
-    final rows = await store.db
-        .rawQuery("SELECT name FROM sqlite_master WHERE type = 'index'");
-    final names = rows.map((r) => r['name'] as String).toSet();
-    for (final index in _indexes.keys) {
-      expect(names, contains(index), reason: '$index must be added by v8/v9');
+    await _expectIndexesOnTables(store.db, _indexes);
+    expect(await _indexTable(store.db, 'idx_workout_sets_exercise'), isNull);
+    await store.db.close();
+  });
+
+  test('upgrade 8 -> 9 replaces the index shapes on a real v8 database',
+      () async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // Build a genuine v8 database: the v8 index set (old workout_sets name, no
+    // covering balance_snapshots index) with `user_version = 8`. This is the
+    // exact state every existing install is in, so this test drives the
+    // production `oldVersion == 8` path that the 4->9 and 7->9 tests skip.
+    var store = await AppStore.open(prefs, path: path);
+    final workoutId = await store.db.insert('workouts', {
+      'name': 'Push day',
+      'started_at': 1000,
+      'ended_at': 2000,
+    });
+    final entryId = await store.db.insert('workout_exercises', {
+      'workout_id': workoutId,
+      'exercise_id': 1,
+      'position': 0,
+    });
+    await store.db.insert('workout_sets', {
+      'workout_exercise_id': entryId,
+      'position': 0,
+      'weight_kg': 80.0,
+      'reps': 8,
+      'completed_at': 1500,
+      'is_warmup': 0,
+    });
+    await store.db.insert('meals', {
+      'timestamp': 3000,
+      'dish': 'Rice',
+      'calories': 500.0,
+      'protein': 25.0,
+      'carbs': 60.0,
+      'fat': 10.0,
+    });
+    final accountId = await store.db.insert('accounts', {
+      'name': 'Savings',
+      'type': 'Cash',
+      'balance': 2500.0,
+      'updated_at': 4000,
+    });
+    for (var i = 0; i < 3; i++) {
+      await store.db.insert('balance_snapshots', {
+        'account_id': accountId,
+        'balance': 2500.0 + i,
+        'taken_at': 4000 + i,
+      });
     }
-    expect(names, isNot(contains('idx_workout_sets_exercise')));
+    await store.db.insert('reminders', {
+      'text': 'Log weight',
+      'due_at': 5000,
+      'created_at': 4500,
+    });
+    await store.db.insert('moods', {
+      'timestamp': 6000,
+      'mood': 4,
+      'note': 'ok',
+    });
+    await store.db.insert('thought_records', {
+      'timestamp': 7000,
+      'situation': 's',
+      'thought': 't',
+      'reframe': 'r',
+    });
+
+    // Rewind to the v8 index set.
+    await store.db.execute('DROP INDEX IF EXISTS idx_balance_snapshots_taken');
+    await store.db
+        .execute('DROP INDEX IF EXISTS idx_workout_sets_workout_exercise_id');
+    await store.db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_workout_sets_exercise ON workout_sets(workout_exercise_id)');
+    await store.db.setVersion(8);
+    expect(await store.db.getVersion(), 8);
+
+    // The database really is v8-shaped before the upgrade runs.
+    await _expectIndexesOnTables(store.db, _v8OnlyIndexes);
+    expect(await _indexTable(store.db, 'idx_balance_snapshots_taken'), isNull,
+        reason: 'a v8 database has no covering balance_snapshots index');
+    await store.db.close();
+
+    store = await AppStore.open(prefs, path: path);
+    expect(await store.db.getVersion(), 9);
+
+    // The v9 step must have replaced both index shapes.
+    expect(await _indexTable(store.db, 'idx_balance_snapshots_taken'),
+        'balance_snapshots',
+        reason: 'v9 must add the covering balance_snapshots index');
+    expect(await _indexColumns(store.db, 'idx_balance_snapshots_taken'),
+        ['taken_at', 'account_id', 'balance'],
+        reason: 'the net-worth index must be covering, in this column order');
+    expect(await _indexTable(store.db, 'idx_workout_sets_exercise'), isNull,
+        reason: 'v9 must drop the v8 workout_sets index name');
+    expect(await _indexTable(store.db, 'idx_workout_sets_workout_exercise_id'),
+        'workout_sets',
+        reason: 'v9 must create the renamed workout_sets index');
+    // The v8 indexes that v9 does not touch must survive the upgrade.
+    await _expectIndexesOnTables(store.db, {
+      for (final entry in _v8OnlyIndexes.entries)
+        if (entry.key != 'idx_workout_sets_exercise') entry.key: entry.value,
+    });
+
+    // No data loss: every seeded row is still there, with its values intact.
+    expect(await store.db.query('workouts'), hasLength(1));
+    expect(await store.db.query('workout_exercises'), hasLength(1));
+    expect(await store.db.query('workout_sets'), hasLength(1));
+    expect(await store.db.query('meals'), hasLength(1));
+    expect(await store.db.query('accounts'), hasLength(1));
+    expect(await store.db.query('balance_snapshots'), hasLength(3));
+    expect(await store.db.query('reminders'), hasLength(1));
+    expect(await store.db.query('moods'), hasLength(1));
+    expect(await store.db.query('thought_records'), hasLength(1));
+    final set = (await store.db.query('workout_sets')).single;
+    expect(set['weight_kg'], 80.0);
+    expect(set['reps'], 8);
+    final snapshots =
+        await store.db.query('balance_snapshots', orderBy: 'taken_at');
+    expect(
+        snapshots.map((r) => r['balance']).toList(), [2500.0, 2501.0, 2502.0]);
     await store.db.close();
   });
 
@@ -334,8 +486,19 @@ void main() {
         contains('idx_workout_exercises_workout'));
     expect(await _plan(store.db, _plans['meals by timestamp']!.sql),
         contains('idx_meals_timestamp'));
-    expect(await _plan(store.db, _plans['balance_snapshots join']!.sql),
-        contains('idx_balance_snapshots_taken'));
+    // The net-worth query has no account_id predicate, so the only plan that
+    // avoids a temp B-tree is a *covering* scan of the taken_at-leading index.
+    // Pinning the name alone accepts a non-covering
+    // `CREATE INDEX ... ON balance_snapshots(taken_at)`, which still sorts.
+    final netWorthPlan =
+        await _plan(store.db, _plans['balance_snapshots join']!.sql);
+    expect(netWorthPlan,
+        contains('USING COVERING INDEX idx_balance_snapshots_taken'),
+        reason:
+            'the net-worth index must be covering, plan was:\n$netWorthPlan');
+    expect(await _indexColumns(store.db, 'idx_balance_snapshots_taken'),
+        ['taken_at', 'account_id', 'balance'],
+        reason: 'the net-worth index must cover exactly the queried columns');
     expect(await _plan(store.db, _plans['reminders due_at']!.sql),
         contains('idx_reminders_due_at'));
 
