@@ -18,16 +18,28 @@ dependencies:
   http: ^1.2.2
   fl_chart: ^0.69.2
   image_picker: ^1.1.2
-  share_plus: ^10.1.2
-  file_picker: ^8.1.6
+  share_plus: ^13.3.1
+  file_picker: ^13.3.2
   flutter_local_notifications: ^18.0.1
   timezone: ^0.9.4
-  flutter_timezone: ^3.0.1
-  intl: ^0.19.0
+  flutter_timezone: ^5.1.1
+  intl: ^0.20.2
   gpt_markdown: ^1.2.1
   pdfx: ^2.11.0
-  health: ^13.3.1
+  health: ^13.3.2
   permission_handler: ^12.0.1
+
+# health 13.3.2 and pdfx 2.11.0 still apply the Kotlin Gradle Plugin
+# unconditionally in their published Android build scripts, which Flutter
+# flags as a deprecation. The copies under third_party/ are byte-identical
+# apart from that guard (pluginManager.apply instead of apply plugin:), so
+# they build with AGP 9 built-in Kotlin. Drop these overrides once upstream
+# ships the same fix.
+dependency_overrides:
+  health:
+    path: third_party/health
+  pdfx:
+    path: third_party/pdfx
 
 dev_dependencies:
   flutter_test:

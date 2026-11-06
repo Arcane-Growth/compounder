@@ -612,8 +612,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onPressed: () async {
                     try {
                       final path = await BackupService.export(store);
-                      await Share.shareXFiles([XFile(path)],
-                          subject: 'Compounder backup');
+                      await SharePlus.instance.share(ShareParams(
+                          files: [XFile(path)],
+                          subject: 'Compounder backup'));
                     } catch (e) {
                       snack('Export failed: $e');
                     }
@@ -626,9 +627,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   icon: const Icon(Icons.file_upload_outlined),
                   label: const Text('Import backup (replaces local data)'),
                   onPressed: () async {
-                    final picked = await FilePicker.platform.pickFiles(
+                    final picked = await FilePicker.pickFile(
                         type: FileType.custom, allowedExtensions: ['json']);
-                    final path = picked?.files.single.path;
+                    final path = picked?.path;
                     if (path == null || !context.mounted) return;
                     final ok = await showDialog<bool>(
                       context: context,

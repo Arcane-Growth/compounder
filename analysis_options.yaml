@@ -14,6 +14,9 @@ analyzer:
     - build/**
     - android/**
     - ios/**
+    # Vendored plugin copies; their own dev-only files (e.g. pdfx/pigeons) are
+    # not resolvable from the app's dependency graph.
+    - third_party/**
 
 linter:
   # The lint rules applied to this project can be customized in the

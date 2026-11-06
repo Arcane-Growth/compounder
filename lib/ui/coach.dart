@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -77,16 +76,14 @@ class _CoachTabState extends State<CoachTab> {
   Future<void> _attachFiles() async {
     setState(() => attaching = true);
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final files = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: Attachment.supportedExtensions,
-        allowMultiple: true,
-        withData: true,
       );
-      if (result == null) return;
+      if (files.isEmpty) return;
       final picked = <Attachment>[];
-      for (final file in result.files) {
-        final bytes = file.bytes ?? await _readFromPath(file);
+      for (final file in files) {
+        final bytes = await _readBytes(file);
         if (bytes != null) picked.add(Attachment(file.name, bytes));
       }
       setState(() => attachments = [...attachments, ...picked]);
@@ -95,11 +92,9 @@ class _CoachTabState extends State<CoachTab> {
     }
   }
 
-  Future<Uint8List?> _readFromPath(PlatformFile file) async {
-    final path = file.path;
-    if (path == null) return null;
+  Future<Uint8List?> _readBytes(PlatformFile file) async {
     try {
-      return await File(path).readAsBytes();
+      return await file.readAsBytes();
     } catch (_) {
       return null;
     }
