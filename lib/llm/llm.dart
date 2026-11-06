@@ -136,7 +136,17 @@ class Draft {
 }
 
 /// Photo → nutrition draft using the user's vision-capable endpoint.
-Future<Draft> analyzeMealPhoto(ChatClient client, List<int> imageBytes, String mime, List<Meal> recent) async {
+///
+/// [note] is an optional user description of the food ("two slices, no
+/// cheese"); when present it is appended to the vision prompt so the model can
+/// size portions instead of guessing from pixels alone.
+Future<Draft> analyzeMealPhoto(ChatClient client, List<int> imageBytes, String mime, List<Meal> recent,
+    {String? note}) async {
+  final description = (note ?? '').trim();
+  final prompt = description.isEmpty
+      ? 'Analyze the nutrients of the food in this photo.'
+      : 'Analyze the nutrients of the food in this photo. The user describes it as: $description';
+
   final historyText = recent
       .take(12)
       .map((m) => "- '${m.dish}': ${m.calories.round()} kcal, P ${m.protein.round()}g, C ${m.carbs.round()}g, F ${m.fat.round()}g")
@@ -163,7 +173,7 @@ Future<Draft> analyzeMealPhoto(ChatClient client, List<int> imageBytes, String m
             {
               'role': 'user',
               'content': [
-                {'type': 'text', 'text': 'Analyze the nutrients of the food in this photo.'},
+                {'type': 'text', 'text': prompt},
                 {
                   'type': 'image_url',
                   'image_url': {'url': 'data:$mime;base64,${base64Encode(imageBytes)}'}

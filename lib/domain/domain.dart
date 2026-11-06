@@ -1,5 +1,7 @@
 import 'dart:math' as math;
 
+import 'package:intl/intl.dart';
+
 // ---------------------------------------------------------------- fitness
 
 double epley(double weightKg, int reps) {
@@ -121,6 +123,17 @@ String trimZero(double value) {
       ? rounded.toStringAsFixed(0)
       : rounded.toStringAsFixed(1);
 }
+
+/// Whole numbers with thousands separators: 12345 -> "12,345".
+///
+/// Fractions are truncated, not rounded (82.7 -> "82"), because these are
+/// counters and step totals where showing "83" would overstate the number.
+/// Grouping comes from intl with an explicit en_US pattern so the output does
+/// not change with device locale.
+final NumberFormat _countFormat = NumberFormat.decimalPattern('en_US')
+  ..maximumFractionDigits = 0;
+
+String formatCount(num value) => _countFormat.format(value.truncate());
 
 // ---------------------------------------------------------------- wealth
 

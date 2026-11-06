@@ -159,6 +159,10 @@ class Meal {
   final int timestamp;
   final String imagePath;
   final String dish;
+
+  /// Free-text note about the meal ("two slices, extra cheese"). Nullable so
+  /// rows written before schema v4 stay valid.
+  final String? description;
   final double calories;
   final double protein;
   final double carbs;
@@ -171,6 +175,7 @@ class Meal {
     required this.timestamp,
     required this.imagePath,
     required this.dish,
+    this.description,
     required this.calories,
     required this.protein,
     required this.carbs,
@@ -184,12 +189,55 @@ class Meal {
         timestamp: m['timestamp'] as int,
         imagePath: m['image_path'] as String? ?? '',
         dish: m['dish'] as String,
+        description: m['description'] as String?,
         calories: (m['calories'] as num).toDouble(),
         protein: (m['protein'] as num).toDouble(),
         carbs: (m['carbs'] as num).toDouble(),
         fat: (m['fat'] as num).toDouble(),
         foods: const [],
         isAuto: (m['is_auto'] as int) == 1,
+      );
+
+  /// Column map for the `meals` table. `foods` are stored separately as
+  /// `foods_json`, so callers that persist a meal must add that key.
+  Map<String, Object?> toMap() => {
+        if (id != 0) 'id': id,
+        'timestamp': timestamp,
+        'image_path': imagePath,
+        'dish': dish,
+        'description': description,
+        'calories': calories,
+        'protein': protein,
+        'carbs': carbs,
+        'fat': fat,
+        'is_auto': isAuto ? 1 : 0,
+      };
+
+  Meal copyWith({
+    int? id,
+    int? timestamp,
+    String? imagePath,
+    String? dish,
+    String? description,
+    double? calories,
+    double? protein,
+    double? carbs,
+    double? fat,
+    List<Food>? foods,
+    bool? isAuto,
+  }) =>
+      Meal(
+        id: id ?? this.id,
+        timestamp: timestamp ?? this.timestamp,
+        imagePath: imagePath ?? this.imagePath,
+        dish: dish ?? this.dish,
+        description: description ?? this.description,
+        calories: calories ?? this.calories,
+        protein: protein ?? this.protein,
+        carbs: carbs ?? this.carbs,
+        fat: fat ?? this.fat,
+        foods: foods ?? this.foods,
+        isAuto: isAuto ?? this.isAuto,
       );
 }
 

@@ -64,7 +64,7 @@ class AppStore extends ChangeNotifier {
   static Future<AppStore> open(SharedPreferences prefs) async {
     final path = p.join(await getDatabasesPath(), 'compounder.db');
     final db = await openDatabase(path,
-        version: 3, onCreate: _createSchema, onUpgrade: _upgradeSchema);
+        version: 4, onCreate: _createSchema, onUpgrade: _upgradeSchema);
     final store = AppStore._(db, prefs);
     await store.refreshAll();
     return store;
@@ -87,7 +87,8 @@ class AppStore extends ChangeNotifier {
       completed_at INTEGER, is_warmup INTEGER NOT NULL DEFAULT 0)''');
     await db.execute('''CREATE TABLE meals(
       id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp INTEGER NOT NULL, image_path TEXT NOT NULL DEFAULT '',
-      dish TEXT NOT NULL, calories REAL NOT NULL, protein REAL NOT NULL, carbs REAL NOT NULL, fat REAL NOT NULL,
+      dish TEXT NOT NULL, description TEXT, calories REAL NOT NULL, protein REAL NOT NULL,
+      carbs REAL NOT NULL, fat REAL NOT NULL,
       foods_json TEXT NOT NULL DEFAULT '[]', is_auto INTEGER NOT NULL DEFAULT 0)''');
     await db.execute('''CREATE TABLE accounts(
       id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, type TEXT NOT NULL, balance REAL NOT NULL,
@@ -123,6 +124,21 @@ class AppStore extends ChangeNotifier {
     if (oldVersion < 3) {
       await _createV3Tables(db);
     }
+    if (oldVersion < 4) {
+      // Column add is additive only: existing meal rows keep every value and
+      // simply read back a null description.
+      await _addColumnIfMissing(db, 'meals', 'description', 'TEXT');
+    }
+  }
+
+  /// Adds [column] to [table] only when it is absent, so a partially applied
+  /// migration can be re-run without throwing "duplicate column name".
+  static Future<void> _addColumnIfMissing(
+      Database db, String table, String column, String definition) async {
+    final info = await db.rawQuery('PRAGMA table_info($table)');
+    final exists = info.any((c) => c['name'] == column);
+    if (exists) return;
+    await db.execute('ALTER TABLE $table ADD COLUMN $column $definition');
   }
 
   static Future<void> _createV3Tables(Database db) async {
@@ -168,19 +184,10 @@ class AppStore extends ChangeNotifier {
     history = await loadHistory();
     meals = (await db.query('meals', orderBy: 'timestamp DESC')).map((m) {
       final meal = Meal.fromMap(m);
-      return Meal(
-        id: meal.id,
-        timestamp: meal.timestamp,
-        imagePath: meal.imagePath,
-        dish: meal.dish,
-        calories: meal.calories,
-        protein: meal.protein,
-        carbs: meal.carbs,
-        fat: meal.fat,
+      return meal.copyWith(
         foods: (jsonDecode(m['foods_json'] as String) as List)
             .map((f) => Food.fromJson(f.cast<String, Object?>()))
             .toList(),
-        isAuto: meal.isAuto,
       );
     }).toList();
     accounts = (await db.query('accounts', orderBy: 'balance DESC'))
@@ -514,21 +521,22 @@ class AppStore extends ChangeNotifier {
 
   // ------------------------------------------------------------ meals
 
+  Map<String, Object?> _mealRow(Meal meal) => meal.toMap()
+    ..['foods_json'] = jsonEncode(meal.foods.map((f) => f.toJson()).toList());
+
   Future<int> addMeal(Meal meal) async {
-    await db.insert('meals', {
-      if (meal.id != 0) 'id': meal.id,
-      'timestamp': meal.timestamp,
-      'image_path': meal.imagePath,
-      'dish': meal.dish,
-      'calories': meal.calories,
-      'protein': meal.protein,
-      'carbs': meal.carbs,
-      'fat': meal.fat,
-      'foods_json': jsonEncode(meal.foods.map((f) => f.toJson()).toList()),
-      'is_auto': meal.isAuto ? 1 : 0,
-    });
+    await db.insert('meals', _mealRow(meal));
     await refreshAll();
     return 0;
+  }
+
+  /// Updates the meal's existing row (matched by id). Never inserts: an
+  /// unknown id is a no-op, so a deleted meal cannot be resurrected.
+  Future<void> updateMeal(Meal meal) async {
+    if (meal.id == 0) return;
+    final row = _mealRow(meal)..remove('id');
+    await db.update('meals', row, where: 'id = ?', whereArgs: [meal.id]);
+    await refreshAll();
   }
 
   Future<void> deleteMeal(int id) async {

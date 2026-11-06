@@ -162,6 +162,7 @@ class CardRow extends StatelessWidget {
   final String title, subtitle;
   final String? trailing;
   final Widget? trailingAction;
+  final bool isThreeLine;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
   const CardRow({
@@ -171,6 +172,7 @@ class CardRow extends StatelessWidget {
     required this.subtitle,
     this.trailing,
     this.trailingAction,
+    this.isThreeLine = false,
     this.onTap,
     this.onLongPress,
   });
@@ -185,6 +187,7 @@ class CardRow extends StatelessWidget {
         contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
         onTap: onTap,
         onLongPress: onLongPress,
+        isThreeLine: isThreeLine,
         leading: TintedIconCircle(icon),
         title: Text(title, style: t.titleMedium),
         subtitle: Text(subtitle,

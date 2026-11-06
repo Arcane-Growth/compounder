@@ -207,4 +207,23 @@ void main() {
       expect(upside, greaterThan(0));
     });
   });
+
+  group('number formatting', () {
+    test('groups thousands for whole numbers', () {
+      expect(formatCount(0), '0');
+      expect(formatCount(999), '999');
+      expect(formatCount(1000), '1,000');
+      expect(formatCount(1234567), '1,234,567');
+    });
+
+    test('keeps the minus sign on negatives', () {
+      expect(formatCount(-1234), '-1,234');
+    });
+
+    test('truncates fractions instead of rounding', () {
+      expect(formatCount(82.3), '82');
+      expect(formatCount(82.9), '82');
+      expect(formatCount(12345.67), '12,345');
+    });
+  });
 }

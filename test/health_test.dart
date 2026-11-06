@@ -24,6 +24,42 @@ HealthRecord _rec(
       syncedAt: 0,
     );
 
+/// A fully staged Health Connect night: an 8h SLEEP_SESSION whose stage
+/// records add up to the whole session window, with 90 minutes awake.
+/// deep 60 + light 240 + rem 90 = 390 asleep, awake 90, in bed 480.
+List<SleepSegment> _stagedNightWithAwake() => [
+      SleepSegment(
+          uuid: 'session',
+          type: 'SLEEP_SESSION',
+          start: _at(1, 23),
+          end: _at(2, 7),
+          sourceName: 'watch'),
+      SleepSegment(
+          uuid: 'deep',
+          type: 'SLEEP_DEEP',
+          start: _at(1, 23),
+          end: _at(2, 0),
+          sourceName: 'watch'),
+      SleepSegment(
+          uuid: 'light',
+          type: 'SLEEP_LIGHT',
+          start: _at(2, 0),
+          end: _at(2, 4),
+          sourceName: 'watch'),
+      SleepSegment(
+          uuid: 'rem',
+          type: 'SLEEP_REM',
+          start: _at(2, 4),
+          end: _at(2, 5, 30),
+          sourceName: 'watch'),
+      SleepSegment(
+          uuid: 'awake',
+          type: 'SLEEP_AWAKE',
+          start: _at(2, 5, 30),
+          end: _at(2, 7),
+          sourceName: 'watch'),
+    ];
+
 void main() {
   group('sleep reconstruction', () {
     test('builds one night with stage totals and efficiency', () {
@@ -147,6 +183,140 @@ void main() {
       expect(sessions, hasLength(2));
       expect(sessions.first.date, '2026-01-02');
       expect(sessions.last.date, '2026-01-02');
+    });
+  });
+
+  group('sleep total is never under-reported', () {
+    test('a lone REM stage does not shrink a night that has a session record',
+        () {
+      // Regression: the old code summed only DEEP/LIGHT/REM whenever any of
+      // them existed, so a phone that synced one 90-minute REM stage reported
+      // 90 minutes for an 8-hour night.
+      final sessions = buildSleepSessions([
+        SleepSegment(
+            uuid: 'session',
+            type: 'SLEEP_SESSION',
+            start: _at(1, 23),
+            end: _at(2, 7),
+            sourceName: 'watch'),
+        SleepSegment(
+            uuid: 'rem',
+            type: 'SLEEP_REM',
+            start: _at(2, 3),
+            end: _at(2, 4, 30),
+            sourceName: 'watch'),
+      ]);
+      expect(sessions, hasLength(1));
+      expect(sessions.single.asleepMinutes, 8 * 60);
+    });
+
+    test('prefers a source with a session record over a stage-only source', () {
+      final sessions = buildSleepSessions([
+        SleepSegment(
+            uuid: 's',
+            type: 'SLEEP_SESSION',
+            start: _at(1, 23),
+            end: _at(2, 7),
+            sourceName: 'watch'),
+        SleepSegment(
+            uuid: 'd',
+            type: 'SLEEP_DEEP',
+            start: _at(1, 23),
+            end: _at(1, 23, 30),
+            sourceName: 'ring'),
+        SleepSegment(
+            uuid: 'l',
+            type: 'SLEEP_LIGHT',
+            start: _at(1, 23, 30),
+            end: _at(2, 6),
+            sourceName: 'ring'),
+        SleepSegment(
+            uuid: 'r',
+            type: 'SLEEP_REM',
+            start: _at(2, 6),
+            end: _at(2, 7),
+            sourceName: 'ring'),
+      ]);
+      expect(sessions, hasLength(1));
+      expect(sessions.single.sourceName, 'watch');
+      expect(sessions.single.asleepMinutes, 8 * 60);
+    });
+
+    test('a source with only SLEEP_ASLEEP still reports that time', () {
+      final sessions = buildSleepSessions([
+        SleepSegment(
+            uuid: 'a',
+            type: 'SLEEP_ASLEEP',
+            start: _at(1, 23),
+            end: _at(2, 6, 30),
+            sourceName: 'band'),
+      ]);
+      expect(sessions.single.asleepMinutes, 450);
+      expect(sessions.single.stages['SLEEP_ASLEEP'], 450);
+    });
+
+    test('total is never less than the summed stages or the session', () {
+      final sessions = buildSleepSessions([
+        SleepSegment(
+            uuid: 's',
+            type: 'SLEEP_SESSION',
+            start: _at(1, 23),
+            end: _at(2, 6),
+            sourceName: 'watch'),
+        SleepSegment(
+            uuid: 'd',
+            type: 'SLEEP_DEEP',
+            start: _at(1, 23),
+            end: _at(2, 7),
+            sourceName: 'watch'),
+      ]);
+      expect(sessions.single.asleepMinutes, 8 * 60);
+      expect(sessions.single.inBedMinutes, greaterThanOrEqualTo(8 * 60));
+    });
+
+    test('daily stats use the session total, not the single synced stage', () {
+      final stats = sleepDailyStats([
+        _rec('SLEEP_SESSION', _at(1, 23), _at(2, 7)),
+        _rec('SLEEP_REM', _at(2, 3), _at(2, 4, 30)),
+      ]);
+      expect(stats, hasLength(1));
+      expect(stats.single.sum, 8 * 60);
+    });
+
+    test('a fully staged night subtracts awake time from the session total', () {
+      // Regression: raising asleep to the session length whenever a session
+      // record existed pinned efficiency at 100% and never subtracted awake
+      // time, so a real Health Connect night lost its stage breakdown.
+      final sessions = buildSleepSessions(_stagedNightWithAwake());
+      expect(sessions, hasLength(1));
+      final s = sessions.single;
+      expect(s.asleepMinutes, 390); // deep 60 + light 240 + rem 90
+      expect(s.awakeMinutes, 90);
+      expect(s.inBedMinutes, 480);
+      expect(s.efficiency, closeTo(81.3, 0.1));
+    });
+
+    test('asleep plus awake never exceeds time in bed', () {
+      final s = buildSleepSessions(_stagedNightWithAwake()).single;
+      expect(s.asleepMinutes + s.awakeMinutes,
+          lessThanOrEqualTo(s.inBedMinutes));
+      expect(s.asleepMinutes + s.awakeMinutes, 480);
+    });
+
+    test('daily sleep stats report the staged efficiency, not 100 percent', () {
+      final stats = sleepDailyStats([
+        _rec('SLEEP_SESSION', _at(1, 23), _at(2, 7)),
+        _rec('SLEEP_DEEP', _at(1, 23), _at(2, 0)),
+        _rec('SLEEP_LIGHT', _at(2, 0), _at(2, 4)),
+        _rec('SLEEP_REM', _at(2, 4), _at(2, 5, 30)),
+        _rec('SLEEP_AWAKE', _at(2, 5, 30), _at(2, 7)),
+      ]);
+      expect(stats, hasLength(1));
+      final detail = stats.single.detail;
+      expect(detail['asleepMinutes'], 390);
+      expect(detail['awakeMinutes'], 90);
+      expect(detail['inBedMinutes'], 480);
+      expect((detail['efficiency'] as num).toDouble(), closeTo(81.3, 0.1));
     });
   });
 

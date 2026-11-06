@@ -59,7 +59,7 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
         onDestinationSelected: (i) => setState(() => _index = i),
         destinations: const [
           NavigationDestination(
-              icon: Icon(Icons.fitness_center), label: 'Health'),
+              icon: Icon(Icons.fitness_center), label: 'Fitness'),
           NavigationDestination(icon: Icon(Icons.restaurant), label: 'Macros'),
           NavigationDestination(icon: Icon(Icons.insights), label: 'Wealth'),
           NavigationDestination(icon: Icon(Icons.psychology), label: 'Mind'),

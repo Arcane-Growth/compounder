@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../health/models.dart';
 import '../health/service.dart';
+import '../domain/domain.dart';
 import 'widgets.dart';
 
 class HealthDataScreen extends StatefulWidget {
@@ -87,7 +88,7 @@ class _HealthDataScreenState extends State<HealthDataScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Body data'),
+        title: const Text('Fitness'),
         actions: [
           if (enabled)
             IconButton(
@@ -106,7 +107,7 @@ class _HealthDataScreenState extends State<HealthDataScreen> {
         padding: const EdgeInsets.all(20),
         children: [
           const ScreenIntro(
-            eyebrow: 'HEALTH CONNECT',
+            eyebrow: 'FITNESS DATA',
             title: 'Your body, on your device.',
             subtitle:
                 'Sleep, heart rate, activity and more — imported from Health Connect and shared only with your coach.',
@@ -247,14 +248,15 @@ class _HealthDataScreenState extends State<HealthDataScreen> {
               const Text('No sleep data in this range.')
             else
               Wrap(spacing: 16, runSpacing: 8, children: [
-                _stat('Last night', '${last['asleepMinutes'] ?? '—'} min'),
+                _stat('Last night', '${_count(last['asleepMinutes'] as num?)} min'),
                 _stat('Bedtime', '${last['bedtime'] ?? '—'}'),
                 _stat('Wake', '${last['wake'] ?? '—'}'),
-                _stat('Efficiency', '${last['efficiencyPercent'] ?? '—'}%'),
+                _stat('Efficiency',
+                    formatEfficiencyPercent(last['efficiencyPercent'] as num?)),
                 _stat('Deep',
-                    '${(last['stages'] as Map?)?['SLEEP_DEEP'] ?? 0} min'),
+                    '${_count((last['stages'] as Map?)?['SLEEP_DEEP'] as num?)} min'),
                 _stat('REM',
-                    '${(last['stages'] as Map?)?['SLEEP_REM'] ?? 0} min'),
+                    '${_count((last['stages'] as Map?)?['SLEEP_REM'] as num?)} min'),
               ]),
             const SizedBox(height: 16),
             if (sleep.isNotEmpty)
@@ -308,17 +310,13 @@ class _HealthDataScreenState extends State<HealthDataScreen> {
                   'Resting HR',
                   restingLatest == null
                       ? '—'
-                      : '${restingLatest['value']} bpm'),
-              _stat(
-                  'Latest HR',
-                  heart.isEmpty
-                      ? '—'
-                      : '${heart.last.avg?.round() ?? '—'} bpm'),
+                      : '${_count(restingLatest['value'] as num?)} bpm'),
+              _stat('Latest HR', heart.isEmpty ? '—' : '${_count(heart.last.avg)} bpm'),
               _stat(
                   'HR range',
                   heart.isEmpty
                       ? '—'
-                      : '${heart.last.min?.round()}–${heart.last.max?.round()} bpm'),
+                      : '${_count(heart.last.min)}–${_count(heart.last.max)} bpm'),
             ]),
             const SizedBox(height: 16),
             if (resting.isNotEmpty)
@@ -369,10 +367,10 @@ class _HealthDataScreenState extends State<HealthDataScreen> {
             ]),
             const SizedBox(height: 8),
             Wrap(spacing: 16, runSpacing: 8, children: [
-              _stat('Steps', '${activity?['stepsTotal'] ?? '—'}'),
-              _stat('Distance', '${activity?['distanceMeters'] ?? '—'} m'),
-              _stat('Active kcal', '${activity?['activeCalories'] ?? '—'}'),
-              _stat('Workouts', '${activity?['workoutCount'] ?? 0}'),
+              _stat('Steps', _count(activity?['stepsTotal'] as num?)),
+              _stat('Distance', '${_count(activity?['distanceMeters'] as num?)} m'),
+              _stat('Active kcal', _count(activity?['activeCalories'] as num?)),
+              _stat('Workouts', _count((activity?['workoutCount'] as num?) ?? 0)),
             ]),
             const SizedBox(height: 16),
             if (steps.isNotEmpty)
@@ -408,7 +406,7 @@ class _HealthDataScreenState extends State<HealthDataScreen> {
     final vitals = overview['vitals'] as Map<String, dynamic>?;
     Widget? latest(Map<String, dynamic>? m, String label, String unit) {
       if (m == null) return null;
-      return _stat(label, '${m['value'] ?? '—'} $unit');
+      return _stat(label, '${_count(m['value'] as num?)} $unit');
     }
 
     final items = <Widget>[
@@ -476,7 +474,9 @@ class _HealthDataScreenState extends State<HealthDataScreen> {
                 runSpacing: 8,
                 children: [
                   for (final m in available)
-                    Chip(label: Text('${m['label']} (${m['records'] ?? 0})')),
+                    Chip(
+                        label: Text(
+                            '${m['label']} (${_count((m['records'] as num?) ?? 0)})')),
                 ],
               ),
             const SizedBox(height: 12),
@@ -504,6 +504,21 @@ class _HealthDataScreenState extends State<HealthDataScreen> {
         ],
       );
 }
+
+/// Whole numbers with thousands separators, no decimals: Health Connect
+/// returns raw doubles, so 82.30000000000001 kg would otherwise be printed
+/// verbatim. An em dash means "nothing recorded".
+String _count(num? value) => value == null ? '—' : formatCount(value);
+
+/// Efficiency already arrives as a percentage in the 0..100 range, not a 0..1
+/// ratio: `analysis.dart` stores `round1(asleep / inBed * 100)`, and
+/// `repository.dart:235` passes that value straight through as
+/// `efficiencyPercent`. So there is nothing to scale — a 1% night reads "1%".
+///
+/// Fractions of a percent are truncated like every other counter (see
+/// [formatCount]), and an em dash means "nothing recorded".
+String formatEfficiencyPercent(num? value) =>
+    value == null ? '—' : '${formatCount(value)}%';
 
 class HealthSummaryCard extends StatelessWidget {
   const HealthSummaryCard({super.key});
@@ -544,11 +559,11 @@ class HealthSummaryCard extends StatelessWidget {
           color: scheme.surfaceContainerLow,
           child: ListTile(
             leading: Icon(Icons.health_and_safety, color: scheme.primary),
-            title: Text('Body today', style: t.titleMedium),
+            title: Text('Fitness today', style: t.titleMedium),
             subtitle: Text([
-              if (last != null) 'Sleep ${last['asleepMinutes']} min',
-              if (resting != null) 'Resting HR ${resting['value']} bpm',
-              if (steps is Map) 'Steps ${steps['value']}',
+              if (last != null) 'Sleep ${_count(last['asleepMinutes'] as num?)} min',
+              if (resting != null) 'Resting HR ${_count(resting['value'] as num?)} bpm',
+              if (steps is Map) 'Steps ${_count(steps['value'] as num?)}',
               if (last == null && resting == null && steps == null) 'Syncing…',
             ].join(' · ')),
             trailing: const Icon(Icons.chevron_right),
@@ -569,7 +584,7 @@ class HealthRationaleScreen extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final t = Theme.of(context).textTheme;
     return Scaffold(
-      appBar: AppBar(title: const Text('How health data is used')),
+      appBar: AppBar(title: const Text('How fitness data is used')),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [

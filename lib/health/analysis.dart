@@ -110,6 +110,7 @@ List<SleepSession> buildSleepSessions(List<SleepSegment> segments) {
           end: session.end,
           stages: stages,
           sourceName: session.sourceName,
+          hasSessionRecord: true,
         ));
       }
     } else {
@@ -136,24 +137,36 @@ List<SleepSegment> _bestSource(List<SleepSegment> cluster) {
   }
   if (groups.length == 1) return groups.values.first;
 
-  double score(List<SleepSegment> list) {
+  /// (hasSessionRecord, weightedDetail). A source that reports a full
+  /// SLEEP_SESSION record describes the whole night; a stage-only source may
+  /// describe a single stage (e.g. a REM-only sync), so it must never win a
+  /// cluster over a source that has the session. Within each class the most
+  /// detailed source still wins.
+  (int, double) score(List<SleepSegment> list) {
+    var hasSession = false;
     var specific = 0;
     var total = 0;
     for (final s in list) {
       final m = s.minutes;
       total += m;
-      if (s.type == 'SLEEP_DEEP' ||
+      if (s.type == 'SLEEP_SESSION') {
+        hasSession = true;
+      } else if (s.type == 'SLEEP_DEEP' ||
           s.type == 'SLEEP_LIGHT' ||
           s.type == 'SLEEP_REM' ||
           s.type == 'SLEEP_AWAKE') {
         specific += m;
       }
     }
-    return (specific * 2 + total).toDouble();
+    return (hasSession ? 1 : 0, (specific * 2 + total).toDouble());
   }
 
-  final best =
-      groups.entries.reduce((a, b) => score(a.value) >= score(b.value) ? a : b);
+  final best = groups.entries.reduce((a, b) {
+    final sa = score(a.value);
+    final sb = score(b.value);
+    if (sa.$1 != sb.$1) return sa.$1 > sb.$1 ? a : b;
+    return sa.$2 >= sb.$2 ? a : b;
+  });
   return best.value;
 }
 
@@ -162,6 +175,7 @@ SleepSession _buildSession({
   required int end,
   required List<SleepSegment> stages,
   required String sourceName,
+  bool hasSessionRecord = false,
 }) {
   final byType = <String, List<(int, int)>>{};
   for (final s in stages) {
@@ -172,24 +186,42 @@ SleepSession _buildSession({
     merged[entry.key] = _mergedMinutes(entry.value);
   }
 
-  final hasSpecific = merged.keys
-      .any((k) => k == 'SLEEP_DEEP' || k == 'SLEEP_LIGHT' || k == 'SLEEP_REM');
-  var asleep = 0;
-  if (stages.isEmpty) {
-    asleep = ((end - start) / 60000).round();
-  } else if (hasSpecific) {
-    asleep += merged['SLEEP_DEEP'] ?? 0;
-    asleep += merged['SLEEP_LIGHT'] ?? 0;
-    asleep += merged['SLEEP_REM'] ?? 0;
-  } else {
-    asleep += merged['SLEEP_ASLEEP'] ?? 0;
-    asleep += merged['SLEEP_UNKNOWN'] ?? 0;
-  }
+  final sessionMinutes = ((end - start) / 60000).round();
+  // Every type that reports time actually spent asleep. SLEEP_ASLEEP and
+  // SLEEP_UNKNOWN often span the whole night and overlap the specific stages,
+  // so union the intervals instead of adding the per-type totals — that keeps
+  // generic-only wearables counted without double-counting a staged night.
+  final asleepIntervals = <(int, int)>[
+    for (final type in const [
+      'SLEEP_DEEP',
+      'SLEEP_LIGHT',
+      'SLEEP_REM',
+      'SLEEP_ASLEEP',
+      'SLEEP_UNKNOWN',
+    ])
+      ...?byType[type],
+  ];
+  final stageAsleep = _mergedMinutes(asleepIntervals);
   final awake =
       (merged['SLEEP_AWAKE'] ?? 0) + (merged['SLEEP_AWAKE_IN_BED'] ?? 0);
-  final inBed =
-      math.max(((end - start) / 60000).round(), merged['SLEEP_IN_BED'] ?? 0);
-  asleep = math.min(asleep, math.max(inBed, 1));
+  // Time in bed must cover everything the night reports: the session window,
+  // the summed stages plus awake time, and any explicit SLEEP_IN_BED total.
+  // Stages can outrun the session window when a source reports a stage past
+  // the recorded end, so covered time wins over the session length.
+  final covered = stageAsleep + awake;
+  var inBed = math.max(sessionMinutes, covered);
+  inBed = math.max(inBed, merged['SLEEP_IN_BED'] ?? 0);
+  // A SLEEP_SESSION record carries the night's real asleep total (Health Connect
+  // keeps reporting it even when only one stage synced), so it must beat a
+  // partial stage sum — but it must not claim time actually spent awake, and it
+  // must never exceed time in bed. Hence: the larger of the synced stages and
+  // (session length capped by inBed - awake).
+  var asleep = stages.isEmpty ? sessionMinutes : stageAsleep;
+  if (hasSessionRecord) {
+    asleep = math.max(stageAsleep, math.min(sessionMinutes, inBed - awake));
+  }
+  // Invariant: asleep + awake can never exceed time in bed.
+  asleep = math.min(asleep, inBed - awake);
   final efficiency = inBed <= 0 ? 0.0 : (asleep / inBed).clamp(0.0, 1.0);
 
   final cleanStages = <String, int>{};
@@ -197,13 +229,29 @@ SleepSession _buildSession({
     'SLEEP_DEEP',
     'SLEEP_LIGHT',
     'SLEEP_REM',
-    'SLEEP_ASLEEP',
-    'SLEEP_UNKNOWN',
     'SLEEP_AWAKE',
     'SLEEP_AWAKE_IN_BED'
   ]) {
     final v = merged[key] ?? 0;
     if (v > 0) cleanStages[key] = _clampMinutes(v);
+  }
+  // Generic asleep/unknown intervals are reported (not discarded) but only for
+  // the part no specific stage covers, so the stage breakdown stays additive.
+  final specificIntervals = <(int, int)>[
+    for (final key in const [
+      'SLEEP_DEEP',
+      'SLEEP_LIGHT',
+      'SLEEP_REM',
+      'SLEEP_AWAKE',
+      'SLEEP_AWAKE_IN_BED',
+    ])
+      ...?byType[key],
+  ];
+  for (final key in const ['SLEEP_ASLEEP', 'SLEEP_UNKNOWN']) {
+    final intervals = byType[key];
+    if (intervals == null || intervals.isEmpty) continue;
+    final uncovered = _uncoveredMinutes(intervals, specificIntervals);
+    if (uncovered > 0) cleanStages[key] = _clampMinutes(uncovered);
   }
 
   return SleepSession(
@@ -220,24 +268,46 @@ SleepSession _buildSession({
 }
 
 int _mergedMinutes(List<(int, int)> intervals) {
-  final sorted = [...intervals]..sort((a, b) => a.$1.compareTo(b.$1));
+  final total = _mergeIntervals(intervals)
+      .fold(0, (sum, interval) => sum + (interval.$2 - interval.$1));
+  return (total / 60000).round();
+}
+
+/// Minutes in [intervals] that no interval in [covered] already accounts for.
+int _uncoveredMinutes(
+    List<(int, int)> intervals, List<(int, int)> covered) {
+  final cuts = _mergeIntervals(covered);
   var total = 0;
-  int? curStart;
-  int? curEnd;
+  for (final (start, end) in intervals) {
+    var cursor = start;
+    for (final (cutStart, cutEnd) in cuts) {
+      if (cutEnd <= cursor) continue;
+      if (cutStart >= end) break;
+      if (cutStart > cursor) total += cutStart - cursor;
+      cursor = math.max(cursor, cutEnd);
+      if (cursor >= end) break;
+    }
+    if (cursor < end) total += end - cursor;
+  }
+  return (total / 60000).round();
+}
+
+List<(int, int)> _mergeIntervals(List<(int, int)> intervals) {
+  final sorted = [...intervals]..sort((a, b) => a.$1.compareTo(b.$1));
+  final out = <(int, int)>[];
   for (final (start, end) in sorted) {
-    if (curStart == null) {
-      curStart = start;
-      curEnd = end;
-    } else if (start <= (curEnd ?? start)) {
-      curEnd = math.max(curEnd ?? end, end);
+    if (out.isEmpty) {
+      out.add((start, end));
+      continue;
+    }
+    final last = out.last;
+    if (start <= last.$2) {
+      out[out.length - 1] = (last.$1, math.max(last.$2, end));
     } else {
-      total += ((curEnd ?? start) - curStart);
-      curStart = start;
-      curEnd = end;
+      out.add((start, end));
     }
   }
-  if (curStart != null && curEnd != null) total += curEnd - curStart;
-  return (total / 60000).round();
+  return out;
 }
 
 List<HealthDayStat> dailyStats(
@@ -341,6 +411,11 @@ List<HealthDayStat> sleepDailyStats(List<HealthRecord> records) {
         stages[stage.key] = (stages[stage.key] ?? 0) + stage.value;
       }
     }
+    // Same rule as buildSleepSessions: time in bed covers everything the night
+    // reported, so awake time is never counted as time in bed and the day-level
+    // detail keeps the asleep + awake <= inBed invariant even for rows stored
+    // by older builds.
+    final dayInBed = math.max(inBed, asleep + awake);
     out.add(HealthDayStat(
       day: entry.key,
       metric: 'SLEEP',
@@ -352,8 +427,8 @@ List<HealthDayStat> sleepDailyStats(List<HealthRecord> records) {
       detail: {
         'asleepMinutes': asleep,
         'awakeMinutes': awake,
-        'inBedMinutes': inBed,
-        'efficiency': inBed == 0 ? 0 : round1(asleep / inBed * 100),
+        'inBedMinutes': dayInBed,
+        'efficiency': dayInBed == 0 ? 0 : round1(asleep / dayInBed * 100),
         'stages': stages,
       },
     ));
