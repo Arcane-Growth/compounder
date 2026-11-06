@@ -61,10 +61,10 @@ class AppStore extends ChangeNotifier {
 
   AppStore._(this.db, this.prefs);
 
-  static Future<AppStore> open(SharedPreferences prefs) async {
-    final path = p.join(await getDatabasesPath(), 'compounder.db');
+  static Future<AppStore> open(SharedPreferences prefs, {String? path}) async {
+    path ??= p.join(await getDatabasesPath(), 'compounder.db');
     final db = await openDatabase(path,
-        version: 4, onCreate: _createSchema, onUpgrade: _upgradeSchema);
+        version: 7, onCreate: _createSchema, onUpgrade: _upgradeSchema);
     final store = AppStore._(db, prefs);
     await store.refreshAll();
     return store;
@@ -128,6 +128,45 @@ class AppStore extends ChangeNotifier {
       // Column add is additive only: existing meal rows keep every value and
       // simply read back a null description.
       await _addColumnIfMissing(db, 'meals', 'description', 'TEXT');
+    }
+    if (oldVersion < 5) {
+      // health-13.3.1 stamped every sleep stage of a night with the parent
+      // session's uuid, so the UNIQUE uuid column kept only the last stage per
+      // night and destroyed the rest. Those rows are unrecoverable (the stages
+      // were overwritten, not merely mis-keyed), so purge them and let the next
+      // sync re-fetch the night with composite uuids. Only sleep rows and the
+      // sleep sync stamps are touched; every other metric keeps its history.
+      await db.delete('health_records', where: "type LIKE 'SLEEP%'");
+      await db.delete('health_sync_state', where: "metric LIKE 'SLEEP%'");
+    }
+    if (oldVersion < 6) {
+      // The 4->5 step purged the sleep rows but left the aggregate `__all__`
+      // sync stamp behind. HealthService.syncNow derives its start window from
+      // repository.lastSync(), which reads only `__all__`, so the next sync
+      // resumed from that stamp and re-fetched roughly two days instead of the
+      // full 30-day window: ~25 nights of sleep history stayed missing even
+      // though Health Connect still had them. Clearing the aggregate stamp
+      // makes lastSync() return null, so the next sync takes the initial path
+      // and re-fetches the whole window. Only `__all__` is touched; every
+      // per-metric stamp and every non-sleep record survives.
+      await db.delete('health_sync_state', where: "metric = '__all__'");
+    }
+    if (oldVersion < 7) {
+      // The 5->6 step cleared only the aggregate `__all__` stamp, which is not
+      // sufficient. runChunkedSync also resumes from the per-metric stamps
+      // (service.dart:197-202), and the narrow post-migration sync re-created
+      // SLEEP_* stamps at the recent end of the window. Those stamps pull the
+      // sleep chunk start forward again, so the sleep window stays narrow and
+      // the purged nights are never re-fetched.
+      //
+      // Verified on the Pixel 10: with only `__all__` cleared, the next sync
+      // still fetched a single night (22 rows, one date). Clearing the SLEEP_*
+      // stamps as well lets the sleep types start from the initial window.
+      //
+      // Only `__all__` and the SLEEP_* family are touched; every other
+      // metric's stamp and every non-sleep record survives untouched.
+      await db.delete('health_sync_state', where: "metric = '__all__'");
+      await db.delete('health_sync_state', where: "metric LIKE 'SLEEP%'");
     }
   }
 

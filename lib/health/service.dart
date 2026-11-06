@@ -13,6 +13,55 @@ import 'repository.dart';
 
 enum HealthAvailability { unsupported, installRequired, available }
 
+// ---------------------------------------------------------------------------
+// Debug-only sync diagnostics.
+//
+// Every entry point is gated on [kDebugMode], so release builds compile the
+// calls away and emit nothing. Grep logcat for `SLEEPDBG` to see the raw shapes
+// Health Connect hands us. This is evidence collection only: it must never
+// change parsing or aggregation behaviour.
+// ---------------------------------------------------------------------------
+
+const String _dbgPrefix = 'SLEEPDBG';
+
+void _dbg(String message) {
+  if (!kDebugMode) return;
+  debugPrint('$_dbgPrefix $message');
+}
+
+String _iso(DateTime t) => t.toIso8601String();
+
+void _dbgFetch(HealthDataType type, DateTime start, DateTime end, int count) {
+  if (!kDebugMode) return;
+  _dbg('fetch type=${type.name} start=${_iso(start)} end=${_iso(end)} '
+      'count=$count');
+}
+
+void _dbgPoint(HealthDataPoint p) {
+  if (!kDebugMode) return;
+  if (!p.type.name.startsWith('SLEEP_')) return;
+  final value = p.value;
+  final numeric = value is NumericHealthValue ? value.numericValue : null;
+  String raw;
+  try {
+    raw = jsonEncode(p.toJson());
+  } catch (_) {
+    raw = '<unencodable>';
+  }
+  if (raw.length > 600) raw = '${raw.substring(0, 600)}...';
+  _dbg('point type=${p.type.name} uuid=${p.uuid} from=${_iso(p.dateFrom)} '
+      'to=${_iso(p.dateTo)} value=$numeric unit=${p.unit.name} '
+      'src=${p.sourceName} json=$raw');
+}
+
+void _dbgUpsert(
+    HealthDataType type, DateTime chunkEnd, List<HealthRecord> handed, int stored) {
+  if (!kDebugMode) return;
+  final distinct = handed.map((r) => r.uuid).toSet().length;
+  _dbg('upsert type=${type.name} chunkEnd=${_iso(chunkEnd)} '
+      'handed=${handed.length} distinct=$distinct stored=$stored');
+}
+
 class HealthServiceException implements Exception {
   final String message;
   HealthServiceException(this.message);
@@ -93,9 +142,15 @@ class PluginHealthSource implements HealthSource {
     required HealthDataType type,
     required DateTime start,
     required DateTime end,
-  }) =>
-      _health.getHealthDataFromTypes(
-          types: [type], startTime: start, endTime: end);
+  }) async {
+    final points = await _health.getHealthDataFromTypes(
+        types: [type], startTime: start, endTime: end);
+    _dbgFetch(type, start, end, points.length);
+    for (final point in points) {
+      _dbgPoint(point);
+    }
+    return points;
+  }
 
   @override
   Future<void> revokePermissions() => _health.revokePermissions();
@@ -153,7 +208,9 @@ Future<SyncChunkResult> runChunkedSync({
           final points = await source.fetch(
               type: type, start: chunkStart, end: chunkEnd);
           final records = points.map((p) => toRecord(p, now)).toList();
-          typeRecords += await upsert(records);
+          final stored = await upsert(records);
+          _dbgUpsert(type, chunkEnd, records, stored);
+          typeRecords += stored;
           await stamp(type.name, chunkEnd.millisecondsSinceEpoch, null);
         } catch (e) {
           errors[type.name] = e.toString();
@@ -473,39 +530,61 @@ class HealthService extends ChangeNotifier {
     );
   }
 
-  HealthRecord _toRecord(HealthDataPoint p, DateTime syncedAt) {
-    final value = p.value;
-    final numeric = switch (value) {
-      NumericHealthValue v => v.numericValue.toDouble(),
-      SkinTemperatureHealthValue v => v.temperature ?? v.temperatureDelta,
-      ActivityIntensityHealthValue v => v.minutes,
-      NutritionHealthValue v => v.calories,
-      _ => null,
-    };
-    final uuid = p.uuid.isNotEmpty
-        ? p.uuid
-        : '${p.type.name}|${p.dateFrom.millisecondsSinceEpoch}|${p.dateTo.millisecondsSinceEpoch}|${p.sourceId}|$numeric';
-    String raw = '';
-    try {
-      raw = jsonEncode(p.toJson());
-    } catch (_) {
-      raw = '{}';
-    }
-    return HealthRecord(
-      uuid: uuid,
-      type: p.type.name,
-      value: numeric,
-      unit: p.unit.name,
-      dateFrom: p.dateFrom.millisecondsSinceEpoch,
-      dateTo: p.dateTo.millisecondsSinceEpoch,
-      sourceId: p.sourceId,
-      sourceName: p.sourceName,
-      platform: p.sourcePlatform.name,
-      recordingMethod: p.recordingMethod.toInt(),
-      rawJson: raw,
-      syncedAt: syncedAt.millisecondsSinceEpoch,
-    );
+  HealthRecord _toRecord(HealthDataPoint p, DateTime syncedAt) =>
+      healthRecordFromPoint(p, syncedAt);
+}
+
+/// Builds the row persisted for a Health Connect [p].
+///
+/// health-13.3.1 (`HealthDataConverter.kt:279`) stamps every sleep stage of a
+/// night with the parent `SleepSessionRecord`'s metadata id, so SLEEP_SESSION
+/// and all of its SLEEP_DEEP/LIGHT/REM/AWAKE stages arrive with an identical
+/// uuid. `health_records.uuid` is `TEXT NOT NULL UNIQUE` and upserts replace on
+/// conflict, so storing the raw uuid kept only the last stage of each night and
+/// silently destroyed the rest — including the SLEEP_SESSION row the sleep
+/// analysis needs.
+///
+/// Sleep records therefore get a deterministic composite uuid built from the
+/// parent uuid plus the stage type and interval. Re-syncing the same point
+/// yields the same uuid and replaces that row (idempotent), while distinct
+/// stages of one night stay distinct rows. Non-sleep types keep the plugin's
+/// uuid unchanged.
+HealthRecord healthRecordFromPoint(HealthDataPoint p, DateTime syncedAt) {
+  final value = p.value;
+  final numeric = switch (value) {
+    NumericHealthValue v => v.numericValue.toDouble(),
+    SkinTemperatureHealthValue v => v.temperature ?? v.temperatureDelta,
+    ActivityIntensityHealthValue v => v.minutes,
+    NutritionHealthValue v => v.calories,
+    _ => null,
+  };
+  final from = p.dateFrom.millisecondsSinceEpoch;
+  final to = p.dateTo.millisecondsSinceEpoch;
+  final uuid = p.type.name.startsWith('SLEEP_')
+      ? '${p.uuid}|${p.type.name}|$from|$to'
+      : p.uuid.isNotEmpty
+          ? p.uuid
+          : '${p.type.name}|$from|$to|${p.sourceId}|$numeric';
+  String raw = '';
+  try {
+    raw = jsonEncode(p.toJson());
+  } catch (_) {
+    raw = '{}';
   }
+  return HealthRecord(
+    uuid: uuid,
+    type: p.type.name,
+    value: numeric,
+    unit: p.unit.name,
+    dateFrom: from,
+    dateTo: to,
+    sourceId: p.sourceId,
+    sourceName: p.sourceName,
+    platform: p.sourcePlatform.name,
+    recordingMethod: p.recordingMethod.toInt(),
+    rawJson: raw,
+    syncedAt: syncedAt.millisecondsSinceEpoch,
+  );
 }
 
 /// Convenience for UI widgets that need a short summary.
