@@ -55,13 +55,6 @@ class MacrosTab extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 96),
         children: [
-          const ScreenIntro(
-            eyebrow: 'FUEL THE COMPOUND',
-            title: 'Snap it,\ntrack it.',
-            subtitle:
-                'Point your AI at a photo of the plate and review the macros before anything is saved.',
-          ),
-          const SizedBox(height: 20),
           Card(
             color: scheme.surfaceContainerLow,
             child: Padding(

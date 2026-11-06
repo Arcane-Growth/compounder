@@ -106,13 +106,6 @@ class _HealthDataScreenState extends State<HealthDataScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          const ScreenIntro(
-            eyebrow: 'FITNESS DATA',
-            title: 'Your body, on your device.',
-            subtitle:
-                'Sleep, heart rate, activity and more — imported from Health Connect and shared only with your coach.',
-          ),
-          const SizedBox(height: 20),
           if (!enabled) ...[
             Card(
               color: scheme.surfaceContainerLow,
@@ -588,13 +581,6 @@ class HealthRationaleScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          const ScreenIntro(
-            eyebrow: 'PRIVACY',
-            title: 'Your health data stays yours.',
-            subtitle:
-                'Compounder reads only what you approve in Health Connect and keeps it on this device.',
-          ),
-          const SizedBox(height: 20),
           Text('What Compounder reads', style: t.titleMedium),
           const SizedBox(height: 8),
           Text(

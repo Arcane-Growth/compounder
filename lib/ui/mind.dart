@@ -63,13 +63,6 @@ class _MindTabState extends State<MindTab> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          const ScreenIntro(
-            eyebrow: 'SMALL REPS, BIG RETURNS',
-            title: 'Invest in your\nhead too.',
-            subtitle:
-                'Check in with your mood, sit quietly, and work through difficult thoughts. All of it stays on this device.',
-          ),
-          const SizedBox(height: 20),
           Card(
             color: scheme.surfaceContainerLow,
             child: Padding(

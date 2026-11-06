@@ -33,32 +33,6 @@ class CompounderTheme {
   }
 }
 
-class ScreenIntro extends StatelessWidget {
-  final String eyebrow, title, subtitle;
-  const ScreenIntro(
-      {super.key,
-      required this.eyebrow,
-      required this.title,
-      required this.subtitle});
-
-  @override
-  Widget build(BuildContext context) {
-    final t = Theme.of(context).textTheme;
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(eyebrow.toUpperCase(),
-          style: t.labelMedium
-              ?.copyWith(color: Theme.of(context).colorScheme.primary)),
-      const SizedBox(height: 8),
-      Text(title,
-          style: t.headlineMedium?.copyWith(fontWeight: FontWeight.w600)),
-      const SizedBox(height: 8),
-      Text(subtitle,
-          style: t.bodyMedium?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant)),
-    ]);
-  }
-}
-
 class SectionHeader extends StatelessWidget {
   final String text;
   const SectionHeader(this.text, {super.key});

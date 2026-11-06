@@ -42,13 +42,12 @@ class SummaryScreen extends StatelessWidget {
           body: ListView(
             padding: const EdgeInsets.all(20),
             children: [
-              ScreenIntro(
-                eyebrow: 'SESSION COMPLETE',
-                title: detail.workout.name,
-                subtitle:
-                    '${formatDateTime(detail.workout.startedAt)} · ${formatDuration(detail.workout.startedAt, detail.workout.endedAt)}',
+              Text(
+                '${formatDateTime(detail.workout.startedAt)} · ${formatDuration(detail.workout.startedAt, detail.workout.endedAt)}',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 12),
               Row(children: [
                 Expanded(
                     child: StatCard(

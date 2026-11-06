@@ -45,13 +45,6 @@ class HomeTab extends StatelessWidget {
           return ListView(
             padding: const EdgeInsets.all(20),
             children: [
-              const ScreenIntro(
-                eyebrow: 'Compound your life',
-                title: 'A little better,\nevery day.',
-                subtitle:
-                    'Health, wealth and mind — small reps in each, compounded on your own device.',
-              ),
-              const SizedBox(height: 20),
               if (active != null)
                 Card(
                   color: scheme.primaryContainer,

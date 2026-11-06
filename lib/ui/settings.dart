@@ -88,12 +88,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          const ScreenIntro(
-            eyebrow: 'MAKE IT YOURS',
-            title: 'Your life, your settings.',
-            subtitle: 'Bring your own AI, keep your own data.',
-          ),
-          const SizedBox(height: 20),
           const SectionHeader('Bring your own AI'),
           const SizedBox(height: 8),
           Card(

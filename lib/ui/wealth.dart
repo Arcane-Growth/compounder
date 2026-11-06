@@ -41,13 +41,6 @@ class WealthTab extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 96),
         children: [
-          const ScreenIntro(
-            eyebrow: 'COMPOUND YOUR NET WORTH',
-            title: 'Own every\nnumber.',
-            subtitle:
-                'Accounts, assets and debts tracked on your own device. Nothing leaves it unless you export it.',
-          ),
-          const SizedBox(height: 20),
           _NetWorthTrendCard(points: store.netWorthHistory),
           const SizedBox(height: 20),
           Card(
