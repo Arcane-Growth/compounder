@@ -21,6 +21,11 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   int _index = 0;
 
+  // Stable callback: a fresh closure per build() would make ShellNav's
+  // updateShouldNotify (identity comparison) fire on every tab switch and
+  // rebuild all five tabs.
+  void _openDrawer() => _scaffoldKey.currentState?.openDrawer();
+
   @override
   void initState() {
     super.initState();
@@ -52,7 +57,7 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
         onSelectTab: (i) => setState(() => _index = i),
       ),
       body: ShellNav(
-        openDrawer: () => _scaffoldKey.currentState?.openDrawer(),
+        openDrawer: _openDrawer,
         child: IndexedStack(
           index: _index,
           children: const [
