@@ -45,6 +45,7 @@ class _CoachTabState extends State<CoachTab> {
   String? activeTool;
   String? error;
   CoachAgent? agent;
+  PendingApproval? pending;
 
   CoachAgent _buildAgent(
           AppStore store, NotifyService notify, HealthService health) =>
@@ -103,7 +104,9 @@ class _CoachTabState extends State<CoachTab> {
 
   Future<void> _send() async {
     final text = input.text.trim();
-    if ((text.isEmpty && attachments.isEmpty) || thinking) return;
+    if ((text.isEmpty && attachments.isEmpty) || thinking || pending != null) {
+      return;
+    }
     final store = context.read<AppStore>();
     final notify = context.read<NotifyService>();
     final health = context.read<HealthService>();
@@ -132,17 +135,56 @@ class _CoachTabState extends State<CoachTab> {
     try {
       final userMessage = await buildUserMessage(text, sentAttachments);
       agent ??= _buildAgent(store, notify, health);
-      final reply = await agent!.replyMessage(
+      final turn = await agent!.replyMessage(
           ChatClient(ai.baseUrl, ai.apiKey, ai.model), userMessage);
       if (!mounted) return;
+      _applyTurn(turn);
+      notify.rescheduleDaily(store);
+    } catch (e) {
+      if (!mounted) return;
       setState(() {
-        messages = [
-          ...messages,
-          CoachMessage(ChatMessage.roleAssistant, reply)
-        ];
         thinking = false;
         activeTool = null;
+        error = e.toString();
       });
+    }
+    _scrollToBottom();
+  }
+
+  /// Renders a turn: a final answer, or the approval card for pending writes.
+  void _applyTurn(CoachTurn turn) {
+    setState(() {
+      thinking = false;
+      activeTool = null;
+      pending = turn.pending;
+      final note = turn.note?.trim();
+      messages = [
+        ...messages,
+        if (note != null && note.isNotEmpty)
+          CoachMessage(ChatMessage.roleAssistant, note),
+        if (turn.reply != null)
+          CoachMessage(ChatMessage.roleAssistant, turn.reply!),
+      ];
+    });
+  }
+
+  Future<void> _decide(bool approve) async {
+    final agent = this.agent;
+    final store = context.read<AppStore>();
+    final notify = context.read<NotifyService>();
+    if (agent == null || pending == null || thinking) return;
+    final ai = store.ai;
+    setState(() {
+      thinking = true;
+      error = null;
+      activeTool = null;
+      pending = null;
+    });
+    try {
+      final client = ChatClient(ai.baseUrl, ai.apiKey, ai.model);
+      final turn = approve ? await agent.approve(client) : await agent.decline(client);
+      if (!mounted) return;
+      _applyTurn(turn);
       notify.rescheduleDaily(store);
     } catch (e) {
       if (!mounted) return;
@@ -194,6 +236,8 @@ class _CoachTabState extends State<CoachTab> {
                       'Fresh start. What are we working on?')
                 ];
                 error = null;
+                pending = null;
+                thinking = false;
               });
             },
           ),
@@ -205,9 +249,11 @@ class _CoachTabState extends State<CoachTab> {
             child: ListView.builder(
               controller: scroll,
               padding: const EdgeInsets.all(16),
-              itemCount: messages.length + (thinking ? 1 : 0),
+              itemCount: messages.length +
+                  (thinking ? 1 : 0) +
+                  (pending != null && !thinking ? 1 : 0),
               itemBuilder: (context, i) {
-                if (i == messages.length) {
+                if (i == messages.length && thinking) {
                   return _Bubble(
                     isUser: false,
                     child: Row(children: [
@@ -224,6 +270,13 @@ class _CoachTabState extends State<CoachTab> {
                             ?.copyWith(color: scheme.onSurfaceVariant),
                       ),
                     ]),
+                  );
+                }
+                if (i >= messages.length) {
+                  return CoachApprovalCard(
+                    pending: pending!,
+                    onApprove: () => _decide(true),
+                    onCancel: () => _decide(false),
                   );
                 }
                 final m = messages[i];
@@ -309,12 +362,99 @@ class _CoachTabState extends State<CoachTab> {
                   minimumSize: const Size(48, 48),
                   padding: EdgeInsets.zero,
                 ),
-                onPressed: thinking ? null : _send,
+                onPressed: thinking || pending != null ? null : _send,
                 child: const Icon(Icons.send),
               ),
             ]),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Shows exactly what the coach wants to write and waits for the user's
+/// decision. Nothing is written until Approve is tapped.
+class CoachApprovalCard extends StatelessWidget {
+  final PendingApproval pending;
+  final VoidCallback onApprove;
+  final VoidCallback onCancel;
+  const CoachApprovalCard(
+      {super.key,
+      required this.pending,
+      required this.onApprove,
+      required this.onCancel});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final t = Theme.of(context).textTheme;
+    final many = pending.changes.length > 1;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        constraints: const BoxConstraints(maxWidth: 520),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHigh,
+          border: Border.all(color: scheme.outlineVariant),
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Icon(Icons.edit_note, size: 20, color: scheme.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    many
+                        ? 'The coach wants to make ${pending.changes.length} changes'
+                        : 'The coach wants to make a change',
+                    style: t.titleSmall?.copyWith(color: scheme.onSurface),
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 8),
+              for (final summary in pending.summaries)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('• ', style: t.bodyMedium?.copyWith(color: scheme.onSurface)),
+                      Expanded(
+                        child: Text(summary,
+                            style: t.bodyMedium
+                                ?.copyWith(color: scheme.onSurface)),
+                      ),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 4),
+              Text('Nothing is saved until you approve.',
+                  style: t.bodySmall
+                      ?.copyWith(color: scheme.onSurfaceVariant)),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: onCancel,
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    onPressed: onApprove,
+                    child: Text(many ? 'Approve all' : 'Approve'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

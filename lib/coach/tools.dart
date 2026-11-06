@@ -27,6 +27,17 @@ String isoDate(int millis) {
 
 String num1(double v) => trimZero(v);
 
+/// Reads a numeric argument without throwing when the model omits or mistypes
+/// it; summaries must never fail on bad input.
+double? _num(Map<String, Object?> args, String key) =>
+    (args[key] as num?)?.toDouble();
+
+int? _int(Map<String, Object?> args, String key) =>
+    (args[key] as num?)?.toInt();
+
+String _text(Map<String, Object?> args, String key) =>
+    (args[key] as String?)?.trim() ?? '';
+
 final dateRangeSchema = {
   'type': 'object',
   'properties': {
@@ -263,6 +274,25 @@ class LogMealTool extends CoachTool {
       });
 
   @override
+  bool get isWrite => true;
+
+  @override
+  String summarize(Map<String, Object?> args) {
+    final dish = _text(args, 'dish');
+    final calories = _num(args, 'calories');
+    final date = _text(args, 'date');
+    final macros = [
+      if (calories != null) '${num1(calories)} kcal',
+      if (_num(args, 'protein') != null) '${num1(_num(args, 'protein')!)}g protein',
+      if (_num(args, 'carbs') != null) '${num1(_num(args, 'carbs')!)}g carbs',
+      if (_num(args, 'fat') != null) '${num1(_num(args, 'fat')!)}g fat',
+    ].join(', ');
+    return 'Log a meal: ${dish.isEmpty ? 'meal' : dish}'
+        '${macros.isEmpty ? '' : ' — $macros'}'
+        '${date.isEmpty ? '' : ' ($date)'}';
+  }
+
+  @override
   Future<String> run(Map<String, Object?> args) async {
     final dish = args['dish'] as String?;
     if (dish == null) return '{"error":"dish is required"}';
@@ -302,6 +332,19 @@ class LogMoodTool extends CoachTool {
       });
 
   @override
+  bool get isWrite => true;
+
+  @override
+  String summarize(Map<String, Object?> args) {
+    final mood = _int(args, 'mood');
+    final note = _text(args, 'note');
+    final date = _text(args, 'date');
+    return 'Log a mood check-in: ${mood == null ? 'mood' : '$mood/5'}'
+        '${note.isEmpty ? '' : ' — "$note"'}'
+        '${date.isEmpty ? '' : ' ($date)'}';
+  }
+
+  @override
   Future<String> run(Map<String, Object?> args) async {
     final mood = (args['mood'] as num?)?.toInt();
     if (mood == null) return '{"error":"mood is required"}';
@@ -324,6 +367,15 @@ class StartWorkoutTool extends CoachTool {
           'name': {'type': 'string', 'description': "Workout name, e.g. 'Push Day'"},
         },
       });
+
+  @override
+  bool get isWrite => true;
+
+  @override
+  String summarize(Map<String, Object?> args) {
+    final name = _text(args, 'name');
+    return 'Start a workout: ${name.isEmpty ? 'Workout' : name}';
+  }
 
   @override
   Future<String> run(Map<String, Object?> args) async {
@@ -351,6 +403,22 @@ class AddSetTool extends CoachTool {
         },
         'required': ['exerciseName', 'weightKg', 'reps'],
       });
+
+  @override
+  bool get isWrite => true;
+
+  @override
+  String summarize(Map<String, Object?> args) {
+    final name = _text(args, 'exerciseName');
+    final weight = _num(args, 'weightKg');
+    final reps = _int(args, 'reps');
+    final warmup = args['isWarmup'] == true;
+    final workoutId = _int(args, 'workoutId');
+    return 'Add a set: ${name.isEmpty ? 'exercise' : name} '
+        '${weight == null ? '?' : num1(weight)} kg × ${reps ?? '?'} reps'
+        '${warmup ? ' (warm-up)' : ''}'
+        '${workoutId == null ? ' to the active workout' : ' to workout #$workoutId'}';
+  }
 
   @override
   Future<String> run(Map<String, Object?> args) async {
@@ -501,7 +569,7 @@ class SetReminderTool extends CoachTool {
   @override
   ToolSpec get spec => ToolSpec('setReminder',
       'Set a reminder that fires as a device notification. Provide "text" and either "when" '
-      '(local date-time YYYY-MM-DDTHH:MM) or "inMinutes" from now. Confirm with the user before creating.',
+      '(local date-time YYYY-MM-DDTHH:MM) or "inMinutes" from now. The user approves it before it is created.',
       {
         'type': 'object',
         'properties': {
@@ -511,6 +579,22 @@ class SetReminderTool extends CoachTool {
         },
         'required': ['text'],
       });
+
+  @override
+  bool get isWrite => true;
+
+  @override
+  String summarize(Map<String, Object?> args) {
+    final text = _text(args, 'text');
+    final inMinutes = _int(args, 'inMinutes');
+    final when = _text(args, 'when');
+    final timing = inMinutes != null && inMinutes > 0
+        ? 'in $inMinutes min'
+        : when.isEmpty
+            ? 'at an unset time'
+            : 'at $when';
+    return 'Set a reminder: "${text.isEmpty ? 'reminder' : text}" $timing';
+  }
 
   @override
   Future<String> run(Map<String, Object?> args) async {
@@ -569,6 +653,15 @@ class CancelReminderTool extends CoachTool {
         },
         'required': ['id'],
       });
+
+  @override
+  bool get isWrite => true;
+
+  @override
+  String summarize(Map<String, Object?> args) {
+    final id = _int(args, 'id');
+    return 'Cancel reminder ${id == null ? '' : '#$id'}'.trim();
+  }
 
   @override
   Future<String> run(Map<String, Object?> args) async {
