@@ -64,7 +64,7 @@ class AppStore extends ChangeNotifier {
   static Future<AppStore> open(SharedPreferences prefs, {String? path}) async {
     path ??= p.join(await getDatabasesPath(), 'compounder.db');
     final db = await openDatabase(path,
-        version: 7, onCreate: _createSchema, onUpgrade: _upgradeSchema);
+        version: 8, onCreate: _createSchema, onUpgrade: _upgradeSchema);
     final store = AppStore._(db, prefs);
     await store.refreshAll();
     return store;
@@ -102,6 +102,7 @@ class AppStore extends ChangeNotifier {
       thought TEXT NOT NULL, reframe TEXT NOT NULL DEFAULT '')''');
     await _createV2Tables(db);
     await _createV3Tables(db);
+    await _createV8Indexes(db);
   }
 
   static Future<void> _createV2Tables(Database db) async {
@@ -168,6 +169,29 @@ class AppStore extends ChangeNotifier {
       await db.delete('health_sync_state', where: "metric = '__all__'");
       await db.delete('health_sync_state', where: "metric LIKE 'SLEEP%'");
     }
+    if (oldVersion < 8) {
+      // Every non-health table was created without indexes, so the hot paths
+      // (workout detail, meal list, net-worth series, due reminders) were full
+      // table scans plus a temp B-tree for the ORDER BY. Indexes are additive:
+      // no row is rewritten, so existing data is untouched. IF NOT EXISTS keeps
+      // the step safe to re-run on a partially applied migration.
+      await _createV8Indexes(db);
+    }
+  }
+
+  /// Indexes for the non-health tables (schema v8). Idempotent so both
+  /// onCreate and a re-run of the 7->8 upgrade can call it.
+  static Future<void> _createV8Indexes(Database db) async {
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_workout_sets_exercise ON workout_sets(workout_exercise_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_workout_exercises_workout ON workout_exercises(workout_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_meals_timestamp ON meals(timestamp)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_balance_snapshots_account_taken ON balance_snapshots(account_id, taken_at)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_reminders_due_at ON reminders(due_at)');
   }
 
   /// Adds [column] to [table] only when it is absent, so a partially applied
