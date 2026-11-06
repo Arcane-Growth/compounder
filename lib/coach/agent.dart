@@ -114,6 +114,17 @@ RULES
   static const _maxIterations = 8;
   static const _maxHistory = 60;
 
+  /// Hard ceiling on the tool calls kept from one model step.
+  ///
+  /// [_maxIterations] bounds how many steps a turn may take, but nothing bounds
+  /// how many calls a single step may return: a model can emit dozens. Without
+  /// this clamp one turn could add hundreds of messages and dwarf
+  /// [_maxHistory] on its own. Five calls per step keeps the largest possible
+  /// turn under [_maxHistory] even on the approval path, where a paused step's
+  /// results are added before the loop resumes: 1 user + 1 assistant + 5
+  /// approved results + 8 * (1 assistant + 5 results) + 1 final = 56 messages.
+  static const _maxToolCallsPerIteration = 5;
+
   final Map<String, CoachTool> tools;
   final void Function(String toolName)? onToolRun;
   final String systemPrompt;
@@ -215,13 +226,32 @@ RULES
         return CoachTurn(reply: text);
       }
 
-      _history.add(ChatMessage.assistant(result.content, result.toolCalls));
+      // A single model step may return far more calls than the loop can
+      // usefully run. Keep only the first [_maxToolCallsPerIteration] and record
+      // them on the assistant message, so every tool_call_id that reaches the
+      // wire is answered by exactly one tool result below. Dropped calls are
+      // never sent, so no id is left dangling, and the turn keeps a hard
+      // message ceiling instead of growing with the model's output.
+      final calls = result.toolCalls.length > _maxToolCallsPerIteration
+          ? result.toolCalls.sublist(0, _maxToolCallsPerIteration)
+          : result.toolCalls;
+      final dropped = result.toolCalls.length - calls.length;
+      final historyNote = dropped == 0
+          ? result.content
+          : [
+              if (result.content?.trim().isNotEmpty ?? false)
+                result.content!.trim(),
+              '($dropped more tool call${dropped == 1 ? '' : 's'} skipped: at '
+                  'most $_maxToolCallsPerIteration run per step. Ask again if '
+                  'you still need them.)',
+            ].join('\n\n');
+      _history.add(ChatMessage.assistant(historyNote, calls));
       final proposals = <ProposedChange>[];
-      for (final call in result.toolCalls) {
+      for (final call in calls) {
         final tool = tools[call.name];
         if (tool == null) {
-          _history.add(
-              ChatMessage.tool(call.id, '{"error":"Unknown tool ${call.name}"}'));
+          _history.add(ChatMessage.tool(
+              call.id, '{"error":"Unknown tool ${call.name}"}'));
           continue;
         }
         Map<String, Object?> args;
@@ -230,8 +260,8 @@ RULES
               ? {}
               : (jsonDecode(call.arguments) as Map).cast<String, Object?>();
         } catch (e) {
-          _history
-              .add(ChatMessage.tool(call.id, '{"error":"Invalid arguments: $e"}'));
+          _history.add(
+              ChatMessage.tool(call.id, '{"error":"Invalid arguments: $e"}'));
           continue;
         }
         if (!tool.isWrite) {
@@ -268,25 +298,34 @@ RULES
     }
   }
 
-  /// Drops the oldest turns once the history exceeds [_maxHistory].
+  /// Drops the oldest turns until the history fits [_maxHistory].
   ///
   /// The cut is made only at a turn boundary — an index whose message has
   /// role `user` — so the request always starts with a user message and no
   /// `tool` message is ever separated from the assistant `tool_calls` message
   /// it answers. OpenAI-compatible endpoints reject both shapes.
+  ///
+  /// The nearest boundary at or before the cap index is preferred, so the
+  /// request keeps as much recent context as possible. When there is no such
+  /// boundary the oldest turn alone reaches past the cap index; that whole turn
+  /// is dropped instead of leaving the history unbounded.
+  ///
+  /// A history that is a single turn is kept whole rather than orphan a tool
+  /// result. That turn is bounded by [_maxIterations] and
+  /// [_maxToolCallsPerIteration] per approval round, so it only exceeds the cap
+  /// when the user approves several rounds inside one turn — a user-driven,
+  /// finite amount, not model-driven growth.
   void _trim() {
-    if (_history.length <= _maxHistory) return;
-
-    // Walk back from the newest index that would satisfy the size cap to the
-    // nearest turn boundary at or before it.
-    var start = _history.length - _maxHistory;
-    while (start > 0 && _history[start].role != ChatMessage.roleUser) {
-      start--;
+    while (_history.length > _maxHistory) {
+      var start = _history.length - _maxHistory;
+      while (start > 0 && _history[start].role != ChatMessage.roleUser) {
+        start--;
+      }
+      if (start == 0) {
+        start = _history.indexWhere((m) => m.role == ChatMessage.roleUser, 1);
+      }
+      if (start <= 0) return;
+      _history.removeRange(0, start);
     }
-    // A single turn longer than the cap has no boundary to cut at: keep it
-    // whole rather than orphan a tool result. Growth is bounded by
-    // _maxIterations and the tools per turn.
-    if (start == 0) return;
-    _history.removeRange(0, start);
   }
 }

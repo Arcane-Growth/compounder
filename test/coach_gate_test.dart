@@ -1,5 +1,6 @@
 import 'package:compounder/coach/agent.dart';
 import 'package:compounder/coach/tools.dart';
+import 'package:compounder/data/models.dart';
 import 'package:compounder/data/store.dart';
 import 'package:compounder/llm/llm.dart';
 import 'package:compounder/ui/coach.dart';
@@ -59,7 +60,8 @@ void main() {
     await store.db.close();
   });
 
-  CoachAgent agentWith(_ScriptedClient client, {void Function(String)? onToolRun}) =>
+  CoachAgent agentWith(_ScriptedClient client,
+          {void Function(String)? onToolRun}) =>
       CoachAgent(
         toolList: [
           NutritionTool(store),
@@ -81,7 +83,8 @@ void main() {
       ]);
       final agent = agentWith(client);
 
-      final turn = await agent.replyMessage(client, ChatMessage.user('I ate a chicken bowl'));
+      final turn = await agent.replyMessage(
+          client, ChatMessage.user('I ate a chicken bowl'));
 
       expect(turn.isPaused, isTrue);
       expect(turn.reply, isNull);
@@ -99,7 +102,8 @@ void main() {
           reason: 'the loop must stop instead of asking the model again');
     });
 
-    test('approving applies the change exactly once and returns the tool result',
+    test(
+        'approving applies the change exactly once and returns the tool result',
         () async {
       final client = _ScriptedClient([
         _writeCall('c1', 'logMeal', '{"dish":"Toast","calories":90}'),
@@ -128,7 +132,8 @@ void main() {
       expect(store.meals, hasLength(1));
     });
 
-    test('cancelling leaves the store untouched and tells the model it was declined',
+    test(
+        'cancelling leaves the store untouched and tells the model it was declined',
         () async {
       final client = _ScriptedClient([
         _writeCall('c1', 'logMood', '{"mood":4,"note":"good day"}'),
@@ -142,8 +147,8 @@ void main() {
       expect(turn.isPaused, isFalse);
       expect(turn.reply, 'No problem, skipped it.');
       expect(store.moods, isEmpty, reason: 'cancel must not write');
-      final toolMessage = client.sent.last
-          .lastWhere((m) => m.role == ChatMessage.roleTool);
+      final toolMessage =
+          client.sent.last.lastWhere((m) => m.role == ChatMessage.roleTool);
       expect(toolMessage.content, contains('"declined":true'));
       expect(toolMessage.content, contains('Nothing was written'));
       expect(() => agent.decline(client), throwsStateError);
@@ -159,7 +164,8 @@ void main() {
       ]);
       final agent = agentWith(client);
 
-      final turn = await agent.replyMessage(client, ChatMessage.user('oats and mood 3'));
+      final turn =
+          await agent.replyMessage(client, ChatMessage.user('oats and mood 3'));
 
       expect(turn.isPaused, isTrue);
       expect(turn.pending!.changes, hasLength(2));
@@ -183,7 +189,8 @@ void main() {
       ]);
       final agent = agentWith(client);
 
-      final turn = await agent.replyMessage(client, ChatMessage.user('bench 80x5'));
+      final turn =
+          await agent.replyMessage(client, ChatMessage.user('bench 80x5'));
 
       expect(turn.isPaused, isTrue);
       expect(turn.pending!.changes.single.summary, contains('80 kg × 5 reps'));
@@ -203,23 +210,26 @@ void main() {
     test('a query runs inline and the turn returns a reply', () async {
       final ran = <String>[];
       final client = _ScriptedClient([
-        _writeCall('c1', 'getNutrition', '{"start":"2026-01-01","end":"2026-01-01"}'),
+        _writeCall(
+            'c1', 'getNutrition', '{"start":"2026-01-01","end":"2026-01-01"}'),
         _final('You logged 0 meals.'),
       ]);
       final agent = agentWith(client, onToolRun: ran.add);
 
-      final turn = await agent.replyMessage(client, ChatMessage.user('what did I eat'));
+      final turn =
+          await agent.replyMessage(client, ChatMessage.user('what did I eat'));
 
       expect(turn.isPaused, isFalse);
       expect(turn.reply, 'You logged 0 meals.');
       expect(ran, ['getNutrition']);
       expect(client.calls, 2, reason: 'the query must run without a pause');
-      final toolMessage = client.sent.last
-          .lastWhere((m) => m.role == ChatMessage.roleTool);
+      final toolMessage =
+          client.sent.last.lastWhere((m) => m.role == ChatMessage.roleTool);
       expect(toolMessage.content, contains('mealCount'));
     });
 
-    test('a read and a write in the same turn: read runs, write waits', () async {
+    test('a read and a write in the same turn: read runs, write waits',
+        () async {
       final ran = <String>[];
       final client = _ScriptedClient([
         ChatResult(null, [
@@ -319,7 +329,8 @@ void main() {
       expect(() => agent.approve(client), throwsStateError);
     });
 
-    test('trimming cuts on turn boundaries: the request starts with a user '
+    test(
+        'trimming cuts on turn boundaries: the request starts with a user '
         'message and never orphans a tool result', () async {
       // 12 turns of (user, assistant with 4 tool calls, 4 tool results, final)
       // = 84 messages, well past the 60-message cap. Trimming by raw count
@@ -393,11 +404,111 @@ void main() {
       expect(turn.reply, contains('Saved your change'));
       expect(turn.reply, contains('could not reach'));
     });
+
+    test(
+        'an oversized turn is clamped and history stays bounded across 40 '
+        'turns', () async {
+      // The model asks for 100 tool calls on every one of the 8 iterations, so
+      // the turn alone would be 1 + 8 * (1 + 100) + 1 = 810 messages. Nothing
+      // used to cap calls per iteration, and _trim bailed out when the walk
+      // found no user boundary at or before the cap index, so the history grew
+      // to ~2x the cap and stayed there for dozens of turns.
+      await store.addMeal(Meal(
+        id: 0,
+        timestamp: DateTime(2026, 1, 1, 12).millisecondsSinceEpoch,
+        imagePath: '',
+        dish: 'Chicken bowl',
+        calories: 620,
+        protein: 40,
+        carbs: 61,
+        fat: 18,
+      ));
+      final script = <ChatResult>[
+        for (var iteration = 0; iteration < 8; iteration++)
+          ChatResult(null, [
+            for (var i = 0; i < 100; i++)
+              ToolCall('i${iteration}c$i', 'getNutrition',
+                  '{"start":"2026-01-01","end":"2026-01-01"}'),
+          ]),
+        _final('done'),
+      ];
+      final client = _ScriptedClient(script);
+      final agent = agentWith(client);
+
+      await agent.replyMessage(client, ChatMessage.user('huge turn'));
+      for (var turn = 0; turn < 40; turn++) {
+        await agent.replyMessage(client, ChatMessage.user('question $turn'));
+      }
+
+      // _maxHistory is 60. Every request must stay at or under it: the clamp
+      // bounds a turn, and _trim drops whole turns when the head has no
+      // boundary to cut at.
+      var peak = 0;
+      for (final sent in client.sent) {
+        final history =
+            sent.where((m) => m.role != ChatMessage.roleSystem).toList();
+        if (history.length > peak) peak = history.length;
+
+        expect(history.first.role, ChatMessage.roleUser,
+            reason: 'every request must open with a user message');
+        final answered = <String>{};
+        for (var i = 0; i < history.length; i++) {
+          final m = history[i];
+          if (m.role == ChatMessage.roleAssistant) {
+            answered.addAll(m.toolCalls.map((c) => c.id));
+          } else if (m.role == ChatMessage.roleTool) {
+            expect(answered, contains(m.toolCallId),
+                reason: 'tool ${m.toolCallId} at index $i has no preceding '
+                    'assistant tool_calls message');
+          } else if (m.role == ChatMessage.roleUser) {
+            answered.clear();
+          }
+        }
+      }
+
+      expect(peak, lessThanOrEqualTo(60),
+          reason: 'peak history must stay within _maxHistory (60)');
+    });
+
+    test('tool calls beyond the per-iteration cap are dropped and reported',
+        () async {
+      final client = _ScriptedClient([
+        ChatResult('Looking that up.', [
+          for (var i = 0; i < 20; i++)
+            ToolCall('c$i', 'getNutrition',
+                '{"start":"2026-01-01","end":"2026-01-01"}'),
+        ]),
+        _final('done'),
+      ]);
+      final agent = agentWith(client);
+
+      await agent.replyMessage(client, ChatMessage.user('many calls'));
+
+      // The assistant message the model is shown carries only the calls that
+      // actually ran, so no tool_call_id is left dangling.
+      final first = client.sent[1]
+          .where((m) => m.role != ChatMessage.roleSystem)
+          .toList();
+      final assistant =
+          first.firstWhere((m) => m.role == ChatMessage.roleAssistant);
+      expect(assistant.toolCalls, hasLength(5),
+          reason: 'at most 5 calls may run per iteration');
+      expect(
+          assistant.toolCalls.map((c) => c.id), ['c0', 'c1', 'c2', 'c3', 'c4']);
+      expect(assistant.content, contains('15 more tool calls skipped'));
+      expect(
+          first
+              .where((m) => m.role == ChatMessage.roleTool)
+              .map((m) => m.toolCallId),
+          ['c0', 'c1', 'c2', 'c3', 'c4'],
+          reason: 'every kept call gets exactly one result');
+    });
   });
 
   group('approval card', () {
     Future<void> pumpCard(WidgetTester tester, PendingApproval pending,
-        {required VoidCallback onApprove, required VoidCallback onCancel}) async {
+        {required VoidCallback onApprove,
+        required VoidCallback onCancel}) async {
       await tester.pumpWidget(MaterialApp(
         home: Scaffold(
           body: CoachApprovalCard(
