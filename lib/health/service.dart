@@ -101,6 +101,77 @@ class PluginHealthSource implements HealthSource {
   Future<void> revokePermissions() => _health.revokePermissions();
 }
 
+/// Largest window handed to the health plugin in one call.
+///
+/// The plugin accumulates every record for the requested range in memory and
+/// converts each one to a map on the Android main thread, so a 30-day window of
+/// a high-frequency type (heart rate) can exhaust the 256 MB heap and kill the
+/// process with a native `OutOfMemoryError` that Dart cannot catch. Walking the
+/// range one day at a time caps the plugin's peak record set at ~1/30th of that.
+const Duration healthSyncChunk = Duration(days: 1);
+
+class SyncChunkResult {
+  final int records;
+  final Map<String, String> errors;
+  const SyncChunkResult({required this.records, required this.errors});
+}
+
+/// Walks [start]..[now] in [healthSyncChunk] steps for every type in [types].
+///
+/// Each completed chunk is stamped through [stamp] so a process kill mid-sync
+/// resumes from the last finished chunk instead of re-fetching the whole range.
+/// A failure in one chunk or one type is recorded and never aborts the rest.
+Future<SyncChunkResult> runChunkedSync({
+  required HealthSource source,
+  required List<HealthDataType> types,
+  required DateTime start,
+  required DateTime now,
+  required Map<String, HealthSyncState> resumeStates,
+  required HealthRecord Function(HealthDataPoint point, DateTime syncedAt)
+      toRecord,
+  required Future<int> Function(List<HealthRecord> records) upsert,
+  required Future<void> Function(String metric, int chunkEndMs, String? error)
+      stamp,
+}) async {
+  final errors = <String, String>{};
+  var written = 0;
+  for (final type in types) {
+    try {
+      if (!source.isTypeAvailable(type)) continue;
+      var chunkStart = start;
+      final resumeMs = resumeStates[type.name]?.lastSyncedAt;
+      if (resumeMs != null) {
+        final resumed = DateTime.fromMillisecondsSinceEpoch(resumeMs)
+            .subtract(healthSyncChunk);
+        if (resumed.isAfter(chunkStart)) chunkStart = resumed;
+      }
+      var typeRecords = 0;
+      while (chunkStart.isBefore(now)) {
+        final chunkEnd =
+            _minDateTime(chunkStart.add(healthSyncChunk), now);
+        try {
+          final points = await source.fetch(
+              type: type, start: chunkStart, end: chunkEnd);
+          final records = points.map((p) => toRecord(p, now)).toList();
+          typeRecords += await upsert(records);
+          await stamp(type.name, chunkEnd.millisecondsSinceEpoch, null);
+        } catch (e) {
+          errors[type.name] = e.toString();
+          await stamp(type.name, chunkEnd.millisecondsSinceEpoch, e.toString());
+        }
+        chunkStart = chunkEnd;
+      }
+      written += typeRecords;
+    } catch (e) {
+      // One type must never abort the rest of the sync.
+      errors[type.name] = e.toString();
+    }
+  }
+  return SyncChunkResult(records: written, errors: errors);
+}
+
+DateTime _minDateTime(DateTime a, DateTime b) => a.isBefore(b) ? a : b;
+
 class HealthService extends ChangeNotifier {
   final AppStore store;
   final HealthRepository repository;
@@ -322,34 +393,24 @@ class HealthService extends ChangeNotifier {
         start = last.subtract(const Duration(days: 1));
       }
 
-      for (final type in types) {
-        if (!source.isTypeAvailable(type)) continue;
-        var chunkStart = start;
-        var typeRecords = 0;
-        String? typeError;
-        while (chunkStart.isBefore(now)) {
-          final chunkEnd =
-              _minDateTime(chunkStart.add(const Duration(days: 30)), now);
-          try {
-            final points = await source.fetch(
-                type: type, start: chunkStart, end: chunkEnd);
-            final records = points.map((p) => _toRecord(p, now)).toList();
-            typeRecords += await repository.upsertRecords(records);
-          } catch (e) {
-            typeError = e.toString();
-            errors[type.name] = typeError;
-          }
-          chunkStart = chunkEnd;
-        }
-        written += typeRecords;
-        final stamp = DateTime.now().millisecondsSinceEpoch;
-        await repository.setSyncState(
-          type.name,
-          lastSyncedAt: stamp,
-          lastSuccessAt: typeError == null ? stamp : null,
-          lastError: typeError,
-        );
-      }
+      final resumeStates = await repository.syncStates();
+      final result = await runChunkedSync(
+        source: source,
+        types: types,
+        start: start,
+        now: now,
+        resumeStates: resumeStates,
+        toRecord: _toRecord,
+        upsert: repository.upsertRecords,
+        stamp: (metric, chunkEndMs, error) => repository.setSyncState(
+          metric,
+          lastSyncedAt: chunkEndMs,
+          lastSuccessAt: error == null ? chunkEndMs : null,
+          lastError: error,
+        ),
+      );
+      written = result.records;
+      errors.addAll(result.errors);
       final stamp = DateTime.now().millisecondsSinceEpoch;
       await repository.setSyncState('__all__',
           lastSyncedAt: stamp, lastSuccessAt: stamp);
@@ -445,8 +506,6 @@ class HealthService extends ChangeNotifier {
       syncedAt: syncedAt.millisecondsSinceEpoch,
     );
   }
-
-  DateTime _minDateTime(DateTime a, DateTime b) => a.isBefore(b) ? a : b;
 }
 
 /// Convenience for UI widgets that need a short summary.

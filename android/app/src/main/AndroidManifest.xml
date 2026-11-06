@@ -38,6 +38,7 @@
     <application
         android:label="Compounder"
         android:usesCleartextTraffic="true"
+        android:largeHeap="true"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
