@@ -64,18 +64,40 @@ class _StubHealthSource implements HealthSource {
 }
 
 /// Loads the real Roboto face so text measurement matches a device instead of
-/// the test-only Ahem font. Silently falls back to the default font when the
-/// Flutter SDK's material fonts are not on disk.
-Future<void> _loadRoboto() async {
+/// the test-only Ahem font.
+///
+/// Returns `null` on success, or a human-readable reason when the face could
+/// not be loaded. The caller turns a non-null reason into an explicit skip: a
+/// silent fallback to Ahem would quietly weaken the font-dependent assertions
+/// below (Ahem is much wider than Roboto, so `didExceedMaxLines` and the 212dp
+/// width bound would stop meaning anything).
+Future<String?> _loadRoboto() async {
   final root = Platform.environment['FLUTTER_ROOT'];
-  if (root == null) return;
+  if (root == null) {
+    return 'FLUTTER_ROOT is unset, so the SDK material fonts cannot be found';
+  }
   final file =
       File('$root/bin/cache/artifacts/material_fonts/Roboto-Regular.ttf');
-  if (!file.existsSync()) return;
+  if (!file.existsSync()) {
+    return 'Roboto-Regular.ttf is missing at ${file.path}';
+  }
   final bytes = await file.readAsBytes();
   final loader = FontLoader('Roboto')
     ..addFont(Future.value(ByteData.view(bytes.buffer)));
   await loader.load();
+  return null;
+}
+
+/// Marks the current test skipped, with the recorded reason, when the real
+/// Roboto face could not be loaded. Returns true so the caller can bail out
+/// before running font-dependent assertions.
+///
+/// `markTestSkipped` records the skip and prints the reason, but it does *not*
+/// stop the test body, so the caller must `return` immediately.
+bool _skipWithoutRoboto(String? fontLoadFailure) {
+  if (fontLoadFailure == null) return false;
+  markTestSkipped('font-dependent assertion skipped: $fontLoadFailure');
+  return true;
 }
 
 Widget _drawerHost({
@@ -105,8 +127,13 @@ void main() {
   databaseFactory = databaseFactoryFfi;
 
   // Real I/O cannot be awaited inside testWidgets' fake-async zone, so the
-  // font is registered once for the whole file.
-  setUpAll(_loadRoboto);
+  // font is registered once for the whole file. A failure here is recorded
+  // rather than swallowed: the font-dependent assertions below are skipped
+  // with that reason, and the font-independent overflow guard still runs.
+  String? fontLoadFailure;
+  setUpAll(() async {
+    fontLoadFailure = await _loadRoboto();
+  });
 
   late AppStore store;
   late HealthService health;
@@ -129,6 +156,9 @@ void main() {
   });
 
   group('drawer header accessibility', () {
+    // Font-independent: a RenderFlex overflow is reported through FlutterError
+    // regardless of which face is used, so this regression guard always runs.
+    // Before the fix the header Row overflowed by 42px at 2.0 and this failed.
     testWidgets('does not overflow at textScaler 2.0 (Android max font size)',
         (tester) async {
       final scaffoldKey = GlobalKey<ScaffoldState>();
@@ -138,9 +168,24 @@ void main() {
       scaffoldKey.currentState!.openDrawer();
       await tester.pumpAndSettle();
 
-      // A RenderFlex overflow is reported through FlutterError, which the test
-      // binding surfaces here. This is the regression guard: before the fix the
-      // header Row overflowed by 42px at 2.0 and this assertion failed.
+      expect(tester.takeException(), isNull,
+          reason: 'drawer header must not overflow at textScaler 2.0');
+    });
+
+    // Font-dependent: these numbers only mean something with a real face.
+    // Under Ahem the label is far wider than Roboto, so the width bound would
+    // pass vacuously and the ellipsis check would stop testing the real case.
+    testWidgets('constrains and ellipsizes the label at textScaler 2.0',
+        (tester) async {
+      if (_skipWithoutRoboto(fontLoadFailure)) return;
+
+      final scaffoldKey = GlobalKey<ScaffoldState>();
+      await tester.pumpWidget(
+        _drawerHost(textScaler: 2.0, scaffoldKey: scaffoldKey),
+      );
+      scaffoldKey.currentState!.openDrawer();
+      await tester.pumpAndSettle();
+
       expect(tester.takeException(), isNull,
           reason: 'drawer header must not overflow at textScaler 2.0');
 
@@ -163,7 +208,8 @@ void main() {
           reason: 'the label should be ellipsized at 2.0, not silently clipped');
     });
 
-    testWidgets('renders the full label at the default text scale',
+    // Font-independent: overflow/maxLines are widget properties, not metrics.
+    testWidgets('declares a single ellipsized line at the default text scale',
         (tester) async {
       final scaffoldKey = GlobalKey<ScaffoldState>();
       await tester.pumpWidget(
@@ -176,6 +222,21 @@ void main() {
       final text = tester.widget<Text>(find.text('Compounder'));
       expect(text.overflow, TextOverflow.ellipsis);
       expect(text.maxLines, 1);
+    });
+
+    // Font-dependent: whether the whole word fits at 1.0 is a metrics question.
+    testWidgets('renders the full label at the default text scale',
+        (tester) async {
+      if (_skipWithoutRoboto(fontLoadFailure)) return;
+
+      final scaffoldKey = GlobalKey<ScaffoldState>();
+      await tester.pumpWidget(
+        _drawerHost(textScaler: 1.0, scaffoldKey: scaffoldKey),
+      );
+      scaffoldKey.currentState!.openDrawer();
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
       // At 1.0 the whole word fits, so nothing is clipped.
       final paragraph = tester.renderObject<RenderParagraph>(
           find.text('Compounder'));
