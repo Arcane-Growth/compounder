@@ -24,6 +24,10 @@ class BackupService {
       'workouts': await db.query('workouts'),
       'workoutExercises': await db.query('workout_exercises'),
       'workoutSets': await db.query('workout_sets'),
+      // The full catalog, not just the custom rows: import has to resolve
+      // every `workout_exercises.exercise_id` by NAME, and a workout may
+      // reference a built-in whose id differs on the target device.
+      'exercises': await db.query('exercises'),
       'customExercises': await db.query('exercises', where: 'is_custom = 1'),
       'meals': await db.query('meals'),
       'accounts': await db.query('accounts'),
@@ -82,16 +86,54 @@ class BackupService {
         await txn.delete(table);
       }
       await txn.delete('exercises', where: 'is_custom = 1');
-      for (final r in rows('customExercises')) {
-        await txn.insert('exercises', r,
-            conflictAlgorithm: ConflictAlgorithm.replace);
+      // Exercise ids are device-local. The built-in catalog is seeded in a
+      // different order on a different install, so a custom exercise's id on
+      // the source can collide with a built-in's id on the target. Inserting
+      // the file's rows by their original ids would overwrite that built-in
+      // and silently repoint every workout entry that referenced it. Resolve
+      // exercises by NAME instead, let SQLite assign fresh ids, and rewrite
+      // the workout references through the resulting map.
+      final sourceExercises = <Map<String, Object?>>[];
+      final seenExerciseIds = <Object?>{};
+      // `exercises` carries the whole catalog (format 3 files written by this
+      // build); older files only carry `customExercises`, in which case
+      // built-in references keep their original ids as before.
+      for (final r in [...rows('exercises'), ...rows('customExercises')]) {
+        if (seenExerciseIds.add(r['id'])) sourceExercises.add(r);
+      }
+      final targetByName = <String, int>{};
+      for (final r in await txn.query('exercises', orderBy: 'id')) {
+        final id = r['id'];
+        if (id is! int) continue;
+        targetByName.putIfAbsent(_exerciseKey(r), () => id);
+      }
+      final exerciseIdMap = <int, int>{};
+      for (final r in sourceExercises) {
+        final oldId = r['id'];
+        if (oldId is! int) continue;
+        final key = _exerciseKey(r);
+        var newId = targetByName[key];
+        if (newId == null) {
+          // Not on this device yet: insert without the id so SQLite assigns a
+          // fresh one, then remember it for the reference rewrite.
+          final row = Map<String, Object?>.from(r)..remove('id');
+          newId = await txn.insert('exercises', row);
+          targetByName[key] = newId;
+        }
+        exerciseIdMap[oldId] = newId;
       }
       for (final r in rows('workouts')) {
         await txn.insert('workouts', r,
             conflictAlgorithm: ConflictAlgorithm.replace);
       }
       for (final r in rows('workoutExercises')) {
-        await txn.insert('workout_exercises', r,
+        final row = Map<String, Object?>.from(r);
+        final oldId = row['exercise_id'];
+        if (oldId is int) {
+          final newId = exerciseIdMap[oldId];
+          if (newId != null) row['exercise_id'] = newId;
+        }
+        await txn.insert('workout_exercises', row,
             conflictAlgorithm: ConflictAlgorithm.replace);
       }
       for (final r in rows('workoutSets')) {
@@ -132,5 +174,14 @@ class BackupService {
     });
     await store.refreshAll();
     return ((data['workouts'] as List?) ?? []).length;
+  }
+
+  /// Identity of an exercise across devices: the name (case-insensitive) plus
+  /// whether it is user-created. Ids are device-local and must never be used
+  /// to match rows between two installs.
+  static String _exerciseKey(Map<String, Object?> row) {
+    final name = (row['name'] as String? ?? '').trim().toLowerCase();
+    final isCustom = row['is_custom'] == 1 ? 'custom' : 'builtin';
+    return '$name|$isCustom';
   }
 }

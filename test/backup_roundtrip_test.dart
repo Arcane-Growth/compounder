@@ -142,6 +142,7 @@ void main() {
       'workouts',
       'workoutExercises',
       'workoutSets',
+      'exercises',
       'customExercises',
       'meals',
       'accounts',
@@ -188,6 +189,99 @@ void main() {
     expect(target.netWorthHistory, isNotEmpty,
         reason: 'restored snapshots must feed the net-worth series');
     expect(target.reminders, hasLength(1));
+
+    await source.db.close();
+    await target.db.close();
+  });
+
+  test('import remaps exercise ids so workout entries keep their exercise',
+      () async {
+    final prefs = await SharedPreferences.getInstance();
+    final source = await AppStore.open(prefs, path: dbPath);
+    // Source device: the user created a custom exercise FIRST, so it took id 1
+    // and the built-in catalog row that followed took id 2.
+    final customId = await source.db.insert('exercises', {
+      'name': 'My Custom Lift',
+      'muscle_group': 'Chest',
+      'equipment': 'Barbell',
+      'is_custom': 1,
+    });
+    final benchId = await source.db.insert('exercises', {
+      'name': 'Bench Press',
+      'muscle_group': 'Chest',
+      'equipment': 'Barbell',
+      'is_custom': 0,
+    });
+    expect(customId, 1);
+    expect(benchId, 2);
+    final workoutId = await source.db.insert('workouts', {
+      'name': 'Push day',
+      'started_at': 1000,
+      'ended_at': 2000,
+    });
+    await source.db.insert('workout_exercises', {
+      'workout_id': workoutId,
+      'exercise_id': benchId,
+      'position': 0,
+    });
+    await source.db.insert('workout_exercises', {
+      'workout_id': workoutId,
+      'exercise_id': customId,
+      'position': 1,
+    });
+
+    final file = await BackupService.export(source);
+
+    // Target device: the seeder ran first, so built-ins occupy ids 1-2 and the
+    // source's custom id 1 collides with Bench Press.
+    final target = await AppStore.open(prefs, path: otherDbPath);
+    await target.db.insert('exercises', {
+      'name': 'Bench Press',
+      'muscle_group': 'Chest',
+      'equipment': 'Barbell',
+      'is_custom': 0,
+    });
+    await target.db.insert('exercises', {
+      'name': 'Squat',
+      'muscle_group': 'Legs',
+      'equipment': 'Barbell',
+      'is_custom': 0,
+    });
+
+    await BackupService.import(target, file);
+
+    // The built-in catalog must not be overwritten by the custom row.
+    final exercises = await target.db.query('exercises', orderBy: 'id');
+    expect(exercises.firstWhere((e) => e['id'] == 1)['name'], 'Bench Press',
+        reason: 'a custom exercise must not overwrite a built-in');
+    expect(exercises.firstWhere((e) => e['id'] == 2)['name'], 'Squat');
+    final restoredCustom =
+        exercises.firstWhere((e) => e['name'] == 'My Custom Lift');
+    expect(restoredCustom['is_custom'], 1);
+    expect(restoredCustom['id'], isNot(1),
+        reason:
+            'the custom exercise must get a fresh id, not the colliding one');
+
+    // Every workout entry must still resolve to the same exercise NAME.
+    final entries =
+        await target.db.query('workout_exercises', orderBy: 'position');
+    expect(entries, hasLength(2));
+    final names = <String>[];
+    for (final e in entries) {
+      final rows = await target.db.query('exercises',
+          where: 'id = ?', whereArgs: [e['exercise_id']], limit: 1);
+      expect(rows, hasLength(1),
+          reason: 'entry must point at an existing exercise');
+      names.add(rows.single['name'] as String);
+    }
+    expect(names, ['Bench Press', 'My Custom Lift'],
+        reason: 'workout history must not silently change exercise');
+
+    // The store's own view of the workout agrees.
+    final detail = await target.workoutDetail(1);
+    expect(detail, isNotNull);
+    expect(detail!.exercises.map((e) => e.exercise.name).toList(),
+        ['Bench Press', 'My Custom Lift']);
 
     await source.db.close();
     await target.db.close();
