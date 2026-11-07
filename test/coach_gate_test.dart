@@ -41,6 +41,30 @@ ChatResult _writeCall(String id, String name, String args) =>
 
 ChatResult _final(String text) => ChatResult(text, const []);
 
+/// A step that asks for [count] read calls, all of which run inline.
+ChatResult _reads(String prefix, {int count = 5}) => ChatResult(null, [
+      for (var i = 0; i < count; i++)
+        ToolCall('$prefix$i', 'getNutrition',
+            '{"start":"2026-01-01","end":"2026-01-01"}'),
+    ]);
+
+/// A step that asks for [count] write calls, so the loop pauses for approval.
+ChatResult _writes(String prefix, {int count = 5}) => ChatResult('On it.', [
+      for (var i = 0; i < count; i++)
+        ToolCall(
+            '$prefix$i', 'logMeal', '{"dish":"Meal $prefix$i","calories":100}'),
+    ]);
+
+/// Largest conversation the model was ever sent (system prompt excluded).
+int _peakSent(_ScriptedClient client) {
+  var peak = 0;
+  for (final sent in client.sent) {
+    final n = sent.where((m) => m.role != ChatMessage.roleSystem).length;
+    if (n > peak) peak = n;
+  }
+  return peak;
+}
+
 void main() {
   sqfliteFfiInit();
   databaseFactory = databaseFactoryFfi;
@@ -502,6 +526,143 @@ void main() {
               .map((m) => m.toolCallId),
           ['c0', 'c1', 'c2', 'c3', 'c4'],
           reason: 'every kept call gets exactly one result');
+    });
+
+    test('the skip note reaches the user when writes are dropped', () async {
+      // 8 logMeal calls: 5 are proposed, 3 are dropped. The approval card must
+      // say so — otherwise the user approves a batch believing it is complete
+      // and the 3 dropped writes are silently lost if the model answers instead
+      // of re-issuing them.
+      final client = _ScriptedClient([
+        _writes('c', count: 8),
+        _final('All done.'),
+      ]);
+      final agent = agentWith(client);
+
+      final turn = await agent.replyMessage(client, ChatMessage.user('log 8'));
+
+      expect(turn.isPaused, isTrue);
+      expect(turn.pending!.changes, hasLength(5));
+      expect(turn.note, isNotNull,
+          reason: 'the user must be told that calls were skipped');
+      expect(turn.note, contains('3 more tool calls skipped'));
+      expect(turn.note, contains('On it.'),
+          reason: 'the model text is kept alongside the skip note');
+      // The model sees the same note, so it can re-issue the dropped calls.
+      await agent.approve(client);
+      final sent = client.sent.last
+          .where((m) => m.role != ChatMessage.roleSystem)
+          .toList();
+      final assistant =
+          sent.lastWhere((m) => m.role == ChatMessage.roleAssistant);
+      expect(assistant.content, turn.note,
+          reason: 'the chat note and the wire note must match');
+    });
+
+    test('a single approval round peaks at the documented 91-message request',
+        () async {
+      // Worst case for one approval round: pause on the last iteration, so the
+      // turn carries 7 full read iterations before the pause and 8 after the
+      // approval. 98 messages in memory, 91 on the wire (the final fallback is
+      // never sent). This is the bound documented on
+      // _maxToolCallsPerIteration; the old comment claimed 56.
+      final script = <ChatResult>[
+        for (var i = 0; i < 7; i++) _reads('r$i', count: 8),
+        _writes('w', count: 8),
+        for (var i = 0; i < 8; i++) _reads('a$i', count: 8),
+        _final('done'),
+      ];
+      final client = _ScriptedClient(script);
+      final agent = agentWith(client);
+
+      final paused = await agent.replyMessage(client, ChatMessage.user('go'));
+      expect(paused.isPaused, isTrue);
+      expect(paused.pending!.changes, hasLength(5));
+
+      final resumed = await agent.approve(client);
+      expect(resumed.reply, contains('step limit'),
+          reason: 'the 8 post-approval iterations exhaust the loop');
+
+      expect(agent.historyLength, 98,
+          reason: 'one approval round is 98 messages in memory');
+      expect(_peakSent(client), 91,
+          reason: 'the largest request sent is 91 messages');
+    });
+
+    test(
+        'two approval rounds peak at 98 + 48 = 146 in memory / 139 on the wire',
+        () async {
+      // k approval rounds cost 98 + 48*(k-1) messages: each extra round adds 7
+      // read iterations (42 messages) plus its own pause step (1 assistant + 5
+      // approved results = 6) before the final 8 iterations. The turn is not
+      // bounded by _maxHistory; _trim keeps it whole and the next user message
+      // drops it.
+      final script = <ChatResult>[
+        for (var i = 0; i < 7; i++) _reads('r$i', count: 8),
+        _writes('w1', count: 8),
+        for (var i = 0; i < 7; i++) _reads('a$i', count: 8),
+        _writes('w2', count: 8),
+        for (var i = 0; i < 8; i++) _reads('b$i', count: 8),
+        _final('done'),
+      ];
+      final client = _ScriptedClient(script);
+      final agent = agentWith(client);
+
+      final first = await agent.replyMessage(client, ChatMessage.user('go'));
+      expect(first.isPaused, isTrue);
+
+      final second = await agent.approve(client);
+      expect(second.isPaused, isTrue,
+          reason: 'the second round pauses again for approval');
+
+      final third = await agent.approve(client);
+      expect(third.reply, contains('step limit'));
+
+      expect(agent.historyLength, 146,
+          reason: 'k=2 is 98 + 48*(2-1) = 146 messages in memory');
+      expect(_peakSent(client), 139,
+          reason: 'the largest request sent is 139 messages');
+
+      // The oversized turn is kept whole, then dropped by the next user
+      // message: the request after it carries only the new user message.
+      await agent.replyMessage(client, ChatMessage.user('next question'));
+      final after = client.sent.last
+          .where((m) => m.role != ChatMessage.roleSystem)
+          .toList();
+      expect(after, hasLength(1),
+          reason: 'the oversized turn must be dropped, not trimmed mid-turn');
+      expect(after.single.role, ChatMessage.roleUser);
+    });
+
+    test('the step-limit fallback is trimmed like every other exit path',
+        () async {
+      // Five prior turns of 4 read calls each leave the history at 35 messages.
+      // The fallback turn then adds a user message and 8 iterations of 2 calls
+      // (24 messages), reaching 60, and the fallback assistant message makes 61
+      // — one over the cap. Without _trim() on that path the history stays at
+      // 61 until the next turn; with it the oldest turn (7 messages) is dropped
+      // and the history is 54.
+      final script = <ChatResult>[
+        for (var turn = 0; turn < 5; turn++) ...[
+          _reads('p${turn}_', count: 4),
+          _final('turn $turn done'),
+        ],
+        for (var i = 0; i < 8; i++) _reads('r$i', count: 2),
+        _final('unused'),
+      ];
+      final client = _ScriptedClient(script);
+      final agent = agentWith(client);
+
+      for (var turn = 0; turn < 5; turn++) {
+        await agent.replyMessage(client, ChatMessage.user('question $turn'));
+      }
+      expect(agent.historyLength, 35, reason: '5 turns of 7 messages');
+
+      final turn = await agent.replyMessage(client, ChatMessage.user('go'));
+      expect(turn.reply, contains('step limit'));
+      expect(agent.historyLength, 54,
+          reason: 'the fallback path must trim: without it the history is 61, '
+              'one message over the cap');
     });
   });
 

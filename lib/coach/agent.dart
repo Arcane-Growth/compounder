@@ -116,13 +116,22 @@ RULES
 
   /// Hard ceiling on the tool calls kept from one model step.
   ///
-  /// [_maxIterations] bounds how many steps a turn may take, but nothing bounds
-  /// how many calls a single step may return: a model can emit dozens. Without
-  /// this clamp one turn could add hundreds of messages and dwarf
-  /// [_maxHistory] on its own. Five calls per step keeps the largest possible
-  /// turn under [_maxHistory] even on the approval path, where a paused step's
-  /// results are added before the loop resumes: 1 user + 1 assistant + 5
-  /// approved results + 8 * (1 assistant + 5 results) + 1 final = 56 messages.
+  /// [_maxIterations] bounds how many steps one approval round may take, but
+  /// nothing bounds how many calls a single step may return: a model can emit
+  /// dozens. Without this clamp one turn could add hundreds of messages and
+  /// dwarf [_maxHistory] on its own.
+  ///
+  /// The clamp does not keep a turn under [_maxHistory]. A turn is bounded per
+  /// approval round, not in total: every [approve] re-enters the loop for up to
+  /// [_maxIterations] more steps. Worst case for one approval round is a pause
+  /// on the last step, which carries 7 full read steps before the pause and 8
+  /// full steps after it: 1 user + 7 * (1 assistant + 5 results) + 1 assistant
+  /// with 5 proposals + 5 approved results + 8 * (1 assistant + 5 results) + 1
+  /// fallback = 98 messages in memory (91 on the wire: the last request is sent
+  /// before the final step's assistant message, its 5 results and the fallback
+  /// are added). With k approval rounds it is 98 + 48 * (k - 1) messages,
+  /// unbounded in k. [_trim] keeps a single turn whole and the next user
+  /// message drops it.
   static const _maxToolCallsPerIteration = 5;
 
   final Map<String, CoachTool> tools;
@@ -139,6 +148,13 @@ RULES
 
   /// Writes waiting for the user's decision, if the last turn paused.
   PendingApproval? get pending => _pending;
+
+  /// Number of messages currently held in the conversation history.
+  ///
+  /// Exposed so tests can assert the history bound directly: every request is
+  /// preceded by a trim, so the transient over-cap state after a step-limit
+  /// fallback is invisible in the sent message lists.
+  int get historyLength => _history.length;
 
   void reset() {
     _history.clear();
@@ -280,13 +296,18 @@ RULES
 
       if (proposals.isNotEmpty) {
         _pending = PendingApproval(proposals);
-        return CoachTurn(note: result.content, pending: _pending);
+        // Show the user the same note the model sees: when the step returned
+        // more calls than the clamp allows, [historyNote] carries the
+        // "N more tool calls skipped" line. Passing [result.content] here would
+        // hide dropped writes from the approval card.
+        return CoachTurn(note: historyNote, pending: _pending);
       }
     }
 
     const fallback =
         'I hit the step limit while working on that. Could you make the request a bit more specific?';
     _history.add(ChatMessage.assistant(fallback));
+    _trim();
     return const CoachTurn(reply: fallback);
   }
 
