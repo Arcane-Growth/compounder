@@ -29,4 +29,10 @@ jobs:
         run: flutter analyze
 
       - name: Test
+        # The DST regression guards (test/dst_day_windows_test.dart,
+        # test/digest_dst_test.dart) assert on ambient-zone DST transitions and
+        # fail loudly rather than passing vacuously when the runner has none.
+        # GitHub's ubuntu runner is UTC, so pin the zone.
+        env:
+          TZ: America/New_York
         run: flutter test

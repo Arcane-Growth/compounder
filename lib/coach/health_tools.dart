@@ -9,14 +9,19 @@ import '../llm/llm.dart';
 import 'agent.dart';
 import 'tools.dart';
 
-({int from, int to}) _range(Map<String, Object?> args, {int defaultDays = 7}) {
-  final now = DateTime.now();
+/// Inclusive day range for a health tool call.
+///
+/// [now] is injectable so the DST regression tests can pin the default window
+/// without depending on the wall clock.
+({int from, int to}) healthRange(Map<String, Object?> args,
+    {int defaultDays = 7, DateTime? now}) {
+  final anchor = now ?? DateTime.now();
   final startRaw = args['start'] as String?;
   final start = DateTime.tryParse(startRaw ?? '') ??
-      DateTime(now.year, now.month, now.day - (defaultDays - 1));
+      DateTime(anchor.year, anchor.month, anchor.day - (defaultDays - 1));
   final endRaw = args['end'] as String?;
   final end =
-      DateTime.tryParse(endRaw ?? '') ?? (startRaw == null ? now : start);
+      DateTime.tryParse(endRaw ?? '') ?? (startRaw == null ? anchor : start);
   final lo = end.isBefore(start) ? end : start;
   final hi = end.isBefore(start) ? start : end;
   return (
@@ -58,7 +63,7 @@ class HealthOverviewTool extends CoachTool {
 
   @override
   Future<String> run(Map<String, Object?> args) async {
-    final r = _range(args);
+    final r = healthRange(args);
     final overview = await repository.overview(from: r.from, to: r.to);
     final status = await service.status();
     return jsonEncode({
@@ -86,7 +91,7 @@ class SleepTool extends CoachTool {
 
   @override
   Future<String> run(Map<String, Object?> args) async {
-    final r = _range(args, defaultDays: 14);
+    final r = healthRange(args, defaultDays: 14);
     final sessions = await repository.sleepSessions(from: r.from, to: r.to);
     final days = await repository.daily(type: 'SLEEP', from: r.from, to: r.to);
     final nights = sessions.map(_sleepSessionMap).toList();
@@ -149,7 +154,7 @@ class HeartRateTool extends CoachTool {
 
   @override
   Future<String> run(Map<String, Object?> args) async {
-    final r = _range(args, defaultDays: 14);
+    final r = healthRange(args, defaultDays: 14);
     final raw = await repository.records(from: r.from, to: r.to);
     final daily = heartDailyStats(raw);
     final resting = await repository.daily(
@@ -205,7 +210,7 @@ class HealthMetricTool extends CoachTool {
     if (rawMetric == null || rawMetric.isEmpty) {
       return '{"error":"metric is required"}';
     }
-    final r = _range(args, defaultDays: 30);
+    final r = healthRange(args, defaultDays: 30);
     final info = metricInfo(rawMetric);
 
     if (rawMetric == 'WORKOUT') {
@@ -312,7 +317,7 @@ class HealthWorkoutsTool extends CoachTool {
 
   @override
   Future<String> run(Map<String, Object?> args) async {
-    final r = _range(args, defaultDays: 30);
+    final r = healthRange(args, defaultDays: 30);
     final workouts = workoutSummaries(
         await repository.records(type: 'WORKOUT', from: r.from, to: r.to));
     return jsonEncode({

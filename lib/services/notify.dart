@@ -21,6 +21,37 @@ const _channel = AndroidNotificationDetails(
 
 const _id = 42;
 
+/// Start of the 7-day digest window: local midnight six calendar days before
+/// [now]. Calendar arithmetic, not `Duration(days: 6)`: a 144-hour subtraction
+/// from midnight lands on 23:00/01:00 across a DST boundary.
+DateTime digestWindowStart(DateTime now) =>
+    DateTime(now.year, now.month, now.day - 6);
+
+/// Whole calendar days between [now] and [then], counted on UTC day keys.
+///
+/// `now.difference(then).inDays` is elapsed-hours truncated to days, so a
+/// 3-calendar-day gap across a DST boundary computes as 2. Local-midnight
+/// subtraction has the same defect (the difference is still a Duration);
+/// UTC day keys have no transitions, so the count is exact.
+int calendarDaysSince(DateTime now, DateTime then) =>
+    DateTime.utc(now.year, now.month, now.day)
+        .difference(DateTime.utc(then.year, then.month, then.day))
+        .inDays;
+
+/// Next delivery time for the daily coach digest.
+///
+/// Returns today at [coachMinutes] when that is still in the future, otherwise
+/// tomorrow at the same wall-clock time. Calendar arithmetic keeps the
+/// wall-clock time across DST boundaries; `add(Duration(days: 1))` shifted it
+/// by an hour in both directions.
+DateTime nextDigestAt(DateTime now, int coachMinutes) {
+  final hour = coachMinutes ~/ 60;
+  final minute = coachMinutes % 60;
+  final today = DateTime(now.year, now.month, now.day, hour, minute);
+  if (today.isAfter(now)) return today;
+  return DateTime(now.year, now.month, now.day + 1, hour, minute);
+}
+
 class NotifyService {
   final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
   bool _ready = false;
@@ -44,16 +75,17 @@ class NotifyService {
   }
 
   /// Deterministic 7-day summary across all four domains.
-  static String buildDigest(AppStore store) {
-    final now = DateTime.now();
-    final from = DateTime(now.year, now.month, now.day - 6);
+  static String buildDigest(AppStore store, {DateTime? now}) {
+    final anchor = now ?? DateTime.now();
+    final from = digestWindowStart(anchor);
     final fromMs = from.millisecondsSinceEpoch;
 
     final finished = store.history.where((h) => h.startedAt >= fromMs).toList();
     final lastWorkout = store.history.isEmpty ? null : store.history.first;
     final daysSinceWorkout = lastWorkout == null
         ? null
-        : DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(lastWorkout.startedAt)).inDays;
+        : calendarDaysSince(
+            anchor, DateTime.fromMillisecondsSinceEpoch(lastWorkout.startedAt));
 
     final recentMeals = store.meals.where((m) => m.timestamp >= fromMs).toList();
     final avgCal = recentMeals.isEmpty ? 0.0 : recentMeals.fold(0.0, (a, m) => a + m.calories) / recentMeals.length;
@@ -119,12 +151,7 @@ class NotifyService {
       return;
     }
     final now = DateTime.now();
-    var when = DateTime(now.year, now.month, now.day,
-        store.coachMinutes ~/ 60, store.coachMinutes % 60);
-    if (!when.isAfter(now)) {
-      when = DateTime(now.year, now.month, now.day + 1,
-          store.coachMinutes ~/ 60, store.coachMinutes % 60);
-    }
+    final when = nextDigestAt(now, store.coachMinutes);
     final tzWhen = tz.TZDateTime.from(when, tz.local);
 
     // Schedule instantly with the on-device digest; then (never blocking the

@@ -229,6 +229,37 @@ Future<SyncChunkResult> runChunkedSync({
 
 DateTime _minDateTime(DateTime a, DateTime b) => a.isBefore(b) ? a : b;
 
+/// Window for [HealthService.todaySummary]: local midnight two days before
+/// [now] up to local midnight the day after, exclusive.
+///
+/// Calendar arithmetic, not `Duration(days: N)`: a 24-hour step from midnight
+/// lands on 23:00/01:00 across a DST boundary, which truncated the last hour of
+/// today (fall-back) or pulled in an hour of tomorrow (spring-forward).
+({DateTime from, DateTime to}) todaySummaryWindow(DateTime now) => (
+      from: DateTime(now.year, now.month, now.day - 2),
+      to: DateTime(now.year, now.month, now.day + 1),
+    );
+
+/// Retention compaction cutoff: [now] stepped back [retentionDays] calendar
+/// days with the time-of-day preserved.
+///
+/// This is a destructive boundary, so it is pinned by tests. 730 days spans an
+/// even number of DST transitions, so for an anchor in the same DST phase as
+/// the cutoff this resolves to the same instant as the old
+/// `now.subtract(Duration(days: 730))`. For an anchor within a few days of a
+/// transition the phase differs and the calendar form is one hour earlier or
+/// later — the calendar-correct semantic, and the reason the old form was
+/// wrong.
+DateTime retentionCutoff(DateTime now, int retentionDays) => DateTime(
+    now.year,
+    now.month,
+    now.day - retentionDays,
+    now.hour,
+    now.minute,
+    now.second,
+    now.millisecond,
+    now.microsecond);
+
 class HealthService extends ChangeNotifier {
   final AppStore store;
   final HealthRepository repository;
@@ -476,9 +507,7 @@ class HealthService extends ChangeNotifier {
       await repository.setSyncState('__all__',
           lastSyncedAt: stamp, lastSuccessAt: stamp);
       try {
-        await repository.compactOlderThan(DateTime(now.year, now.month,
-            now.day - _retentionDays, now.hour, now.minute, now.second,
-            now.millisecond, now.microsecond));
+        await repository.compactOlderThan(retentionCutoff(now, _retentionDays));
       } catch (e) {
         errors['compaction'] = e.toString();
       }
@@ -524,12 +553,10 @@ class HealthService extends ChangeNotifier {
   }
 
   Future<Map<String, dynamic>> todaySummary() async {
-    final now = DateTime.now();
-    final from = DateTime(now.year, now.month, now.day - 2);
-    final to = DateTime(now.year, now.month, now.day + 1);
+    final window = todaySummaryWindow(DateTime.now());
     return repository.overview(
-      from: from.millisecondsSinceEpoch,
-      to: to.millisecondsSinceEpoch,
+      from: window.from.millisecondsSinceEpoch,
+      to: window.to.millisecondsSinceEpoch,
     );
   }
 

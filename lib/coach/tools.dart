@@ -7,8 +7,12 @@ import '../domain/domain.dart';
 import '../llm/llm.dart';
 import 'agent.dart';
 
-({int from, int to}) dateRange(Map<String, Object?> args) {
-  final today = DateTime.now();
+/// Inclusive day range for a coach tool call.
+///
+/// [now] is injectable so the DST regression tests can pin the default window
+/// without depending on the wall clock.
+({int from, int to}) dateRange(Map<String, Object?> args, {DateTime? now}) {
+  final today = now ?? DateTime.now();
   final startRaw = args['start'] as String?;
   final start = DateTime.tryParse(startRaw ?? '') ?? today;
   final end = DateTime.tryParse(args['end'] as String? ?? '') ?? (startRaw == null ? today : start);
