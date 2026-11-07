@@ -1,6 +1,5 @@
 import 'dart:async';
 
-
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
@@ -44,32 +43,49 @@ int calendarDaysSince(DateTime now, DateTime then) =>
 /// tomorrow at the same wall-clock time. Calendar arithmetic keeps the
 /// wall-clock time across DST boundaries; `add(Duration(days: 1))` shifted it
 /// by an hour in both directions.
+///
+/// On a fall-back day the configured wall-clock time can occur twice. The
+/// constructor resolves to the first (DST) occurrence, so if that one has
+/// already passed but the repeated occurrence is still ahead, the digest is
+/// scheduled for the repeated one instead of being pushed to tomorrow
+/// (pre-existing observation in the M3 gate).
 DateTime nextDigestAt(DateTime now, int coachMinutes) {
   final hour = coachMinutes ~/ 60;
   final minute = coachMinutes % 60;
   final today = DateTime(now.year, now.month, now.day, hour, minute);
   if (today.isAfter(now)) return today;
+  // One absolute hour later lands on the same wall-clock time only when the
+  // clock went back in between, i.e. this wall-clock time occurs twice today.
+  final repeated = today.add(const Duration(hours: 1));
+  if (repeated.hour == hour &&
+      repeated.minute == minute &&
+      repeated.isAfter(now)) {
+    return repeated;
+  }
   return DateTime(now.year, now.month, now.day + 1, hour, minute);
 }
 
 class NotifyService {
-  final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
+  final FlutterLocalNotificationsPlugin _plugin =
+      FlutterLocalNotificationsPlugin();
   bool _ready = false;
 
   Future<void> init() async {
     if (_ready) return;
     tzdata.initializeTimeZones();
     try {
-      tz.setLocalLocation(
-          tz.getLocation((await FlutterTimezone.getLocalTimezone()).identifier));
+      tz.setLocalLocation(tz
+          .getLocation((await FlutterTimezone.getLocalTimezone()).identifier));
     } catch (_) {
       tz.setLocalLocation(tz.UTC);
     }
     await _plugin.initialize(
-      const InitializationSettings(android: AndroidInitializationSettings('@mipmap/ic_launcher')),
+      const InitializationSettings(
+          android: AndroidInitializationSettings('@mipmap/ic_launcher')),
     );
     await _plugin
-        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
         ?.requestNotificationsPermission();
     _ready = true;
   }
@@ -87,36 +103,46 @@ class NotifyService {
         : calendarDaysSince(
             anchor, DateTime.fromMillisecondsSinceEpoch(lastWorkout.startedAt));
 
-    final recentMeals = store.meals.where((m) => m.timestamp >= fromMs).toList();
-    final avgCal = recentMeals.isEmpty ? 0.0 : recentMeals.fold(0.0, (a, m) => a + m.calories) / recentMeals.length;
+    final recentMeals =
+        store.meals.where((m) => m.timestamp >= fromMs).toList();
+    final avgCal = recentMeals.isEmpty
+        ? 0.0
+        : recentMeals.fold(0.0, (a, m) => a + m.calories) / recentMeals.length;
     final goal = store.goals;
 
-    final recentMoods = store.moods.where((m) => m.timestamp >= fromMs).toList();
+    final recentMoods =
+        store.moods.where((m) => m.timestamp >= fromMs).toList();
     final avgMood = Mind.averageMood(recentMoods.map((m) => m.mood).toList());
-    final streak = Mind.moodStreak(
-        store.moods.map((m) => DateTime.fromMillisecondsSinceEpoch(m.timestamp)).toList());
+    final streak = Mind.moodStreak(store.moods
+        .map((m) => DateTime.fromMillisecondsSinceEpoch(m.timestamp))
+        .toList());
 
     final parts = <String>[];
 
     if (finished.isEmpty && daysSinceWorkout != null && daysSinceWorkout >= 3) {
-      parts.add('You have not lifted in $daysSinceWorkout days — time to get back to the gym.');
+      parts.add(
+          'You have not lifted in $daysSinceWorkout days — time to get back to the gym.');
     } else if (finished.isNotEmpty) {
       final volume = finished.fold(0.0, (a, h) => a + h.totalKg);
-      parts.add('${finished.length} workout${finished.length == 1 ? '' : 's'} this week '
+      parts.add(
+          '${finished.length} workout${finished.length == 1 ? '' : 's'} this week '
           '(${trimZero(volume)} kg total volume).');
     } else {
       parts.add('No workouts logged yet this week — even 20 minutes counts.');
     }
 
     if (recentMeals.isEmpty) {
-      parts.add('No meals logged recently — time to get back on track with food.');
+      parts.add(
+          'No meals logged recently — time to get back on track with food.');
     } else {
-      parts.add('${recentMeals.length} meals logged, averaging ${avgCal.round()} kcal '
+      parts.add(
+          '${recentMeals.length} meals logged, averaging ${avgCal.round()} kcal '
           '(goal ${goal.calories.round()}).');
     }
 
     if (avgMood != null && avgMood < 2.5) {
-      parts.add('Your mood has been low this week — be gentle with yourself, and consider a quiet session.');
+      parts.add(
+          'Your mood has been low this week — be gentle with yourself, and consider a quiet session.');
     } else if (streak >= 3) {
       parts.add('You have checked in with your mood $streak days in a row.');
     }
@@ -131,11 +157,12 @@ class NotifyService {
     try {
       final polished = await ChatClient(ai.baseUrl, ai.apiKey, ai.model)
           .simple(
-        'You are Compounder\'s personal life coach writing a daily push notification. '
-        'Rewrite the user\'s stats as one short, warm, motivating sentence (under 140 chars). '
-        'Only use the provided numbers; never invent data.',
-        facts,
-      ).timeout(const Duration(seconds: 15));
+            'You are Compounder\'s personal life coach writing a daily push notification. '
+            'Rewrite the user\'s stats as one short, warm, motivating sentence (under 140 chars). '
+            'Only use the provided numbers; never invent data.',
+            facts,
+          )
+          .timeout(const Duration(seconds: 15));
       return polished.isEmpty || polished.length > 300 ? facts : polished;
     } catch (_) {
       return facts;
@@ -237,6 +264,24 @@ class NotifyService {
   Future<void> cancelReminder(int reminderId) async {
     await init();
     await _plugin.cancel(1000 + reminderId);
+  }
+
+  /// Re-schedules every pending reminder in [store].
+  ///
+  /// Reminders live in the database, but the OS notification is only created
+  /// when the coach tool schedules it. After a backup import the rows are
+  /// restored without their notifications, so the user sees them in Settings
+  /// and assumes they will fire (audit backup MINOR-4). Idempotent: each
+  /// reminder reuses its own notification id.
+  Future<void> rescheduleReminders(AppStore store) async {
+    await init();
+    for (final reminder in store.reminders) {
+      try {
+        await scheduleReminder(reminder);
+      } catch (_) {
+        // One bad reminder must not stop the rest from being scheduled.
+      }
+    }
   }
 
   Future<void> testNotification(AppStore store) async {

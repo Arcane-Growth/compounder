@@ -442,12 +442,19 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
                 final exerciseId = await Navigator.of(context).push<int>(
                     MaterialPageRoute(
                         builder: (_) => const ExercisePickerScreen()));
-                if (exerciseId != null) {
+                if (exerciseId == null) return;
+                try {
                   await _store!.addExerciseToWorkout(
                       widget.workoutId, exerciseId,
                       seedDefaultSet: true);
-                  await _reloadDetail();
+                } on StoreException catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context)
+                        .showSnackBar(SnackBar(content: Text(e.message)));
+                  }
+                  return;
                 }
+                await _reloadDetail();
               },
               icon: const Icon(Icons.add, size: 18),
               label: const Text('Add exercise'),

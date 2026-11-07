@@ -73,6 +73,30 @@ void main() {
     });
   });
 
+  group('coach MindLogTool default window (tools.dart)', () {
+    // Same shape as the digest window: local midnight six calendar days back,
+    // exclusive next-day midnight. A Duration-based window would land on
+    // 23:00/01:00 across a transition (audit m3-dst MINOR-4).
+    for (final entry in anchors.entries) {
+      test('${entry.key}: from is local midnight 6 days back', () {
+        final now = entry.value;
+        final r = mindLogWindow(now);
+        final from = DateTime.fromMillisecondsSinceEpoch(r.from);
+        final to = DateTime.fromMillisecondsSinceEpoch(r.to);
+
+        expect(from, DateTime(now.year, now.month, now.day - 6),
+            reason: 'start must be local midnight 6 calendar days back');
+        expect(from.hour, 0);
+        expect(from.minute, 0);
+        expect(to, DateTime(now.year, now.month, now.day + 1),
+            reason: 'end must be the exclusive next-day local midnight');
+        expect(to.hour, 0);
+        expect(to.difference(from).inHours, isNot(7 * 24),
+            reason: 'a 7-day window across a transition is not 168 hours');
+      });
+    }
+  });
+
   group('coach healthRange default window (health_tools.dart)', () {
     // Every one of these windows contains exactly one DST transition, so the
     // calendar span is `days` days minus/plus one hour. Pinned explicitly: a
@@ -129,8 +153,10 @@ void main() {
   });
 
   group('rescheduleDaily roll (notify.dart)', () {
-    // 02:30 is inside the spring-forward gap; 01:30 is inside the repeated
-    // fall-back hour. Both are the worst cases for a wall-clock roll.
+    // 02:30 is inside the spring-forward gap and 01:30 is inside the repeated
+    // fall-back hour. Every anchor here is 12:00, so the configured time is
+    // always in the past and the roll-to-tomorrow branch is what runs; the
+    // today-branch gap case is pinned separately below (audit m3-dst MINOR-3).
     for (final entry in anchors.entries) {
       for (final minutes in [2 * 60 + 30, 1 * 60 + 30, 18 * 60]) {
         test('${entry.key}: coachMinutes $minutes keeps wall-clock time', () {
@@ -154,6 +180,41 @@ void main() {
       final now = DateTime(2026, 3, 8, 12);
       final when = nextDigestAt(now, 18 * 60);
       expect(when, DateTime(2026, 3, 8, 18));
+    });
+
+    test('a configured time inside the spring-forward gap normalises forward',
+        () {
+      // 02:30 does not exist on 2026-03-08, so the today branch must land on
+      // the next wall-clock instant that does: 03:30. Pinned because the
+      // anchor loop above only ever exercises the roll-to-tomorrow branch
+      // (audit m3-dst MINOR-3).
+      final now = DateTime(2026, 3, 8, 1);
+      final when = nextDigestAt(now, 150);
+      expect(when, DateTime(2026, 3, 8, 3, 30));
+      expect(when.hour, 3, reason: '02:30 normalises to 03:30 that day');
+      expect(when.isAfter(now), isTrue);
+    });
+
+    test('a repeated fall-back hour still delivers today', () {
+      // 01:30 occurs twice on 2026-11-01. At 01:45 EDT the first occurrence has
+      // passed, but 01:30 EST is still ahead, so the digest must not be pushed
+      // to tomorrow (pre-existing observation in the M3 gate).
+      final now = DateTime(2026, 11, 1, 1, 45);
+      expect(now.timeZoneOffset, const Duration(hours: -4),
+          reason: 'precondition: 01:45 on fall-back day is still EDT');
+      final when = nextDigestAt(now, 90);
+      // Compare wall-clock components, not DateTime equality: DateTime
+      // equality includes the UTC offset, and DateTime(2026, 11, 1, 1, 30)
+      // resolves to the first (EDT) occurrence while the correct answer is the
+      // repeated EST one. The offset assertion below pins which occurrence.
+      expect(when.year, 2026);
+      expect(when.month, 11);
+      expect(when.day, 1, reason: 'the repeated 01:30 EST is still today');
+      expect(when.hour, 1);
+      expect(when.minute, 30);
+      expect(when.isAfter(now), isTrue);
+      expect(when.timeZoneOffset, const Duration(hours: -5),
+          reason: 'the repeated occurrence is EST');
     });
   });
 
@@ -188,14 +249,30 @@ void main() {
 
     test('a phase-mismatched anchor shifts by exactly the offset delta', () {
       // 2024-11-02 is EDT and 2026-11-02 is EST, so the calendar cutoff is one
-      // hour earlier than the Duration form. Pinned explicitly: this is the
-      // calendar-correct semantic, and it is the only case where the cutoff
-      // moves at all.
+      // hour earlier than the Duration form (deletes LESS). Pinned explicitly:
+      // this is the calendar-correct semantic.
       final anchor = DateTime(2026, 11, 2, 12);
       final cutoff = retentionCutoff(anchor, 730);
       expect(cutoff, DateTime(2024, 11, 2, 12));
       expect(anchor.subtract(const Duration(days: 730)),
           DateTime(2024, 11, 2, 13));
+    });
+
+    test('a phase-mismatched anchor can also shift destructively', () {
+      // The opposite direction: 2024-03-08 is EST and 2026-03-08 is EDT, so the
+      // calendar cutoff is one hour LATER than the Duration form — it deletes
+      // one extra hour of records. This is the destructive direction and must
+      // be pinned too (audit m3-dst MINOR-2).
+      final anchor = DateTime(2026, 3, 8, 12);
+      final cutoff = retentionCutoff(anchor, 730);
+      expect(cutoff, DateTime(2024, 3, 8, 12));
+      expect(cutoff.millisecondsSinceEpoch, 1709917200000);
+      expect(
+          anchor.subtract(const Duration(days: 730)), DateTime(2024, 3, 8, 11));
+      expect(anchor.subtract(const Duration(days: 730)).millisecondsSinceEpoch,
+          1709913600000);
+      expect(cutoff.isAfter(anchor.subtract(const Duration(days: 730))), isTrue,
+          reason: 'the calendar cutoff must delete one extra hour here');
     });
   });
 

@@ -239,12 +239,12 @@ class _MindTabState extends State<MindTab> {
     );
   }
 
-  void _showThoughtDialog(BuildContext context, AppStore store) {
+  Future<void> _showThoughtDialog(BuildContext context, AppStore store) async {
     final situation = TextEditingController();
     final thought = TextEditingController();
     final reframe = TextEditingController();
 
-    showDialog(
+    await showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
@@ -282,5 +282,11 @@ class _MindTabState extends State<MindTab> {
         ),
       ),
     );
+    // The dialog is closed, so nothing reads these controllers any more.
+    // Dispose them instead of leaving three per invocation to the collector
+    // (audit F9).
+    situation.dispose();
+    thought.dispose();
+    reframe.dispose();
   }
 }

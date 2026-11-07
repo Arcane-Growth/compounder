@@ -12,6 +12,12 @@ import '../services/notify.dart';
 import 'health.dart';
 import 'widgets.dart';
 
+/// Version label shown in Settings. Kept as a constant so a test can pin it
+/// against `pubspec.yaml` — the literal drifted to v0.3.0 while the package was
+/// already at 0.3.2 (audit m8). `package_info_plus` is not a dependency, so
+/// there is no runtime source of truth to read.
+const String appVersionLabel = 'Compounder v0.3.2';
+
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
@@ -103,8 +109,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 12),
                 TextField(
                     controller: baseUrl,
+                    onChanged: (_) => setState(() {}),
                     decoration: const InputDecoration(
                         labelText: 'Base URL', hintText: 'http://…/v1')),
+                // The app allows cleartext HTTP (AndroidManifest
+                // usesCleartextTraffic="true") so a LAN Ollama endpoint works.
+                // Say so where the endpoint is entered: over http:// the token
+                // and every prompt travel unencrypted (audit m6).
+                if (baseUrl.text
+                    .trim()
+                    .toLowerCase()
+                    .startsWith('http://')) ...[
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    Icon(Icons.lock_open, size: 16, color: scheme.error),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                          'This endpoint is http://, so your API token and '
+                          'health data travel unencrypted. Use https:// or a '
+                          'trusted local network.',
+                          style: t.bodySmall?.copyWith(color: scheme.error)),
+                    ),
+                  ]),
+                ],
                 const SizedBox(height: 12),
                 TextField(
                   controller: apiKey,
@@ -456,7 +484,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               : () async {
                                   await health.disconnect();
                                   if (context.mounted) {
-                                    snack('Health Connect disconnected');
+                                    snack(health.lastError ??
+                                        'Health Connect disconnected');
                                   }
                                 },
                           icon: const Icon(Icons.link_off),
@@ -607,8 +636,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     try {
                       final path = await BackupService.export(store);
                       await SharePlus.instance.share(ShareParams(
-                          files: [XFile(path)],
-                          subject: 'Compounder backup'));
+                          files: [XFile(path)], subject: 'Compounder backup'));
                     } catch (e) {
                       snack('Export failed: $e');
                     }
@@ -644,6 +672,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     if (ok != true) return;
                     try {
                       await BackupService.import(store, path);
+                      // Restored reminders carry no OS notification; schedule
+                      // them now so they actually fire (audit backup MINOR-4).
+                      await notify.rescheduleReminders(store);
                       if (context.mounted) snack('Backup imported');
                     } catch (e) {
                       if (context.mounted) snack('Import failed: $e');
@@ -656,7 +687,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 24),
           Center(
             child: Text(
-              'Compounder v0.3.0 · MIT · Open source, no tracking, no ads.',
+              '$appVersionLabel · MIT · Open source, no tracking, no ads.',
               style: t.labelMedium?.copyWith(color: scheme.onSurfaceVariant),
             ),
           ),

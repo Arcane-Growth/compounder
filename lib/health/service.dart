@@ -54,8 +54,8 @@ void _dbgPoint(HealthDataPoint p) {
       'src=${p.sourceName} json=$raw');
 }
 
-void _dbgUpsert(
-    HealthDataType type, DateTime chunkEnd, List<HealthRecord> handed, int stored) {
+void _dbgUpsert(HealthDataType type, DateTime chunkEnd,
+    List<HealthRecord> handed, int stored) {
   if (!kDebugMode) return;
   final distinct = handed.map((r) => r.uuid).toSet().length;
   _dbg('upsert type=${type.name} chunkEnd=${_iso(chunkEnd)} '
@@ -143,8 +143,8 @@ class PluginHealthSource implements HealthSource {
     required DateTime start,
     required DateTime end,
   }) async {
-    final points = await _health.getHealthDataFromTypes(
-        types: [type], startTime: start, endTime: end);
+    final points = await _health
+        .getHealthDataFromTypes(types: [type], startTime: start, endTime: end);
     _dbgFetch(type, start, end, points.length);
     for (final point in points) {
       _dbgPoint(point);
@@ -202,11 +202,10 @@ Future<SyncChunkResult> runChunkedSync({
       }
       var typeRecords = 0;
       while (chunkStart.isBefore(now)) {
-        final chunkEnd =
-            _minDateTime(chunkStart.add(healthSyncChunk), now);
+        final chunkEnd = _minDateTime(chunkStart.add(healthSyncChunk), now);
         try {
-          final points = await source.fetch(
-              type: type, start: chunkStart, end: chunkEnd);
+          final points =
+              await source.fetch(type: type, start: chunkStart, end: chunkEnd);
           final records = points.map((p) => toRecord(p, now)).toList();
           final stored = await upsert(records);
           _dbgUpsert(type, chunkEnd, records, stored);
@@ -241,7 +240,7 @@ DateTime _minDateTime(DateTime a, DateTime b) => a.isBefore(b) ? a : b;
     );
 
 /// Retention compaction cutoff: [now] stepped back [retentionDays] calendar
-/// days with the time-of-day preserved.
+/// days with the time-of-day preserved where that wall-clock time exists.
 ///
 /// This is a destructive boundary, so it is pinned by tests. 730 days spans an
 /// even number of DST transitions, so for an anchor in the same DST phase as
@@ -249,7 +248,10 @@ DateTime _minDateTime(DateTime a, DateTime b) => a.isBefore(b) ? a : b;
 /// `now.subtract(Duration(days: 730))`. For an anchor within a few days of a
 /// transition the phase differs and the calendar form is one hour earlier or
 /// later — the calendar-correct semantic, and the reason the old form was
-/// wrong.
+/// wrong. If the cutoff lands inside a spring-forward gap the requested
+/// wall-clock time does not exist that day and Dart normalises it forward
+/// (e.g. 02:30 -> 03:30); the legacy form produced the same instant there, so
+/// only the description above needed the caveat.
 DateTime retentionCutoff(DateTime now, int retentionDays) => DateTime(
     now.year,
     now.month,
@@ -424,10 +426,26 @@ class HealthService extends ChangeNotifier {
     await syncNow(initial: true);
   }
 
+  /// Disconnects locally: stops syncing and clears the enabled flag.
+  ///
+  /// Revoking the Health Connect grant is best-effort — the OS can refuse or
+  /// the plugin can fail. Retry once, and if it still fails record the failure
+  /// in [lastError] rather than swallowing it: otherwise the UI claims
+  /// "disconnected" while Health Connect still holds the grant (audit m5).
   Future<void> disconnect({bool deleteData = false}) async {
-    try {
-      await source.revokePermissions();
-    } catch (_) {}
+    _lastError = null;
+    var revoked = false;
+    for (var attempt = 0; attempt < 2 && !revoked; attempt++) {
+      try {
+        await source.revokePermissions();
+        revoked = true;
+      } catch (e) {
+        if (attempt == 1) {
+          _lastError = 'Disconnected, but Health Connect did not revoke this '
+              "app's permissions ($e). Revoke them in Health Connect settings.";
+        }
+      }
+    }
     await store.prefs.setBool('${_prefix}Enabled', false);
     if (deleteData) await repository.deleteAll();
     notifyListeners();
@@ -476,8 +494,8 @@ class HealthService extends ChangeNotifier {
             historyRequested && await source.isHistoryAuthorized();
         start = fullHistory
             ? DateTime(2000)
-            : DateTime(now.year, now.month, now.day - 30, now.hour,
-                now.minute, now.second, now.millisecond, now.microsecond);
+            : DateTime(now.year, now.month, now.day - 30, now.hour, now.minute,
+                now.second, now.millisecond, now.microsecond);
       } else {
         // Calendar step, not a 24-hour subtraction: across a DST boundary the
         // latter lands at 23:00/01:00 and can skip or double a day.

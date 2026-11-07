@@ -36,3 +36,13 @@ jobs:
         env:
           TZ: America/New_York
         run: flutter test
+
+      - name: Test (UTC, non-DST files)
+        # The pinned zone above means the suite never runs with local time equal
+        # to UTC. This second pass covers that gap for everything except the two
+        # files whose setUpAll precondition requires a real DST transition
+        # (audit m3-dst NIT-3).
+        env:
+          TZ: UTC
+        run: |
+          flutter test $(ls test/*_test.dart | grep -v -e dst_day_windows_test.dart -e digest_dst_test.dart)

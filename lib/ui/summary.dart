@@ -18,12 +18,16 @@ class SummaryScreen extends StatelessWidget {
       future: store.workoutDetail(workoutId),
       builder: (context, snap) {
         if (snap.hasError) {
+          // A raw DatabaseException string is not user-facing copy; log it and
+          // show a fixed subtitle, as progress.dart does (audit F7).
+          debugPrint('SummaryScreen($workoutId): ${snap.error}');
           return Scaffold(
             appBar: AppBar(title: const Text('Workout summary')),
-            body: Center(
+            body: const Center(
               child: EmptyState(
                 title: 'Could not load this workout',
-                subtitle: snap.error.toString(),
+                subtitle: 'Something went wrong reading this workout. '
+                    'Pull back and try again.',
                 icon: Icons.error_outline,
               ),
             ),
@@ -48,7 +52,6 @@ class SummaryScreen extends StatelessWidget {
             .toList();
         final volume = volumeOf(allSets);
         final bestE1rm = working.isEmpty ? 0.0 : formatE1rm(e1rmMaxOf(working));
-        final totals = volumeOf(allSets);
 
         return Scaffold(
           appBar: AppBar(title: Text('${detail.workout.name} · summary')),
@@ -65,7 +68,7 @@ class SummaryScreen extends StatelessWidget {
                 Expanded(
                     child: StatCard(
                         label: 'Total volume (${store.unit.label})',
-                        value: trimZero(fromKg(totals.totalKg, store.unit)))),
+                        value: trimZero(fromKg(volume.totalKg, store.unit)))),
                 const SizedBox(width: 8),
                 Expanded(
                     child: StatCard(

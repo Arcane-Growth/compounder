@@ -22,6 +22,23 @@ void main() {
   sqfliteFfiInit();
   databaseFactory = databaseFactoryFfi;
 
+  setUpAll(() {
+    // Precondition, not a test: every assertion below builds ambient-zone
+    // DateTimes, so without a real transition in the process zone the
+    // Duration-based pre-fix implementation passes too. Proved: reverting
+    // digestWindowStart to the Duration form and running this file under
+    // TZ=UTC gave "+4: All tests passed!" — a green pass on broken code
+    // (audit m3-dst MINOR-1).
+    expect(DateTime(2026, 3, 8, 1).timeZoneOffset,
+        isNot(DateTime(2026, 3, 8, 4).timeZoneOffset),
+        reason: 'ambient zone has no 2026-03-08 DST transition; '
+            'run with TZ=America/New_York');
+    expect(DateTime(2026, 11, 1, 0).timeZoneOffset,
+        isNot(DateTime(2026, 11, 1, 12).timeZoneOffset),
+        reason: 'ambient zone has no 2026-11-01 DST transition; '
+            'run with TZ=America/New_York');
+  });
+
   late String dbPath;
 
   setUp(() async {

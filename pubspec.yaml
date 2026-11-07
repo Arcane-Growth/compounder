@@ -31,10 +31,23 @@ dependencies:
 
 # health 13.3.2 and pdfx 2.11.0 still apply the Kotlin Gradle Plugin
 # unconditionally in their published Android build scripts, which Flutter
-# flags as a deprecation. The copies under third_party/ are byte-identical
-# apart from that guard (pluginManager.apply instead of apply plugin:), so
-# they build with AGP 9 built-in Kotlin. Drop these overrides once upstream
-# ships the same fix.
+# flags as a deprecation. The copies under third_party/ are the published
+# packages with exactly one change: android/build.gradle applies
+# kotlin-android through pluginManager.apply behind an
+# `android.builtInKotlin` guard instead of `apply plugin:`, so they build with
+# AGP 9 built-in Kotlin. Everything else is upstream — verified by diffing
+# against the pub.dev archives (health 13.3.2 sha256
+# 8dd9625c9c26379a5753ad24c33af1d3dc5ce1f36f19c03e17c676c2f8fdbb80,
+# pdfx 2.11.0 sha256
+# 83bcd2b971fc2f6ee4299659c96d7d66b2ba4807748571a8a4889f1cde14b754);
+# only the `example/` directories are omitted. The UUID-returning write APIs
+# (writeHealthDataUUID/writeWorkoutDataUUID) are upstream 13.3.2, not local
+# additions.
+#
+# Upstream commits the vendored trees were taken from:
+#   health 13.3.2 — carp-dk/carp-health-flutter d90dbb717f04dac7111ae30692ce396cd9779bd4
+#   pdfx 2.11.0   — ScerIO/packages.flutter 452979e49fa00df9d964422ff1bc9f1f6b122d16
+# Drop these overrides once upstream ships the same fix.
 dependency_overrides:
   health:
     path: third_party/health

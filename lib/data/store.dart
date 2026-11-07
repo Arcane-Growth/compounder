@@ -33,6 +33,19 @@ class ExerciseView {
   const ExerciseView(this.entry, this.exercise, this.sets);
 }
 
+/// A store operation failed in a way the UI should report to the user.
+///
+/// [message] is safe to show as-is; [cause] keeps the underlying error for
+/// logging.
+class StoreException implements Exception {
+  final String message;
+  final Object? cause;
+  const StoreException(this.message, {this.cause});
+
+  @override
+  String toString() => message;
+}
+
 class WorkoutDetail {
   final Workout workout;
   final List<ExerciseView> exercises;
@@ -325,18 +338,29 @@ class AppStore extends ChangeNotifier {
   /// Decodes a meal's `foods_json` column. A malformed row must not make
   /// [open] throw — the meal still loads, just without its food breakdown
   /// (audit M1). Mirrors the tolerant decode in HealthDayStat.fromMap.
+  ///
+  /// Decoding is per entry: one entry that throws inside [Food.fromJson] (for
+  /// example a non-String `name`) drops only that entry, not every food for the
+  /// meal (audit F5).
   static List<Food> _decodeFoods(Object? raw) {
     if (raw is! String || raw.isEmpty) return const [];
+    final Object? decoded;
     try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! List) return const [];
-      return decoded
-          .whereType<Map>()
-          .map((f) => Food.fromJson(f.cast<String, Object?>()))
-          .toList();
+      decoded = jsonDecode(raw);
     } catch (_) {
       return const [];
     }
+    if (decoded is! List) return const [];
+    final foods = <Food>[];
+    for (final entry in decoded) {
+      if (entry is! Map) continue;
+      try {
+        foods.add(Food.fromJson(entry.cast<String, Object?>()));
+      } catch (_) {
+        // Skip just this entry; the rest of the meal's breakdown survives.
+      }
+    }
+    return foods;
   }
 
   // ------------------------------------------------------------ settings
@@ -458,17 +482,39 @@ class AppStore extends ChangeNotifier {
   /// Adds an exercise, pre-filling set placeholders from the most recent session.
   /// When there is no history and [seedDefaultSet] is true, one incomplete 0 x 0
   /// set is created so the user can start editing immediately.
+  ///
+  /// Throws [StoreException] when the workout or exercise no longer exists.
+  /// `workout_exercises.workout_id` declares a foreign key, so a dangling
+  /// workout id raises a `FOREIGN KEY constraint failed` under
+  /// `PRAGMA foreign_keys = ON`. `exercise_id` declares no foreign key, so a
+  /// dangling exercise id would otherwise insert a row that joins to nothing;
+  /// it is checked explicitly (audit backup MINOR-3).
   Future<int> addExerciseToWorkout(int workoutId, int exerciseId,
       {bool seedDefaultSet = false}) async {
+    final exerciseExists = await db.query('exercises',
+        columns: ['id'], where: 'id = ?', whereArgs: [exerciseId], limit: 1);
+    if (exerciseExists.isEmpty) {
+      throw const StoreException(
+          'Could not add that exercise — it no longer exists. '
+          'Pull to refresh and try again.');
+    }
     final posRows = await db.rawQuery(
         'SELECT MAX(position) m FROM workout_exercises WHERE workout_id = ?',
         [workoutId]);
     final position = ((posRows.first['m'] as int?) ?? -1) + 1;
-    final entryId = await db.insert('workout_exercises', {
-      'workout_id': workoutId,
-      'exercise_id': exerciseId,
-      'position': position
-    });
+    final int entryId;
+    try {
+      entryId = await db.insert('workout_exercises', {
+        'workout_id': workoutId,
+        'exercise_id': exerciseId,
+        'position': position
+      });
+    } on DatabaseException catch (e) {
+      throw StoreException(
+          'Could not add that exercise — the workout no longer exists. '
+          'Pull to refresh and try again.',
+          cause: e);
+    }
 
     final latest = await db.rawQuery('''
         SELECT we.id FROM workout_exercises we

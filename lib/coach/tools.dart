@@ -29,6 +29,17 @@ String isoDate(int millis) {
   return '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 }
 
+/// Default window for [MindLogTool] when the model omits both dates: local
+/// midnight six calendar days back up to local midnight tomorrow, exclusive.
+///
+/// Calendar arithmetic, not `Duration(days: 6)`: a 144-hour subtraction from
+/// midnight lands on 23:00/01:00 across a DST boundary. Extracted so the DST
+/// regression tests can pin it (audit m3-dst MINOR-4).
+({int from, int to}) mindLogWindow(DateTime now) => (
+      from: DateTime(now.year, now.month, now.day - 6).millisecondsSinceEpoch,
+      to: DateTime(now.year, now.month, now.day + 1).millisecondsSinceEpoch,
+    );
+
 String num1(double v) => trimZero(v);
 
 /// Reads a numeric argument without throwing when the model omits or mistypes
@@ -221,11 +232,7 @@ class MindLogTool extends CoachTool {
   Future<String> run(Map<String, Object?> args) async {
     var r = dateRange(args);
     if (args['start'] == null && args['end'] == null) {
-      final now = DateTime.now();
-      r = (
-        from: DateTime(now.year, now.month, now.day - 6).millisecondsSinceEpoch,
-        to: DateTime(now.year, now.month, now.day + 1).millisecondsSinceEpoch
-      );
+      r = mindLogWindow(DateTime.now());
     }
     final moods = store.moods.where((m) => m.timestamp >= r.from && m.timestamp < r.to).toList();
     final meditations = store.meditations

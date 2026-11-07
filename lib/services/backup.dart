@@ -56,6 +56,11 @@ class BackupService {
     return file.path;
   }
 
+  /// Replaces all local data with the contents of [path].
+  ///
+  /// Caller responsibility: rescheduling reminder notifications after an
+  /// import is not done here — the caller must call
+  /// `notify.rescheduleReminders(store)` once this returns.
   static Future<int> import(AppStore store, String path) async {
     final Object? decoded;
     try {
