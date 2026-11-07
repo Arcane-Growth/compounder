@@ -409,11 +409,22 @@ class AddSetTool extends CoachTool {
   @override
   bool get isWrite => true;
 
+  /// The store accepts any weight/reps, but the summary math ([epley],
+  /// [volumeOf]) only tolerates weight >= 0 and reps >= 1. The model can send
+  /// anything, so clamp here — the single write boundary for coach-added sets
+  /// (review F3/F4 on c3d71cd).
+  static double clampWeightKg(double weightKg) => weightKg < 0 ? 0.0 : weightKg;
+
+  static int clampReps(int reps) => reps < 1 ? 1 : reps;
+
   @override
   String summarize(Map<String, Object?> args) {
     final name = _text(args, 'exerciseName');
-    final weight = _num(args, 'weightKg');
-    final reps = _int(args, 'reps');
+    final rawWeight = _num(args, 'weightKg');
+    final rawReps = _int(args, 'reps');
+    // Describe what will actually be written, not the model's raw numbers.
+    final weight = rawWeight == null ? null : clampWeightKg(rawWeight);
+    final reps = rawReps == null ? null : clampReps(rawReps);
     final warmup = args['isWarmup'] == true;
     final workoutId = _int(args, 'workoutId');
     return 'Add a set: ${name.isEmpty ? 'exercise' : name} '
@@ -425,11 +436,16 @@ class AddSetTool extends CoachTool {
   @override
   Future<String> run(Map<String, Object?> args) async {
     final name = args['exerciseName'] as String?;
-    final weightKg = (args['weightKg'] as num?)?.toDouble();
-    final reps = (args['reps'] as num?)?.toInt();
-    if (name == null || weightKg == null || reps == null) {
+    final rawWeightKg = (args['weightKg'] as num?)?.toDouble();
+    final rawReps = (args['reps'] as num?)?.toInt();
+    if (name == null || rawWeightKg == null || rawReps == null) {
       return '{"error":"exerciseName, weightKg and reps are required"}';
     }
+    // Clamp before the write: a negative weight reaches epley() through the
+    // workout summary and throws "weight must be non-negative"; negative reps
+    // make volumeOf() return negative totals (review F3/F4 on c3d71cd).
+    final weightKg = clampWeightKg(rawWeightKg);
+    final reps = clampReps(rawReps);
     final lower = name.toLowerCase();
     final exercise = store.exercises.where((e) => e.name.toLowerCase() == lower).firstOrNull ??
         store.exercises.where((e) => e.name.toLowerCase().contains(lower)).firstOrNull;

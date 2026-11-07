@@ -22,9 +22,11 @@ double brzycki(double weightKg, int reps) {
 
 /// Best e1RM across [entries]. Sets with zero reps are skipped: the store
 /// permits reps = 0 (an untouched placeholder set can be completed), and
-/// [epley] rejects reps < 1 (audit B4).
+/// [epley] rejects reps < 1 (audit B4). Negative weights are skipped too:
+/// [epley] rejects them, and a negative weight carries no e1RM signal
+/// (review F3 on c3d71cd).
 double e1rmMaxOf(List<(double weightKg, int reps)> entries) {
-  final valid = entries.where((e) => e.$2 >= 1).toList();
+  final valid = entries.where((e) => e.$2 >= 1 && e.$1 >= 0).toList();
   if (valid.isEmpty) return 0;
   return valid.map((e) => epley(e.$1, e.$2)).reduce(math.max);
 }
@@ -84,7 +86,13 @@ Volume volumeOf(Iterable<({double weightKg, int reps, bool isWarmup})> sets) {
   var total = 0.0, n = 0, reps = 0;
   for (final s in sets) {
     if (s.isWarmup) continue;
-    total += s.weightKg * s.reps;
+    // A set with no reps carries no volume, and a negative weight would
+    // subtract from the total. Neither is reachable through the UI (it clamps
+    // at workout.dart) or the coach tool (it clamps at AddSetTool), but the
+    // store accepts any value, so guard here too (review F4 on c3d71cd).
+    if (s.reps < 1) continue;
+    final weightKg = s.weightKg < 0 ? 0.0 : s.weightKg;
+    total += weightKg * s.reps;
     n++;
     reps += s.reps;
   }
