@@ -20,9 +20,13 @@ double brzycki(double weightKg, int reps) {
   return weightKg * 36 / (37 - reps);
 }
 
+/// Best e1RM across [entries]. Sets with zero reps are skipped: the store
+/// permits reps = 0 (an untouched placeholder set can be completed), and
+/// [epley] rejects reps < 1 (audit B4).
 double e1rmMaxOf(List<(double weightKg, int reps)> entries) {
-  if (entries.isEmpty) return 0;
-  return entries.map((e) => epley(e.$1, e.$2)).reduce(math.max);
+  final valid = entries.where((e) => e.$2 >= 1).toList();
+  if (valid.isEmpty) return 0;
+  return valid.map((e) => epley(e.$1, e.$2)).reduce(math.max);
 }
 
 double formatE1rm(double value) => (value * 2).roundToDouble() / 2;
@@ -49,6 +53,9 @@ List<E1RmPoint> sessionPoints(
           })>>{};
   for (final s in sets) {
     if (s.isWarmup) continue;
+    // Zero-rep sets carry no e1RM signal (audit B4); dropping them here also
+    // keeps a session with only placeholders out of the chart.
+    if (s.reps < 1) continue;
     byWorkout.putIfAbsent(s.workoutId, () => []).add(s);
   }
   final points = byWorkout.entries.map((e) {

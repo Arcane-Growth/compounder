@@ -294,11 +294,7 @@ class AppStore extends ChangeNotifier {
     history = await loadHistory();
     meals = (await db.query('meals', orderBy: 'timestamp DESC')).map((m) {
       final meal = Meal.fromMap(m);
-      return meal.copyWith(
-        foods: (jsonDecode(m['foods_json'] as String) as List)
-            .map((f) => Food.fromJson(f.cast<String, Object?>()))
-            .toList(),
-      );
+      return meal.copyWith(foods: _decodeFoods(m['foods_json']));
     }).toList();
     accounts = (await db.query('accounts', orderBy: 'balance DESC'))
         .map(Account.fromMap)
@@ -336,6 +332,23 @@ class AppStore extends ChangeNotifier {
         JOIN workout_sets s ON s.workout_exercise_id = we.id GROUP BY eid ORDER BY c DESC''');
     usageOrder = usageRows.map((r) => r['eid'] as int).toList();
     notifyListeners();
+  }
+
+  /// Decodes a meal's `foods_json` column. A malformed row must not make
+  /// [open] throw — the meal still loads, just without its food breakdown
+  /// (audit M1). Mirrors the tolerant decode in HealthDayStat.fromMap.
+  static List<Food> _decodeFoods(Object? raw) {
+    if (raw is! String || raw.isEmpty) return const [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const [];
+      return decoded
+          .whereType<Map>()
+          .map((f) => Food.fromJson(f.cast<String, Object?>()))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
   }
 
   // ------------------------------------------------------------ settings

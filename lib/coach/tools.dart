@@ -475,13 +475,24 @@ class NetWorthHistoryTool extends CoachTool {
   Future<String> run(Map<String, Object?> args) async {
     final rows = await store.snapshots();
     if (rows.isEmpty) return '{"points":[],"note":"No balance snapshots yet. Update an account to start a history."}';
-    final latest = <int, double>{};
+    // Snapshots carry no account type, so resolve it from the accounts table.
+    // Debt balances must be subtracted, not added: summing them reported gross
+    // assets as net worth (audit B2). Snapshots whose account no longer exists
+    // are skipped, matching netWorthSeries (which joins accounts).
+    final liabilities = {
+      for (final a in store.accounts) a.id: a.isLiability,
+    };
+    final latest = <int, (double, bool)>{};
     final byMonth = <String, double>{};
     for (final r in rows) {
-      latest[r['account_id'] as int] = (r['balance'] as num).toDouble();
+      final accountId = r['account_id'] as int;
+      final isLiability = liabilities[accountId];
+      if (isLiability == null) continue;
+      latest[accountId] = ((r['balance'] as num).toDouble(), isLiability);
       final taken = DateTime.fromMillisecondsSinceEpoch(r['taken_at'] as int);
       final month = '${taken.year}-${taken.month.toString().padLeft(2, '0')}';
-      byMonth[month] = latest.values.fold(0.0, (a, b) => a + b);
+      byMonth[month] =
+          Wealth.netWorth(latest.values.map((e) => (e.$1, e.$2)).toList());
     }
     final months = byMonth.keys.toList()..sort();
     return jsonEncode({

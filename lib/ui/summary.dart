@@ -17,6 +17,18 @@ class SummaryScreen extends StatelessWidget {
     return FutureBuilder<WorkoutDetail?>(
       future: store.workoutDetail(workoutId),
       builder: (context, snap) {
+        if (snap.hasError) {
+          return Scaffold(
+            appBar: AppBar(title: const Text('Workout summary')),
+            body: Center(
+              child: EmptyState(
+                title: 'Could not load this workout',
+                subtitle: snap.error.toString(),
+                icon: Icons.error_outline,
+              ),
+            ),
+          );
+        }
         final detail = snap.data;
         if (detail == null) {
           return const Scaffold(body: Center(child: Text('Workout not found')));
@@ -29,8 +41,9 @@ class SummaryScreen extends StatelessWidget {
             .map((s) =>
                 (weightKg: s.weightKg, reps: s.reps, isWarmup: s.isWarmup))
             .toList();
+        // Zero-rep sets are legal in the store but carry no e1RM (audit B4).
         final working = completed
-            .where((s) => !s.isWarmup)
+            .where((s) => !s.isWarmup && s.reps >= 1)
             .map((s) => (s.weightKg, s.reps))
             .toList();
         final volume = volumeOf(allSets);

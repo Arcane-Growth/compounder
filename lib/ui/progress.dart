@@ -57,6 +57,16 @@ class _ProgressScreenState extends State<ProgressScreen> {
                 FutureBuilder<List<E1RmPoint>>(
                   future: exerciseId == null ? Future.value(const <E1RmPoint>[]) : store.progressFor(exerciseId),
                   builder: (context, snap) {
+                    if (snap.hasError) {
+                      return const Padding(
+                        padding: EdgeInsets.only(top: 40),
+                        child: EmptyState(
+                          title: 'Could not load progress',
+                          subtitle: 'The strength history could not be read.',
+                          icon: Icons.error_outline,
+                        ),
+                      );
+                    }
                     final points = snap.data ?? const <E1RmPoint>[];
                     if (points.length < 2) {
                       return const Padding(

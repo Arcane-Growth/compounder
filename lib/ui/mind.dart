@@ -246,35 +246,40 @@ class _MindTabState extends State<MindTab> {
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('New thought record'),
-        content: SingleChildScrollView(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            TextField(controller: situation, decoration: const InputDecoration(labelText: 'What happened?')),
-            const SizedBox(height: 12),
-            TextField(
-                controller: thought,
-                decoration: const InputDecoration(labelText: 'What did you tell yourself?')),
-            const SizedBox(height: 12),
-            TextField(
-                controller: reframe,
-                decoration:
-                    const InputDecoration(labelText: 'A kinder, truer reply (optional)')),
-          ]),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          FilledButton(
-            onPressed: thought.text.trim().isEmpty
-                ? null
-                : () {
-                    store.logThought(
-                        situation.text.trim(), thought.text.trim(), reframe.text.trim());
-                    Navigator.pop(context);
-                  },
-            child: const Text('Save'),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('New thought record'),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              TextField(controller: situation, decoration: const InputDecoration(labelText: 'What happened?')),
+              const SizedBox(height: 12),
+              TextField(
+                  controller: thought,
+                  onChanged: (_) => setDialogState(() {}),
+                  decoration: const InputDecoration(labelText: 'What did you tell yourself?')),
+              const SizedBox(height: 12),
+              TextField(
+                  controller: reframe,
+                  decoration:
+                      const InputDecoration(labelText: 'A kinder, truer reply (optional)')),
+            ]),
           ),
-        ],
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            FilledButton(
+              // Rebuilt by setDialogState on every keystroke, so the button
+              // enables as soon as the thought field has content (audit B3).
+              onPressed: thought.text.trim().isEmpty
+                  ? null
+                  : () {
+                      store.logThought(
+                          situation.text.trim(), thought.text.trim(), reframe.text.trim());
+                      Navigator.pop(context);
+                    },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
       ),
     );
   }
