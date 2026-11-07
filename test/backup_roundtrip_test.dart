@@ -287,6 +287,242 @@ void main() {
     await target.db.close();
   });
 
+  test('two custom exercises sharing a name keep their own equipment',
+      () async {
+    final prefs = await SharedPreferences.getInstance();
+    final source = await AppStore.open(prefs, path: dbPath);
+    // `AppStore.createExercise` has no uniqueness constraint, so a user really
+    // can create "Curl" twice with different equipment. Matching exercises by
+    // name alone would collapse these two rows into one on import, silently
+    // losing the second one's metadata and repointing its workout entry.
+    await source.createExercise('Curl', 'Arms', 'Dumbbell');
+    await source.createExercise('Curl', 'Arms', 'Barbell');
+    final curls = await source.db.query('exercises', orderBy: 'id');
+    expect(curls, hasLength(2));
+    final dumbbellId = curls[0]['id'] as int;
+    final barbellId = curls[1]['id'] as int;
+    final workoutId = await source.db.insert('workouts', {
+      'name': 'Arms day',
+      'started_at': 1000,
+      'ended_at': 2000,
+    });
+    await source.db.insert('workout_exercises', {
+      'workout_id': workoutId,
+      'exercise_id': dumbbellId,
+      'position': 0,
+    });
+    await source.db.insert('workout_exercises', {
+      'workout_id': workoutId,
+      'exercise_id': barbellId,
+      'position': 1,
+    });
+
+    final file = await BackupService.export(source);
+
+    final target = await AppStore.open(prefs, path: otherDbPath);
+    await BackupService.import(target, file);
+
+    // Both rows must survive, each with its own equipment.
+    final restored = await target.db
+        .query('exercises', where: 'is_custom = 1', orderBy: 'id');
+    expect(restored, hasLength(2),
+        reason: 'two distinct custom exercises must not collapse into one');
+    expect(restored.map((e) => e['name']).toList(), ['Curl', 'Curl']);
+    expect(restored.map((e) => e['equipment']).toList(),
+        ['Dumbbell', 'Barbell'],
+        reason: 'equipment metadata must survive the import');
+
+    // Each workout entry must resolve to its own exercise, not both to the
+    // first one.
+    final entries =
+        await target.db.query('workout_exercises', orderBy: 'position');
+    expect(entries, hasLength(2));
+    final entryIds = entries.map((e) => e['exercise_id']).toList();
+    expect(entryIds.toSet(), hasLength(2),
+        reason: 'each entry must point at a different exercise row');
+    final resolved = <String>[];
+    for (final e in entries) {
+      final rows = await target.db.query('exercises',
+          where: 'id = ?', whereArgs: [e['exercise_id']], limit: 1);
+      expect(rows, hasLength(1),
+          reason: 'entry must point at an existing exercise');
+      resolved.add('${rows.single['name']}:${rows.single['equipment']}');
+    }
+    expect(resolved, ['Curl:Dumbbell', 'Curl:Barbell'],
+        reason: 'workout history must not silently change equipment');
+
+    // The store's own view of the workout agrees.
+    final detail = await target.workoutDetail(1);
+    expect(detail, isNotNull);
+    expect(
+        detail!.exercises
+            .map((e) => '${e.exercise.name}:${e.exercise.equipment}')
+            .toList(),
+        ['Curl:Dumbbell', 'Curl:Barbell']);
+
+    await source.db.close();
+    await target.db.close();
+  });
+
+  test('a file carrying columns this build does not know still imports',
+      () async {
+    final prefs = await SharedPreferences.getInstance();
+    final target = await AppStore.open(prefs, path: otherDbPath);
+    // A future build adds columns to several tables but keeps format 3. This
+    // build must still import the file, dropping only the fields it cannot
+    // represent — inserting them verbatim would abort the whole transaction.
+    final future = File(p.join(docs.path, 'future-format-3.json'));
+    await future.writeAsString(jsonEncode({
+      'format': 3,
+      'app': 'compounder',
+      'exportedAt': '2026-11-07T00:00:00.000',
+      'workouts': [
+        {
+          'id': 1,
+          'name': 'Push day',
+          'started_at': 1000,
+          'ended_at': 2000,
+          'rpe_target': 8,
+        }
+      ],
+      'workoutExercises': [
+        {
+          'id': 1,
+          'workout_id': 1,
+          'exercise_id': 1,
+          'position': 0,
+          'tempo': '3-1-1',
+        }
+      ],
+      'workoutSets': [
+        {
+          'id': 1,
+          'workout_exercise_id': 1,
+          'position': 0,
+          'weight_kg': 100.0,
+          'reps': 5,
+          'completed_at': 1500,
+          'is_warmup': 0,
+          'velocity_ms': 0.42,
+        }
+      ],
+      'exercises': [
+        {
+          'id': 1,
+          'name': 'Bench Press',
+          'muscle_group': 'Chest',
+          'equipment': 'Barbell',
+          'is_custom': 0,
+          'tempo': '3-1-1',
+        }
+      ],
+      'customExercises': <Object?>[],
+      'meals': [
+        {
+          'id': 1,
+          'timestamp': 3000,
+          'dish': 'Oats',
+          'calories': 400.0,
+          'protein': 20.0,
+          'carbs': 50.0,
+          'fat': 8.0,
+          'photo_id': 'abc123',
+        }
+      ],
+      'accounts': <Object?>[],
+      'balanceSnapshots': <Object?>[],
+      'reminders': <Object?>[],
+      'moods': <Object?>[],
+      'meditations': <Object?>[],
+      'thoughtRecords': <Object?>[],
+      'healthRecords': <Object?>[],
+      'healthDaily': <Object?>[],
+      'healthSyncState': <Object?>[],
+    }));
+
+    await BackupService.import(target, future.path);
+
+    // The known columns landed; the unknown ones were dropped, not fatal.
+    final exercises = await target.db.query('exercises');
+    expect(exercises, hasLength(1));
+    expect(exercises.single['name'], 'Bench Press');
+    expect(exercises.single['equipment'], 'Barbell');
+    expect(exercises.single.containsKey('tempo'), isFalse);
+
+    final workouts = await target.db.query('workouts');
+    expect(workouts, hasLength(1));
+    expect(workouts.single['name'], 'Push day');
+    expect(workouts.single.containsKey('rpe_target'), isFalse);
+
+    final entries = await target.db.query('workout_exercises');
+    expect(entries, hasLength(1));
+    expect(entries.single['exercise_id'], exercises.single['id'],
+        reason: 'the remap must still run on a forward-compatible file');
+    expect(entries.single.containsKey('tempo'), isFalse);
+
+    final sets = await target.db.query('workout_sets');
+    expect(sets, hasLength(1));
+    expect(sets.single['weight_kg'], 100.0);
+    expect(sets.single.containsKey('velocity_ms'), isFalse);
+
+    final meals = await target.db.query('meals');
+    expect(meals, hasLength(1));
+    expect(meals.single['dish'], 'Oats');
+    expect(meals.single.containsKey('photo_id'), isFalse);
+
+    await target.db.close();
+  });
+
+  test('a built-in whose metadata drifted reuses the target catalog row',
+      () async {
+    final prefs = await SharedPreferences.getInstance();
+    final target = await AppStore.open(prefs, path: otherDbPath);
+    // The target catalog calls Bench Press a Barbell lift; a newer build's file
+    // calls the same built-in a Smith Machine lift. Built-ins are matched by
+    // name alone on purpose: keying them on equipment too would insert a second
+    // "Bench Press" row instead of reusing the catalog entry, and the workout
+    // entry would then point at a duplicate the picker also shows.
+    await target.db.insert('exercises', {
+      'name': 'Bench Press',
+      'muscle_group': 'Chest',
+      'equipment': 'Barbell',
+      'is_custom': 0,
+    });
+    final file = File(p.join(docs.path, 'builtin-drift.json'));
+    await file.writeAsString(jsonEncode({
+      'format': 3,
+      'app': 'compounder',
+      'exercises': [
+        {
+          'id': 1,
+          'name': 'Bench Press',
+          'muscle_group': 'Chest',
+          'equipment': 'Smith Machine',
+          'is_custom': 0,
+        }
+      ],
+      'customExercises': <Object?>[],
+      'workouts': [
+        {'id': 1, 'name': 'Push day', 'started_at': 1, 'ended_at': 2}
+      ],
+      'workoutExercises': [
+        {'id': 1, 'workout_id': 1, 'exercise_id': 1, 'position': 0}
+      ],
+    }));
+
+    await BackupService.import(target, file.path);
+
+    final rows = await target.db.query('exercises');
+    expect(rows, hasLength(1),
+        reason: 'built-in metadata drift must not duplicate the catalog row');
+    expect(rows.single['equipment'], 'Barbell',
+        reason: 'the target catalog row is reused, not replaced');
+    final entries = await target.db.query('workout_exercises');
+    expect(entries.single['exercise_id'], rows.single['id']);
+
+    await target.db.close();
+  });
+
   test('a format-2 backup still imports (no snapshots/reminders keys)',
       () async {
     final prefs = await SharedPreferences.getInstance();

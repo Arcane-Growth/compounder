@@ -7,6 +7,15 @@ import 'package:sqflite/sqflite.dart';
 
 import '../data/store.dart';
 
+/// A backup file the app cannot import, with a message safe to show the user.
+class BackupException implements Exception {
+  final String message;
+  const BackupException(this.message);
+
+  @override
+  String toString() => message;
+}
+
 /// Whole-database backup as one portable JSON file. Export writes a file and
 /// hands it to the system share sheet; import replaces all local data.
 class BackupService {
@@ -48,10 +57,20 @@ class BackupService {
   }
 
   static Future<int> import(AppStore store, String path) async {
-    final data =
-        jsonDecode(await File(path).readAsString()) as Map<String, Object?>;
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(await File(path).readAsString());
+    } catch (e) {
+      throw const BackupException(
+          'That file is not valid JSON — is it a Compounder backup?');
+    }
+    if (decoded is! Map) {
+      throw const BackupException(
+          'That file is not a Compounder backup (expected a JSON object).');
+    }
+    final data = decoded.cast<String, Object?>();
     if (data['app'] != 'compounder') {
-      throw Exception('Not a Compounder backup file');
+      throw const BackupException('Not a Compounder backup file');
     }
     // Format 2 files predate balanceSnapshots/reminders and are still accepted:
     // the missing keys read as empty lists, so the import restores everything
@@ -59,13 +78,31 @@ class BackupService {
     // dropping fields this build does not understand.
     final fileFormat = data['format'];
     if (fileFormat is int && fileFormat > format) {
-      throw Exception(
+      throw BackupException(
           'Backup format $fileFormat is newer than this app supports ($format)');
     }
     final db = store.db;
 
-    List<Map<String, Object?>> rows(String key) =>
-        ((data[key] as List?) ?? []).cast<Map<String, Object?>>();
+    /// Reads one table's rows. A key that is present but not a list is a
+    /// malformed file, not an empty table: say so instead of letting a raw
+    /// `TypeError` reach the UI (audit backup NIT-3).
+    List<Map<String, Object?>> rows(String key) {
+      final value = data[key];
+      if (value == null) return const [];
+      if (value is! List) {
+        throw BackupException(
+            'Backup file is malformed: "$key" should be a list.');
+      }
+      final out = <Map<String, Object?>>[];
+      for (final row in value) {
+        if (row is! Map) {
+          throw BackupException(
+              'Backup file is malformed: "$key" contains a non-object row.');
+        }
+        out.add(row.cast<String, Object?>());
+      }
+      return out;
+    }
 
     await db.transaction((txn) async {
       for (final table in [
@@ -86,12 +123,48 @@ class BackupService {
         await txn.delete(table);
       }
       await txn.delete('exercises', where: 'is_custom = 1');
+
+      /// Columns the target schema actually has. A backup written by a newer
+      /// build can carry columns this build does not know; inserting them
+      /// verbatim makes SQLite reject the statement and roll back the WHOLE
+      /// import, so one unknown column would make the file unimportable. The
+      /// format-3 promise is that an older build still imports a newer file,
+      /// dropping only the fields it cannot represent.
+      final tableColumns = <String, Set<String>>{};
+      Future<Set<String>> columnsOf(String table) async {
+        final cached = tableColumns[table];
+        if (cached != null) return cached;
+        final info = await txn.rawQuery('PRAGMA table_info($table)');
+        final columns = <String>{
+          for (final r in info)
+            if (r['name'] is String) r['name'] as String,
+        };
+        tableColumns[table] = columns;
+        return columns;
+      }
+
+      /// Inserts one file row into `table`, keeping only the columns the target
+      /// schema has. `transform` rewrites device-local ids first. Returns the
+      /// new row id, or null when nothing was left to insert.
+      Future<int?> insertRow(String table, Map<String, Object?> source,
+          {Map<String, Object?> Function(Map<String, Object?>)? transform})
+          async {
+        final columns = await columnsOf(table);
+        final row = transform == null
+            ? Map<String, Object?>.from(source)
+            : transform(source);
+        row.removeWhere((key, _) => !columns.contains(key));
+        if (row.isEmpty) return null;
+        return txn.insert(table, row,
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+
       // Exercise ids are device-local. The built-in catalog is seeded in a
       // different order on a different install, so a custom exercise's id on
       // the source can collide with a built-in's id on the target. Inserting
       // the file's rows by their original ids would overwrite that built-in
       // and silently repoint every workout entry that referenced it. Resolve
-      // exercises by NAME instead, let SQLite assign fresh ids, and rewrite
+      // exercises by identity instead, let SQLite assign fresh ids, and rewrite
       // the workout references through the resulting map.
       final sourceExercises = <Map<String, Object?>>[];
       final seenExerciseIds = <Object?>{};
@@ -101,65 +174,61 @@ class BackupService {
       for (final r in [...rows('exercises'), ...rows('customExercises')]) {
         if (seenExerciseIds.add(r['id'])) sourceExercises.add(r);
       }
-      final targetByName = <String, int>{};
+      final targetByKey = <String, int>{};
       for (final r in await txn.query('exercises', orderBy: 'id')) {
         final id = r['id'];
         if (id is! int) continue;
-        targetByName.putIfAbsent(_exerciseKey(r), () => id);
+        targetByKey.putIfAbsent(_exerciseKey(r), () => id);
       }
       final exerciseIdMap = <int, int>{};
       for (final r in sourceExercises) {
         final oldId = r['id'];
         if (oldId is! int) continue;
         final key = _exerciseKey(r);
-        var newId = targetByName[key];
+        var newId = targetByKey[key];
         if (newId == null) {
           // Not on this device yet: insert without the id so SQLite assigns a
           // fresh one, then remember it for the reference rewrite.
-          final row = Map<String, Object?>.from(r)..remove('id');
-          newId = await txn.insert('exercises', row);
-          targetByName[key] = newId;
+          newId = await insertRow('exercises', r,
+              transform: (row) => Map<String, Object?>.from(row)..remove('id'));
+          if (newId == null) continue;
+          targetByKey[key] = newId;
         }
         exerciseIdMap[oldId] = newId;
       }
       for (final r in rows('workouts')) {
-        await txn.insert('workouts', r,
-            conflictAlgorithm: ConflictAlgorithm.replace);
+        await insertRow('workouts', r);
       }
       for (final r in rows('workoutExercises')) {
-        final row = Map<String, Object?>.from(r);
-        final oldId = row['exercise_id'];
-        if (oldId is int) {
-          final newId = exerciseIdMap[oldId];
-          if (newId != null) row['exercise_id'] = newId;
-        }
-        await txn.insert('workout_exercises', row,
-            conflictAlgorithm: ConflictAlgorithm.replace);
+        await insertRow('workout_exercises', r, transform: (row) {
+          final copy = Map<String, Object?>.from(row);
+          final oldId = copy['exercise_id'];
+          if (oldId is int) {
+            final newId = exerciseIdMap[oldId];
+            if (newId != null) copy['exercise_id'] = newId;
+          }
+          return copy;
+        });
       }
       for (final r in rows('workoutSets')) {
-        await txn.insert('workout_sets', r,
-            conflictAlgorithm: ConflictAlgorithm.replace);
+        await insertRow('workout_sets', r);
       }
       for (final key in ['meals', 'accounts', 'moods', 'meditations']) {
         for (final r in rows(key)) {
-          await txn.insert(key, r,
-              conflictAlgorithm: ConflictAlgorithm.replace);
+          await insertRow(key, r);
         }
       }
-      // Accounts must be inserted before their snapshots so the rows stay
-      // referentially consistent if foreign keys are ever enforced on
-      // balance_snapshots.
+      // Accounts are inserted before their snapshots so the rows are
+      // referentially consistent. `balance_snapshots` currently declares no
+      // foreign key, so this ordering is defensive rather than required.
       for (final r in rows('balanceSnapshots')) {
-        await txn.insert('balance_snapshots', r,
-            conflictAlgorithm: ConflictAlgorithm.replace);
+        await insertRow('balance_snapshots', r);
       }
       for (final r in rows('reminders')) {
-        await txn.insert('reminders', r,
-            conflictAlgorithm: ConflictAlgorithm.replace);
+        await insertRow('reminders', r);
       }
       for (final r in rows('thoughtRecords')) {
-        await txn.insert('thought_records', r,
-            conflictAlgorithm: ConflictAlgorithm.replace);
+        await insertRow('thought_records', r);
       }
       for (final entry in {
         'healthRecords': 'health_records',
@@ -167,21 +236,39 @@ class BackupService {
         'healthSyncState': 'health_sync_state',
       }.entries) {
         for (final r in rows(entry.key)) {
-          await txn.insert(entry.value, r,
-              conflictAlgorithm: ConflictAlgorithm.replace);
+          await insertRow(entry.value, r);
         }
       }
     });
     await store.refreshAll();
-    return ((data['workouts'] as List?) ?? []).length;
+    // Count from the validated helper, not `data['workouts']`: a non-list
+    // value would throw a TypeError here, after the transaction has already
+    // committed, and the caller would report a failed import that succeeded
+    // (audit backup NIT-1).
+    return rows('workouts').length;
   }
 
-  /// Identity of an exercise across devices: the name (case-insensitive) plus
-  /// whether it is user-created. Ids are device-local and must never be used
-  /// to match rows between two installs.
+  /// Identity of an exercise across devices. Ids are device-local and must
+  /// never be used to match rows between two installs.
+  ///
+  /// Built-ins are matched by name alone: the catalog is unique by name (the
+  /// seeder dedupes on it), and a built-in's descriptive columns may change
+  /// between app versions — keying on them would duplicate the row on import
+  /// instead of reusing the target's catalog entry.
+  ///
+  /// Custom exercises are matched on name *plus* muscle group and equipment.
+  /// `AppStore.createExercise` has no uniqueness constraint, so a user can
+  /// create two different "Curl" rows (Dumbbell and Barbell); a name-only key
+  /// would collapse them into one row, silently losing the second one's
+  /// metadata and repointing its workout entries at the first. Two customs that
+  /// agree on all four fields are genuinely indistinguishable, so merging those
+  /// is correct.
   static String _exerciseKey(Map<String, Object?> row) {
     final name = (row['name'] as String? ?? '').trim().toLowerCase();
-    final isCustom = row['is_custom'] == 1 ? 'custom' : 'builtin';
-    return '$name|$isCustom';
+    if (row['is_custom'] != 1) return '$name|builtin';
+    final muscleGroup =
+        (row['muscle_group'] as String? ?? '').trim().toLowerCase();
+    final equipment = (row['equipment'] as String? ?? '').trim().toLowerCase();
+    return '$name|custom|$muscleGroup|$equipment';
   }
 }
