@@ -64,10 +64,21 @@ class AppStore extends ChangeNotifier {
   static Future<AppStore> open(SharedPreferences prefs, {String? path}) async {
     path ??= p.join(await getDatabasesPath(), 'compounder.db');
     final db = await openDatabase(path,
-        version: 9, onCreate: _createSchema, onUpgrade: _upgradeSchema);
+        version: 9,
+        onConfigure: _configureSchema,
+        onCreate: _createSchema,
+        onUpgrade: _upgradeSchema);
     final store = AppStore._(db, prefs);
     await store.refreshAll();
     return store;
+  }
+
+  /// Enables foreign-key enforcement for every connection. Without this the
+  /// `REFERENCES ... ON DELETE CASCADE` clauses on workout_exercises and
+  /// workout_sets are decorative: SQLite defaults `foreign_keys` to OFF, so a
+  /// dangling child row could be written and never cleaned up.
+  static Future<void> _configureSchema(Database db) async {
+    await db.execute('PRAGMA foreign_keys = ON');
   }
 
   static Future<void> _createSchema(Database db, int version) async {
@@ -667,8 +678,13 @@ class AppStore extends ChangeNotifier {
                 0
             ? a.id
             : 0);
-    await db.insert('balance_snapshots',
-        {'account_id': id, 'balance': a.balance, 'taken_at': now});
+    // A 0 here means the UPDATE matched no row: the account was deleted from
+    // under the editor. Inserting a snapshot would leave a row pointing at
+    // account_id 0 that no account owns and that the net-worth join drops.
+    if (id != 0) {
+      await db.insert('balance_snapshots',
+          {'account_id': id, 'balance': a.balance, 'taken_at': now});
+    }
     await refreshAll();
   }
 

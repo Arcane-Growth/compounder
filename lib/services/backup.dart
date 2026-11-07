@@ -10,10 +10,15 @@ import '../data/store.dart';
 /// Whole-database backup as one portable JSON file. Export writes a file and
 /// hands it to the system share sheet; import replaces all local data.
 class BackupService {
+  /// Current backup format. 3 adds `balanceSnapshots` and `reminders`; a
+  /// format-2 file simply lacks those keys and still imports (restoring
+  /// everything it does carry).
+  static const int format = 3;
+
   static Future<String> export(AppStore store) async {
     final db = store.db;
     final data = {
-      'format': 2,
+      'format': format,
       'app': 'compounder',
       'exportedAt': DateTime.now().toIso8601String(),
       'workouts': await db.query('workouts'),
@@ -22,6 +27,8 @@ class BackupService {
       'customExercises': await db.query('exercises', where: 'is_custom = 1'),
       'meals': await db.query('meals'),
       'accounts': await db.query('accounts'),
+      'balanceSnapshots': await db.query('balance_snapshots'),
+      'reminders': await db.query('reminders'),
       'moods': await db.query('moods'),
       'meditations': await db.query('meditations'),
       'thoughtRecords': await db.query('thought_records'),
@@ -42,6 +49,15 @@ class BackupService {
     if (data['app'] != 'compounder') {
       throw Exception('Not a Compounder backup file');
     }
+    // Format 2 files predate balanceSnapshots/reminders and are still accepted:
+    // the missing keys read as empty lists, so the import restores everything
+    // the file does carry. A newer format is refused rather than silently
+    // dropping fields this build does not understand.
+    final fileFormat = data['format'];
+    if (fileFormat is int && fileFormat > format) {
+      throw Exception(
+          'Backup format $fileFormat is newer than this app supports ($format)');
+    }
     final db = store.db;
 
     List<Map<String, Object?>> rows(String key) =>
@@ -53,7 +69,9 @@ class BackupService {
         'workout_exercises',
         'workouts',
         'meals',
+        'balance_snapshots',
         'accounts',
+        'reminders',
         'moods',
         'meditations',
         'thought_records',
@@ -85,6 +103,17 @@ class BackupService {
           await txn.insert(key, r,
               conflictAlgorithm: ConflictAlgorithm.replace);
         }
+      }
+      // Accounts must be inserted before their snapshots so the rows stay
+      // referentially consistent if foreign keys are ever enforced on
+      // balance_snapshots.
+      for (final r in rows('balanceSnapshots')) {
+        await txn.insert('balance_snapshots', r,
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      for (final r in rows('reminders')) {
+        await txn.insert('reminders', r,
+            conflictAlgorithm: ConflictAlgorithm.replace);
       }
       for (final r in rows('thoughtRecords')) {
         await txn.insert('thought_records', r,

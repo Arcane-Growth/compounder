@@ -37,6 +37,7 @@
     <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_HISTORY"/>
     <application
         android:label="Compounder"
+        android:allowBackup="false"
         android:usesCleartextTraffic="true"
         android:largeHeap="true"
         android:name="${applicationName}"
