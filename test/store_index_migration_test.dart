@@ -56,7 +56,7 @@ const _plans = <String, ({String sql, bool avoidsTempBTree})>{
     sql: '''
       SELECT s.account_id, s.balance, s.taken_at, a.type
       FROM balance_snapshots s JOIN accounts a ON a.id = s.account_id
-      ORDER BY s.taken_at''',
+      ORDER BY s.taken_at, s.account_id, s.balance''',
     avoidsTempBTree: true,
   ),
   'reminders due_at': (

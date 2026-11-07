@@ -180,10 +180,23 @@ class NetWorthPoint {
 
 /// Builds a net-worth series from account balance snapshots, carrying each
 /// account's most recent balance forward and subtracting liabilities.
+///
+/// The sort is a deterministic total order on `(takenAt, accountId, balance)`.
+/// Sorting on `takenAt` alone was not deterministic: Dart's `List.sort` is not
+/// stable, so snapshots sharing a timestamp could be folded in any order and
+/// the last one visited won the month (review F2 on c3d71cd). Entries that tie
+/// on all three keys are indistinguishable to the fold, so the result is
+/// reproducible regardless of input order.
 List<NetWorthPoint> netWorthSeries(
     List<({int accountId, double balance, bool isLiability, int takenAt})>
         snapshots) {
-  final sorted = [...snapshots]..sort((a, b) => a.takenAt.compareTo(b.takenAt));
+  final sorted = [...snapshots]..sort((a, b) {
+      final byTime = a.takenAt.compareTo(b.takenAt);
+      if (byTime != 0) return byTime;
+      final byAccount = a.accountId.compareTo(b.accountId);
+      if (byAccount != 0) return byAccount;
+      return a.balance.compareTo(b.balance);
+    });
   final latest = <int, (double, bool)>{};
   final points = <NetWorthPoint>[];
   for (final snapshot in sorted) {

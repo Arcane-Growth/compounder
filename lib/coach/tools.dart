@@ -477,26 +477,24 @@ class NetWorthHistoryTool extends CoachTool {
 
   @override
   Future<String> run(Map<String, Object?> args) async {
-    final rows = await store.snapshots();
-    if (rows.isEmpty) return '{"points":[],"note":"No balance snapshots yet. Update an account to start a history."}';
-    // Snapshots carry no account type, so resolve it from the accounts table.
-    // Debt balances must be subtracted, not added: summing them reported gross
-    // assets as net worth (audit B2). Snapshots whose account no longer exists
-    // are skipped, matching netWorthSeries (which joins accounts).
-    final liabilities = {
-      for (final a in store.accounts) a.id: a.isLiability,
-    };
-    final latest = <int, (double, bool)>{};
+    // Read the snapshots and their account types from the DB, not from the
+    // cached `store.accounts` list: the cache is only as fresh as the last
+    // refreshAll(), and a snapshot whose account is missing from it was
+    // silently dropped (review F1 on c3d71cd). The series is built by the same
+    // netWorthSeries the Wealth screen renders, from the same query, so the
+    // tool and the chart cannot disagree — including on same-timestamp ties
+    // (review F2).
+    final series = netWorthSeries(await store.snapshotSeries());
+    if (series.isEmpty) {
+      return '{"points":[],"note":"No balance snapshots yet. Update an account to start a history."}';
+    }
+    // One point per month: the last snapshot in the deterministic order wins,
+    // which is the month-end balance the chart also ends on.
     final byMonth = <String, double>{};
-    for (final r in rows) {
-      final accountId = r['account_id'] as int;
-      final isLiability = liabilities[accountId];
-      if (isLiability == null) continue;
-      latest[accountId] = ((r['balance'] as num).toDouble(), isLiability);
-      final taken = DateTime.fromMillisecondsSinceEpoch(r['taken_at'] as int);
+    for (final p in series) {
+      final taken = DateTime.fromMillisecondsSinceEpoch(p.date);
       final month = '${taken.year}-${taken.month.toString().padLeft(2, '0')}';
-      byMonth[month] =
-          Wealth.netWorth(latest.values.map((e) => (e.$1, e.$2)).toList());
+      byMonth[month] = p.value;
     }
     final months = byMonth.keys.toList()..sort();
     return jsonEncode({
