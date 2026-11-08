@@ -685,14 +685,30 @@ class _ReviewScreenState extends State<ReviewScreen> {
   late final TextEditingController dish = TextEditingController(text: widget.draft.dish);
   late final TextEditingController description =
       TextEditingController(text: widget.description);
+  // Pre-filled with the stored value at display precision, not `.round()`:
+  // rounding here silently rewrote 32.4 g as 32 g on a no-op save (review
+  // BLOCKER-1).
   late final TextEditingController protein =
-      TextEditingController(text: widget.draft.protein.round().toString());
+      TextEditingController(text: trimZero(widget.draft.protein));
   late final TextEditingController carbs =
-      TextEditingController(text: widget.draft.carbs.round().toString());
+      TextEditingController(text: trimZero(widget.draft.carbs));
   late final TextEditingController fat =
-      TextEditingController(text: widget.draft.fat.round().toString());
+      TextEditingController(text: trimZero(widget.draft.fat));
+
+  /// The macro fields exactly as they were pre-filled. A save that leaves them
+  /// untouched must not rewrite the stored row: a coach-logged 600 kcal /
+  /// 0-0-0 meal would otherwise be stored as 0 kcal (review BLOCKER-1).
+  late final String _initialProtein = protein.text;
+  late final String _initialCarbs = carbs.text;
+  late final String _initialFat = fat.text;
 
   bool get _isEdit => widget.existing != null;
+
+  /// True once the user has actually edited a macro field.
+  bool get _macrosChanged =>
+      protein.text != _initialProtein ||
+      carbs.text != _initialCarbs ||
+      fat.text != _initialFat;
 
   double get _protein => parseMacroGrams(protein.text);
   double get _carbs => parseMacroGrams(carbs.text);
@@ -709,6 +725,26 @@ class _ReviewScreenState extends State<ReviewScreen> {
   Future<void> _save(AppStore store) async {
     final existing = widget.existing;
     final note = description.text.trim();
+    // Calories are derived from macros only when the user actually edited a
+    // macro field. A no-op save in edit mode keeps the stored nutrition
+    // byte-identical, so a coach/AI estimate the macros cannot explain (600
+    // kcal with 0/0/0 macros) survives instead of being rewritten to 0 kcal
+    // (review BLOCKER-1).
+    final double calories;
+    final double proteinGrams;
+    final double carbsGrams;
+    final double fatGrams;
+    if (existing != null && !_macrosChanged) {
+      calories = existing.calories;
+      proteinGrams = existing.protein;
+      carbsGrams = existing.carbs;
+      fatGrams = existing.fat;
+    } else {
+      calories = caloriesFromMacros(_protein, _carbs, _fat);
+      proteinGrams = _protein;
+      carbsGrams = _carbs;
+      fatGrams = _fat;
+    }
     final meal = Meal(
       // Edit mode keeps the row identity; new meals get 0 so SQLite assigns it.
       id: existing?.id ?? 0,
@@ -716,14 +752,10 @@ class _ReviewScreenState extends State<ReviewScreen> {
       imagePath: widget.imagePath,
       dish: dish.text.trim().isEmpty ? 'Meal' : dish.text.trim(),
       description: note.isEmpty ? null : note,
-      // Calories are derived, never typed: the saved row always agrees with
-      // the macros. In edit mode the stored figure is shown next to the
-      // computed one before saving, so an AI estimate is not silently
-      // rewritten.
-      calories: caloriesFromMacros(_protein, _carbs, _fat),
-      protein: _protein,
-      carbs: _carbs,
-      fat: _fat,
+      calories: calories,
+      protein: proteinGrams,
+      carbs: carbsGrams,
+      fat: fatGrams,
       foods: existing?.foods ?? widget.draft.foods,
       isAuto: existing?.isAuto ?? true,
     );
@@ -801,6 +833,8 @@ class _ReviewScreenState extends State<ReviewScreen> {
             referenceCalories:
                 _isEdit ? widget.existing!.calories : widget.draft.calories,
             referenceLabel: _isEdit ? 'stored' : 'AI estimate',
+            // Saving keeps the stored figure while the macros are untouched.
+            keepStoredCalories: _isEdit && !_macrosChanged,
           ),
           const SizedBox(height: 20),
           FilledButton.icon(

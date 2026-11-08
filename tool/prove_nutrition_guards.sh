@@ -66,16 +66,56 @@ PY
   restore_all
 }
 
-run_head_case() {
+run_pinned_case() {
   local name="$1" testfile="$2"
   shift 2
   begin_case
   echo "=================== CASE: $name"
-  for f in "$@"; do
+  for spec in "$@"; do
+    local ref="${spec%%:*}" f="${spec#*:}"
     backup_file "$f"
-    git show "HEAD:$f" >"$f"
-    echo "--- reverted $f to HEAD"
+    git show "$ref:$f" >"$f"
+    echo "--- reverted $f to $ref"
   done
+  report "$testfile"
+  restore_all
+}
+
+# Reverts lib/ui/macros.dart to the pre-feature commit and re-adds the
+# today-only store.todayTotals() the old tab calls. store.dart is patched
+# rather than reverted wholesale because the habit tracker (schema v10) added
+# getters that lib/ui/habits.dart needs; reverting it to 12dd17c does not
+# compile.
+run_pre_feature_case() {
+  local name="$1" testfile="$2" ref="$3" file="$4" storefile="$5"
+  begin_case
+  echo "=================== CASE: $name"
+  backup_file "$file"
+  git show "$ref:$file" >"$file"
+  echo "--- reverted $file to $ref"
+  backup_file "$storefile"
+  python3 - "$storefile" <<'PY'
+import sys
+path = sys.argv[1]
+src = open(path).read()
+anchor = '  // ------------------------------------------------------------ reminders'
+assert src.count(anchor) == 1, f'{path}: expected 1 anchor, got {src.count(anchor)}'
+method = '''  ({double calories, double protein, double carbs, double fat}) todayTotals() {
+    final now = DateTime.now();
+    final start = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
+    final todays = meals.where((m) => m.timestamp >= start);
+    return (
+      calories: todays.fold(0.0, (a, m) => a + m.calories),
+      protein: todays.fold(0.0, (a, m) => a + m.protein),
+      carbs: todays.fold(0.0, (a, m) => a + m.carbs),
+      fat: todays.fold(0.0, (a, m) => a + m.fat),
+    );
+  }
+
+'''
+open(path, 'w').write(src.replace(anchor, method + anchor))
+PY
+  echo "--- re-added store.todayTotals()"
   report "$testfile"
   restore_all
 }
@@ -127,10 +167,13 @@ run_case "next-week control enabled on the current week" \
   'onPressed: isCurrentWeek ? null : () => _stepWeek(1),' \
   'onPressed: () => _stepWeek(1),'
 
-# 8. The whole feature reverted: no date controls, no weekly tracker, and the
-#    old today-only totals (store.todayTotals) back in place.
-run_head_case "Macros tab and store reverted to HEAD (pre-feature)" \
-  test/nutrition_ui_test.dart lib/ui/macros.dart lib/data/store.dart
+# 8. The whole feature reverted to its pre-feature commit: no date controls and
+#    no weekly tracker, with the old today-only totals (store.todayTotals) back
+#    in place. Pinned to 81af0e2, not HEAD: the script itself was committed in
+#    c4b4912, so `git show HEAD:` would patch nothing and the case would pass
+#    vacuously (review MAJOR-1).
+run_pre_feature_case "Macros tab reverted to 81af0e2 (pre-feature)" \
+  test/nutrition_ui_test.dart 81af0e2 lib/ui/macros.dart lib/data/store.dart
 
 echo "=================== restored tree"
 git diff --stat

@@ -26,6 +26,11 @@ class MacroCalorieSummary extends StatelessWidget {
   /// "AI estimate").
   final String referenceLabel;
 
+  /// True when saving will keep [referenceCalories] because the macro fields
+  /// have not been edited (edit mode). The readout then says so explicitly
+  /// instead of leaving the user to guess which figure wins.
+  final bool keepStoredCalories;
+
   const MacroCalorieSummary({
     super.key,
     required this.protein,
@@ -33,6 +38,7 @@ class MacroCalorieSummary extends StatelessWidget {
     required this.fat,
     this.referenceCalories,
     this.referenceLabel = 'stored',
+    this.keepStoredCalories = false,
   });
 
   @override
@@ -41,7 +47,10 @@ class MacroCalorieSummary extends StatelessWidget {
     final t = Theme.of(context).textTheme;
     final computed = caloriesFromMacros(protein, carbs, fat);
     final reference = referenceCalories;
-    final differs = reference != null && reference.round() != computed.round();
+    // Compare the real figures, not their rounded forms: a 0.4 kcal
+    // difference used to be rewritten with no disclosure at all (review
+    // BLOCKER-1).
+    final differs = reference != null && reference != computed;
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Container(
@@ -72,6 +81,14 @@ class MacroCalorieSummary extends StatelessWidget {
         Text(
           '$referenceLabel ${reference.round()} kcal · '
           '4/4/9 gives ${computed.round()} kcal',
+          style: t.bodySmall?.copyWith(color: scheme.tertiary),
+        ),
+      ],
+      if (keepStoredCalories && differs) ...[
+        const SizedBox(height: 6),
+        Text(
+          'Macros unchanged — saving keeps the $referenceLabel '
+          '${reference.round()} kcal.',
           style: t.bodySmall?.copyWith(color: scheme.tertiary),
         ),
       ],
