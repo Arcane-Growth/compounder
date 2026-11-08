@@ -5,6 +5,7 @@ import 'package:compounder/health/repository.dart';
 import 'package:compounder/health/service.dart';
 import 'package:compounder/services/notify.dart';
 import 'package:compounder/ui/drawer.dart';
+import 'package:compounder/ui/habits.dart';
 import 'package:compounder/ui/settings.dart';
 import 'package:compounder/ui/shell.dart';
 import 'package:compounder/ui/widgets.dart';
@@ -324,6 +325,26 @@ void main() {
         reason: 'Settings must be pushed exactly once',
       );
       expect(find.text('Settings'), findsWidgets);
+    });
+
+    testWidgets('Habits pushes exactly one route and closes the drawer',
+        (tester) async {
+      await pumpShell(tester);
+
+      await tester.tap(find.byIcon(Icons.menu).first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.descendant(
+        of: find.byType(AppDrawer),
+        matching: find.text('Habits'),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(Drawer), findsNothing);
+      expect(
+        find.byType(HabitsScreen, skipOffstage: false),
+        findsOneWidget,
+        reason: 'Habits must be pushed exactly once',
+      );
     });
 
     testWidgets('ShellNav callback is stable across tab switches',
