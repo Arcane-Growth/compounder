@@ -82,14 +82,25 @@ class Volume {
   const Volume(this.totalKg, this.sets, this.reps);
 }
 
+/// Volume, working-set count and rep total for [sets].
+///
+/// A set with `reps < 1` is skipped entirely: it contributes no volume, no
+/// reps, and is **not counted as a working set**. A zero-rep set is a
+/// placeholder the user completed without logging reps, so counting it would
+/// inflate "Working sets" (lib/ui/summary.dart) and "Sets · reps"
+/// (lib/ui/workout.dart) with work that was never done. Warm-up sets are
+/// excluded the same way. Pinned by test/coach_addset_clamp_test.dart
+/// (review b2b3b4m1 MINOR-1).
+///
+/// A negative weight is clamped to zero rather than skipped: the set still
+/// happened, so it counts, but it cannot subtract from the total. Neither
+/// shape is reachable through the UI (it clamps at workout.dart) or the coach
+/// tool (it clamps at AddSetTool), but the store accepts any value, so guard
+/// here too (review F4 on c3d71cd).
 Volume volumeOf(Iterable<({double weightKg, int reps, bool isWarmup})> sets) {
   var total = 0.0, n = 0, reps = 0;
   for (final s in sets) {
     if (s.isWarmup) continue;
-    // A set with no reps carries no volume, and a negative weight would
-    // subtract from the total. Neither is reachable through the UI (it clamps
-    // at workout.dart) or the coach tool (it clamps at AddSetTool), but the
-    // store accepts any value, so guard here too (review F4 on c3d71cd).
     if (s.reps < 1) continue;
     final weightKg = s.weightKg < 0 ? 0.0 : s.weightKg;
     total += weightKg * s.reps;

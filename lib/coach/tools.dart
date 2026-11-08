@@ -44,11 +44,20 @@ String num1(double v) => trimZero(v);
 
 /// Reads a numeric argument without throwing when the model omits or mistypes
 /// it; summaries must never fail on bad input.
-double? _num(Map<String, Object?> args, String key) =>
-    (args[key] as num?)?.toDouble();
+///
+/// `args[key] as num?` would throw a `_TypeError` on a string, and
+/// [CoachTool.summarize] runs outside the tool loop's try/catch, so a mistyped
+/// argument would surface as a raw error string in the user's chat bubble
+/// (review b2b3b4m1 NIT-5).
+double? _num(Map<String, Object?> args, String key) {
+  final value = args[key];
+  return value is num ? value.toDouble() : null;
+}
 
-int? _int(Map<String, Object?> args, String key) =>
-    (args[key] as num?)?.toInt();
+int? _int(Map<String, Object?> args, String key) {
+  final value = args[key];
+  return value is num ? value.toInt() : null;
+}
 
 String _text(Map<String, Object?> args, String key) =>
     (args[key] as String?)?.trim() ?? '';
@@ -417,12 +426,25 @@ class AddSetTool extends CoachTool {
   bool get isWrite => true;
 
   /// The store accepts any weight/reps, but the summary math ([epley],
-  /// [volumeOf]) only tolerates weight >= 0 and reps >= 1. The model can send
+  /// [volumeOf]) only tolerates weight >= 0 and reps >= 0. The model can send
   /// anything, so clamp here — the single write boundary for coach-added sets
   /// (review F3/F4 on c3d71cd).
-  static double clampWeightKg(double weightKg) => weightKg < 0 ? 0.0 : weightKg;
+  ///
+  /// Non-finite input is normalised to 0: JSON `1e999` decodes to `Infinity`
+  /// and `NaN` propagates through [volumeOf] and [trimZero] as "NaN" in the
+  /// tool JSON (review b2b3b4m1 NIT-2). `-0.0` is normalised to `0.0` so the
+  /// JSON does not report "-0" (NIT-1).
+  static double clampWeightKg(double weightKg) {
+    if (!weightKg.isFinite) return 0.0;
+    return weightKg <= 0 ? 0.0 : weightKg;
+  }
 
-  static int clampReps(int reps) => reps < 1 ? 1 : reps;
+  /// Clamps a negative rep count to 1: a negative value is a model error, and
+  /// a set that was logged at all carries at least one rep. `reps: 0` is
+  /// passed through unchanged — it is a legal store value (audit B4), and
+  /// mapping it to 1 would write a rep the model never asked for (review
+  /// b2b3b4m1 MINOR-2).
+  static int clampReps(int reps) => reps < 0 ? 1 : reps;
 
   @override
   String summarize(Map<String, Object?> args) {
@@ -505,8 +527,10 @@ class NetWorthHistoryTool extends CoachTool {
     // refreshAll(), and a snapshot whose account is missing from it was
     // silently dropped (review F1 on c3d71cd). The series is built by the same
     // netWorthSeries the Wealth screen renders, from the same query, so the
-    // tool and the chart cannot disagree — including on same-timestamp ties
-    // (review F2).
+    // tool and the chart describe the same series — including on
+    // same-timestamp ties (review F2). They are not the same *display*: this
+    // tool buckets to one point per month while the chart plots every point
+    // (review b2b3b4m1 NIT-4).
     final series = netWorthSeries(await store.snapshotSeries());
     if (series.isEmpty) {
       return '{"points":[],"note":"No balance snapshots yet. Update an account to start a history."}';
