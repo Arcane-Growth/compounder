@@ -404,3 +404,80 @@ class Reminder {
         createdAt: m['created_at'] as int,
       );
 }
+
+/// A habit the user tracks: a name, a cadence and a target number of days per
+/// period. Archived habits keep their completion history but drop out of the
+/// daily checklist.
+class Habit {
+  final int id;
+  final String name;
+
+  /// `daily`, `weekly` or `monthly`. Stored as text so an unknown value from a
+  /// newer build degrades to a readable row instead of failing the query.
+  final String cadence;
+  final int target;
+  final bool archived;
+  final int createdAt;
+
+  const Habit({
+    required this.id,
+    required this.name,
+    required this.cadence,
+    required this.target,
+    this.archived = false,
+    required this.createdAt,
+  });
+
+  factory Habit.fromMap(Map<String, Object?> m) => Habit(
+        id: m['id'] as int,
+        name: m['name'] as String,
+        cadence: m['cadence'] as String,
+        target: m['target'] as int,
+        archived: (m['archived'] as int) == 1,
+        createdAt: m['created_at'] as int,
+      );
+
+  Map<String, Object?> toMap() => {
+        if (id != 0) 'id': id,
+        'name': name,
+        'cadence': cadence,
+        'target': target,
+        'archived': archived ? 1 : 0,
+        'created_at': createdAt,
+      };
+}
+
+/// One checked-off day for a habit. [day] is a local `YYYY-MM-DD` key, not an
+/// epoch timestamp: a habit is done on a calendar day, and a timestamp would
+/// shift across timezones and DST.
+class HabitCompletion {
+  final int id;
+  final int habitId;
+  final String day;
+  final int count;
+  final int createdAt;
+
+  const HabitCompletion({
+    required this.id,
+    required this.habitId,
+    required this.day,
+    this.count = 1,
+    required this.createdAt,
+  });
+
+  factory HabitCompletion.fromMap(Map<String, Object?> m) => HabitCompletion(
+        id: m['id'] as int,
+        habitId: m['habit_id'] as int,
+        day: m['day'] as String,
+        count: m['count'] as int,
+        createdAt: m['created_at'] as int,
+      );
+
+  Map<String, Object?> toMap() => {
+        if (id != 0) 'id': id,
+        'habit_id': habitId,
+        'day': day,
+        'count': count,
+        'created_at': createdAt,
+      };
+}

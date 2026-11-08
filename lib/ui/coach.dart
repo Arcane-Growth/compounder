@@ -71,6 +71,12 @@ class _CoachTabState extends State<CoachTab> {
           SetReminderTool(store, notify),
           ListRemindersTool(store),
           CancelReminderTool(store, notify),
+          ListHabitsTool(store),
+          CreateHabitTool(store),
+          UpdateHabitTool(store),
+          DeleteHabitTool(store),
+          LogHabitCompletionTool(store),
+          HabitStatusTool(store),
         ],
         onToolRun: (name) => setState(() => activeTool = name),
       );

@@ -133,7 +133,8 @@ void main() {
     final file = await BackupService.export(source);
     final json =
         jsonDecode(await File(file).readAsString()) as Map<String, Object?>;
-    expect(json['format'], 3, reason: 'M2 requires the format bump to 3');
+    expect(json['format'], 4,
+        reason: 'habits require the format bump to 4 (M2 bumped it to 3)');
     expect(json['app'], 'compounder');
     expect(json['balanceSnapshots'], hasLength(1));
     expect(json['reminders'], hasLength(1));
@@ -590,9 +591,9 @@ void main() {
       () async {
     final prefs = await SharedPreferences.getInstance();
     final target = await AppStore.open(prefs, path: otherDbPath);
-    final future = File(p.join(docs.path, 'format-4.json'));
+    final future = File(p.join(docs.path, 'format-5.json'));
     await future.writeAsString(jsonEncode({
-      'format': 4,
+      'format': 5,
       'app': 'compounder',
       'accounts': <Object?>[],
     }));

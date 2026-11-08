@@ -19,10 +19,11 @@ class BackupException implements Exception {
 /// Whole-database backup as one portable JSON file. Export writes a file and
 /// hands it to the system share sheet; import replaces all local data.
 class BackupService {
-  /// Current backup format. 3 adds `balanceSnapshots` and `reminders`; a
-  /// format-2 file simply lacks those keys and still imports (restoring
-  /// everything it does carry).
-  static const int format = 3;
+  /// Current backup format. 3 adds `balanceSnapshots` and `reminders`; 4 adds
+  /// `habits` and `habitCompletions`. An older file simply lacks the newer keys
+  /// and still imports (restoring everything it does carry); a newer file is
+  /// refused rather than silently truncated.
+  static const int format = 4;
 
   static Future<String> export(AppStore store) async {
     final db = store.db;
@@ -45,6 +46,8 @@ class BackupService {
       'moods': await db.query('moods'),
       'meditations': await db.query('meditations'),
       'thoughtRecords': await db.query('thought_records'),
+      'habits': await db.query('habits'),
+      'habitCompletions': await db.query('habit_completions'),
       'healthRecords': await db.query('health_records'),
       'healthDaily': await db.query('health_daily'),
       'healthSyncState': await db.query('health_sync_state'),
@@ -121,6 +124,8 @@ class BackupService {
         'moods',
         'meditations',
         'thought_records',
+        'habit_completions',
+        'habits',
         'health_records',
         'health_daily',
         'health_sync_state',
@@ -234,6 +239,17 @@ class BackupService {
       }
       for (final r in rows('thoughtRecords')) {
         await insertRow('thought_records', r);
+      }
+      // Habits are inserted before their completions so the rows are
+      // referentially consistent under `PRAGMA foreign_keys = ON`. Habit ids
+      // are inserted verbatim: every habit row was deleted above, so there is
+      // nothing on this device for them to collide with, and the completions
+      // keep pointing at the same habit.
+      for (final r in rows('habits')) {
+        await insertRow('habits', r);
+      }
+      for (final r in rows('habitCompletions')) {
+        await insertRow('habit_completions', r);
       }
       for (final entry in {
         'healthRecords': 'health_records',

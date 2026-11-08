@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'habits.dart';
 import 'settings.dart';
 
 /// Exposes the shell's drawer opener to the tab screens so the hamburger can
@@ -70,6 +71,14 @@ class AppDrawer extends StatelessWidget {
         .push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
   }
 
+  void _openHabits(BuildContext context) {
+    // Same invariant as _openSettings: pop is synchronous, so the push below
+    // cannot race a second tap.
+    Navigator.of(context).pop();
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const HabitsScreen()));
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -123,6 +132,11 @@ class AppDrawer extends StatelessWidget {
                 onTap: () => _selectTab(context, i),
               ),
             const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.checklist_rtl),
+              title: const Text('Habits'),
+              onTap: () => _openHabits(context),
+            ),
             ListTile(
               leading: const Icon(Icons.settings),
               title: const Text('Settings'),

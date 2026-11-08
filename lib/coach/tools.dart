@@ -4,6 +4,7 @@ import '../data/models.dart';
 import '../services/notify.dart';
 import '../data/store.dart';
 import '../domain/domain.dart';
+import '../domain/habits.dart';
 import '../llm/llm.dart';
 import 'agent.dart';
 
@@ -732,3 +733,388 @@ class CancelReminderTool extends CoachTool {
     return jsonEncode({'ok': true, 'cancelled': id});
   }
 }
+
+// ---------------------------------------------------------------- habits
+
+/// Reads a string argument without throwing when the model sends a non-string.
+/// `args[key] as String?` raises a `_TypeError` on a number, and the habit
+/// tools must answer with a JSON error instead of an exception.
+String _safeText(Map<String, Object?> args, String key) {
+  final value = args[key];
+  return value is String ? value.trim() : '';
+}
+
+String _jsonError(String message) =>
+    jsonEncode({'error': message.replaceAll('"', "'")});
+
+String _cadenceWord(HabitCadence cadence) => switch (cadence) {
+      HabitCadence.daily => 'per day',
+      HabitCadence.weekly => 'per week',
+      HabitCadence.monthly => 'per month',
+    };
+
+/// Resolves a habit by id from the store cache, or null when it is gone.
+Habit? _habitById(AppStore store, int id) =>
+    store.habits.where((h) => h.id == id).firstOrNull;
+
+/// Completions for one habit, from the store cache (refreshed on every write).
+List<HabitCompletion> _completionsOf(AppStore store, int habitId) =>
+    store.habitCompletions.where((c) => c.habitId == habitId).toList();
+
+Map<String, Object?> _habitJson(Habit habit, List<HabitCompletion> completions,
+    DateTime today) {
+  final progress = habitProgress(habit, completions, today: today);
+  final cadence = HabitCadence.parse(habit.cadence) ?? HabitCadence.daily;
+  return {
+    'id': habit.id,
+    'name': habit.name,
+    'cadence': cadence.name,
+    'target': habit.target,
+    'archived': habit.archived,
+    'completedDays': progress.completedDays,
+    'targetMet': progress.met,
+    'streak': progress.streak,
+    'period': cadence.periodWord,
+  };
+}
+
+class ListHabitsTool extends CoachTool {
+  final AppStore store;
+  ListHabitsTool(this.store);
+
+  @override
+  ToolSpec get spec => const ToolSpec(
+      'list_habits',
+      'List every habit with its id, cadence, target days per period, archived '
+          'flag, progress in the current period and streak. Archived habits are '
+          'included only when includeArchived is true.',
+      {
+        'type': 'object',
+        'properties': {
+          'includeArchived': {'type': 'boolean'},
+        },
+      });
+
+  @override
+  Future<String> run(Map<String, Object?> args) async {
+    final includeArchived = args['includeArchived'] == true;
+    final today = DateTime.now();
+    final habits = store.habits
+        .where((h) => includeArchived || !h.archived)
+        .map((h) => _habitJson(h, _completionsOf(store, h.id), today))
+        .toList();
+    return jsonEncode({'date': habitDayKey(today), 'habits': habits});
+  }
+}
+
+class CreateHabitTool extends CoachTool {
+  final AppStore store;
+  CreateHabitTool(this.store);
+
+  @override
+  ToolSpec get spec => const ToolSpec(
+      'create_habit',
+      'Create a habit. cadence is daily, weekly or monthly; target is the '
+          'number of days per period (e.g. 3 for three times a week). Returns '
+          'the new habit id.',
+      {
+        'type': 'object',
+        'properties': {
+          'name': {'type': 'string'},
+          'cadence': {
+            'type': 'string',
+            'enum': ['daily', 'weekly', 'monthly'],
+          },
+          'target': {'type': 'integer', 'minimum': 1},
+        },
+        'required': ['name', 'cadence'],
+      });
+
+  @override
+  bool get isWrite => true;
+
+  @override
+  String summarize(Map<String, Object?> args) {
+    final name = _safeText(args, 'name');
+    final cadence = HabitCadence.parse(args['cadence']);
+    final target = _int(args, 'target') ?? 1;
+    return 'Create a habit: "${name.isEmpty ? 'habit' : name}" — '
+        '$target× ${cadence == null ? 'per period' : _cadenceWord(cadence)}';
+  }
+
+  @override
+  Future<String> run(Map<String, Object?> args) async {
+    final name = _safeText(args, 'name');
+    if (name.isEmpty) return _jsonError('name is required');
+    final cadence = HabitCadence.parse(args['cadence']);
+    if (cadence == null) {
+      return _jsonError('cadence must be daily, weekly or monthly');
+    }
+    final target = _int(args, 'target') ?? 1;
+    if (target < 1) return _jsonError('target must be at least 1');
+    try {
+      final id = await store.createHabit(name, cadence.name, target);
+      return jsonEncode({
+        'ok': true,
+        'id': id,
+        'name': name,
+        'cadence': cadence.name,
+        'target': target,
+      });
+    } on StoreException catch (e) {
+      return _jsonError(e.message);
+    }
+  }
+}
+
+class UpdateHabitTool extends CoachTool {
+  final AppStore store;
+  UpdateHabitTool(this.store);
+
+  @override
+  ToolSpec get spec => const ToolSpec(
+      'update_habit',
+      'Update a habit by id. Only the fields you pass change: name, cadence '
+          '(daily/weekly/monthly), target days per period, or archived '
+          '(true to archive, false to restore).',
+      {
+        'type': 'object',
+        'properties': {
+          'id': {'type': 'integer'},
+          'name': {'type': 'string'},
+          'cadence': {
+            'type': 'string',
+            'enum': ['daily', 'weekly', 'monthly'],
+          },
+          'target': {'type': 'integer', 'minimum': 1},
+          'archived': {'type': 'boolean'},
+        },
+        'required': ['id'],
+      });
+
+  @override
+  bool get isWrite => true;
+
+  @override
+  String summarize(Map<String, Object?> args) {
+    final id = _int(args, 'id');
+    final habit = id == null ? null : _habitById(store, id);
+    final changes = <String>[
+      if (args['name'] != null) 'name "${_safeText(args, 'name')}"',
+      if (args['cadence'] != null)
+        'cadence ${HabitCadence.parse(args['cadence'])?.name ?? '?'}',
+      if (args['target'] != null) 'target ${_int(args, 'target') ?? '?'} days',
+      if (args['archived'] == true)
+        'archive'
+      else if (args['archived'] == false)
+        'restore',
+    ];
+    return 'Update habit ${habit == null ? '#${id ?? '?'}' : '"${habit.name}"'}'
+        '${changes.isEmpty ? '' : ': ${changes.join(', ')}'}';
+  }
+
+  @override
+  Future<String> run(Map<String, Object?> args) async {
+    final id = _int(args, 'id');
+    if (id == null) return _jsonError('id is required');
+    final habit = _habitById(store, id);
+    if (habit == null) return _jsonError('no habit with id $id');
+
+    String? name;
+    if (args['name'] != null) {
+      name = _safeText(args, 'name');
+      if (name.isEmpty) return _jsonError('name cannot be empty');
+    }
+    HabitCadence? cadence;
+    if (args['cadence'] != null) {
+      cadence = HabitCadence.parse(args['cadence']);
+      if (cadence == null) {
+        return _jsonError('cadence must be daily, weekly or monthly');
+      }
+    }
+    int? target;
+    if (args['target'] != null) {
+      target = _int(args, 'target');
+      if (target == null || target < 1) {
+        return _jsonError('target must be at least 1');
+      }
+    }
+    bool? archived;
+    if (args['archived'] != null) {
+      final raw = args['archived'];
+      if (raw is! bool) return _jsonError('archived must be true or false');
+      archived = raw;
+    }
+    if (name == null && cadence == null && target == null && archived == null) {
+      return _jsonError(
+          'provide at least one of name, cadence, target or archived');
+    }
+    try {
+      await store.updateHabit(id,
+          name: name, cadence: cadence?.name, target: target, archived: archived);
+    } on StoreException catch (e) {
+      return _jsonError(e.message);
+    }
+    final updated = _habitById(store, id);
+    return jsonEncode({
+      'ok': true,
+      if (updated != null) ..._habitJson(updated, _completionsOf(store, id), DateTime.now()),
+    });
+  }
+}
+
+class DeleteHabitTool extends CoachTool {
+  final AppStore store;
+  DeleteHabitTool(this.store);
+
+  @override
+  ToolSpec get spec => const ToolSpec(
+      'delete_habit',
+      'Delete a habit and its completion history by id. Use update_habit with '
+          'archived true instead when the history should be kept.',
+      {
+        'type': 'object',
+        'properties': {
+          'id': {'type': 'integer'},
+        },
+        'required': ['id'],
+      });
+
+  @override
+  bool get isWrite => true;
+
+  @override
+  String summarize(Map<String, Object?> args) {
+    final id = _int(args, 'id');
+    final habit = id == null ? null : _habitById(store, id);
+    return 'Delete habit ${habit == null ? '#${id ?? '?'}' : '"${habit.name}"'}';
+  }
+
+  @override
+  Future<String> run(Map<String, Object?> args) async {
+    final id = _int(args, 'id');
+    if (id == null) return _jsonError('id is required');
+    final habit = _habitById(store, id);
+    if (habit == null) return _jsonError('no habit with id $id');
+    await store.deleteHabit(id);
+    return jsonEncode({'ok': true, 'deleted': id, 'name': habit.name});
+  }
+}
+
+class LogHabitCompletionTool extends CoachTool {
+  final AppStore store;
+  LogHabitCompletionTool(this.store);
+
+  @override
+  ToolSpec get spec => const ToolSpec(
+      'log_habit_completion',
+      'Check a habit off (done true, the default) or clear it (done false) for '
+          'a local date YYYY-MM-DD. Omit date to use today. Returns the '
+          'updated progress.',
+      {
+        'type': 'object',
+        'properties': {
+          'habitId': {'type': 'integer'},
+          'date': {'type': 'string', 'description': 'YYYY-MM-DD'},
+          'done': {'type': 'boolean'},
+        },
+        'required': ['habitId'],
+      });
+
+  @override
+  bool get isWrite => true;
+
+  @override
+  String summarize(Map<String, Object?> args) {
+    final id = _int(args, 'habitId');
+    final habit = id == null ? null : _habitById(store, id);
+    final day = parseHabitDay(args['date']) ?? DateTime.now();
+    final done = args['done'] != false;
+    return '${done ? 'Check off' : 'Clear'} '
+        '${habit == null ? 'habit #${id ?? '?'}' : '"${habit.name}"'} '
+        'on ${habitDayKey(day)}';
+  }
+
+  @override
+  Future<String> run(Map<String, Object?> args) async {
+    final id = _int(args, 'habitId');
+    if (id == null) return _jsonError('habitId is required');
+    final habit = _habitById(store, id);
+    if (habit == null) return _jsonError('no habit with id $id');
+    var day = DateTime.now();
+    if (args['date'] != null) {
+      final parsed = parseHabitDay(args['date']);
+      if (parsed == null) return _jsonError('date must be YYYY-MM-DD');
+      day = parsed;
+    }
+    var done = true;
+    if (args['done'] != null) {
+      final raw = args['done'];
+      if (raw is! bool) return _jsonError('done must be true or false');
+      done = raw;
+    }
+    try {
+      await store.setHabitCompletion(id, day, done);
+    } on StoreException catch (e) {
+      return _jsonError(e.message);
+    }
+    final updated = _habitById(store, id);
+    return jsonEncode({
+      'ok': true,
+      'habitId': id,
+      'date': habitDayKey(day),
+      'done': done,
+      if (updated != null)
+        ..._habitJson(updated, _completionsOf(store, id), DateTime.now()),
+    });
+  }
+}
+
+class HabitStatusTool extends CoachTool {
+  final AppStore store;
+  HabitStatusTool(this.store);
+
+  @override
+  ToolSpec get spec => const ToolSpec(
+      'habit_status',
+      'Progress and streak for one habit (habitId) or every active habit when '
+          'habitId is omitted, as of a local date YYYY-MM-DD (defaults to '
+          'today).',
+      {
+        'type': 'object',
+        'properties': {
+          'habitId': {'type': 'integer'},
+          'date': {'type': 'string', 'description': 'YYYY-MM-DD'},
+        },
+      });
+
+  @override
+  Future<String> run(Map<String, Object?> args) async {
+    var today = DateTime.now();
+    if (args['date'] != null) {
+      final parsed = parseHabitDay(args['date']);
+      if (parsed == null) return _jsonError('date must be YYYY-MM-DD');
+      today = parsed;
+    }
+    final id = _int(args, 'habitId');
+    if (args['habitId'] != null && id == null) {
+      return _jsonError('habitId must be an integer');
+    }
+    if (id != null) {
+      final habit = _habitById(store, id);
+      if (habit == null) return _jsonError('no habit with id $id');
+      return jsonEncode({
+        'date': habitDayKey(today),
+        'habits': [_habitJson(habit, _completionsOf(store, id), today)],
+      });
+    }
+    return jsonEncode({
+      'date': habitDayKey(today),
+      'habits': [
+        for (final h in store.habits.where((h) => !h.archived))
+          _habitJson(h, _completionsOf(store, h.id), today),
+      ],
+    });
+  }
+}
+

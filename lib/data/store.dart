@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 
 import '../domain/domain.dart';
+import '../domain/habits.dart';
 import 'models.dart';
 
 class MacroGoals {
@@ -70,6 +71,8 @@ class AppStore extends ChangeNotifier {
   List<MeditationEntry> meditations = [];
   List<ThoughtRecord> thoughts = [];
   List<Reminder> reminders = [];
+  List<Habit> habits = [];
+  List<HabitCompletion> habitCompletions = [];
   List<int> usageOrder = [];
 
   AppStore._(this.db, this.prefs);
@@ -77,7 +80,7 @@ class AppStore extends ChangeNotifier {
   static Future<AppStore> open(SharedPreferences prefs, {String? path}) async {
     path ??= p.join(await getDatabasesPath(), 'compounder.db');
     final db = await openDatabase(path,
-        version: 9,
+        version: 10,
         onConfigure: _configureSchema,
         onCreate: _createSchema,
         onUpgrade: _upgradeSchema);
@@ -128,6 +131,7 @@ class AppStore extends ChangeNotifier {
     await _createV3Tables(db);
     await _createV8Indexes(db);
     await _createV9Indexes(db);
+    await _createV10Tables(db);
   }
 
   static Future<void> _createV2Tables(Database db) async {
@@ -225,6 +229,13 @@ class AppStore extends ChangeNotifier {
       // Indexes hold no user data, so dropping and recreating them is safe.
       await _createV9Indexes(db);
     }
+    if (oldVersion < 10) {
+      // Habit tracker. Purely additive: two new tables, no existing row is
+      // touched, so a v9 install keeps every workout, meal, account and health
+      // record. IF NOT EXISTS makes the step safe to re-run on a partially
+      // applied migration.
+      await _createV10Tables(db);
+    }
   }
 
   /// Indexes for the non-health tables (schema v8/v9). Idempotent so both
@@ -252,6 +263,30 @@ class AppStore extends ChangeNotifier {
     await db.execute('DROP INDEX IF EXISTS idx_workout_sets_exercise');
     await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_workout_sets_workout_exercise_id ON workout_sets(workout_exercise_id)');
+  }
+
+  /// Schema v10: the habit tracker tables. Idempotent, additive only.
+  ///
+  /// `habit_completions.day` is a local `YYYY-MM-DD` key rather than an epoch
+  /// timestamp: a habit is done on a calendar day, and a timestamp would shift
+  /// across timezones and DST. `UNIQUE(habit_id, day)` makes checking a day off
+  /// twice a no-op instead of a duplicate row, and its implicit index serves
+  /// both the per-habit history query and the range query.
+  static Future<void> _createV10Tables(Database db) async {
+    await db.execute('''CREATE TABLE IF NOT EXISTS habits(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      cadence TEXT NOT NULL,
+      target INTEGER NOT NULL DEFAULT 1,
+      archived INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL)''');
+    await db.execute('''CREATE TABLE IF NOT EXISTS habit_completions(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      habit_id INTEGER NOT NULL REFERENCES habits(id) ON DELETE CASCADE,
+      day TEXT NOT NULL,
+      count INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      UNIQUE(habit_id, day))''');
   }
 
   /// Adds [column] to [table] only when it is absent, so a partially applied
@@ -327,6 +362,13 @@ class AppStore extends ChangeNotifier {
             whereArgs: [DateTime.now().millisecondsSinceEpoch],
             orderBy: 'due_at'))
         .map(Reminder.fromMap)
+        .toList();
+    habits = (await db.query('habits', orderBy: 'name, id'))
+        .map(Habit.fromMap)
+        .toList();
+    habitCompletions = (await db.query('habit_completions',
+            orderBy: 'habit_id, day'))
+        .map(HabitCompletion.fromMap)
         .toList();
     final usageRows = await db.rawQuery('''
         SELECT we.exercise_id eid, COUNT(*) c FROM workout_exercises we
@@ -822,6 +864,158 @@ class AppStore extends ChangeNotifier {
   Future<void> deleteMood(int id) async {
     await db.delete('moods', where: 'id = ?', whereArgs: [id]);
     await refreshAll();
+  }
+
+  // ------------------------------------------------------------ habits
+
+  /// Creates a habit. Throws [StoreException] on a blank name, an unknown
+  /// cadence or a target below 1, so the UI and the coach tools share one
+  /// validation boundary instead of each re-implementing it.
+  Future<int> createHabit(String name, String cadence, int target) async {
+    final cleanName = name.trim();
+    if (cleanName.isEmpty) {
+      throw const StoreException('Habit name cannot be empty.');
+    }
+    final parsed = HabitCadence.parse(cadence);
+    if (parsed == null) {
+      throw StoreException(
+          'Unknown habit cadence "$cadence". Use daily, weekly or monthly.');
+    }
+    if (target < 1) {
+      throw const StoreException(
+          'Habit target must be at least 1 day per period.');
+    }
+    final id = await db.insert('habits', {
+      'name': cleanName,
+      'cadence': parsed.name,
+      'target': target,
+      'archived': 0,
+      'created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    await refreshAll();
+    return id;
+  }
+
+  /// Updates a habit in place. A no-op for an unknown id (the row was deleted
+  /// from under the editor), matching [updateMeal]'s contract.
+  Future<void> updateHabit(int id,
+      {String? name, String? cadence, int? target, bool? archived}) async {
+    final values = <String, Object?>{};
+    if (name != null) {
+      final cleanName = name.trim();
+      if (cleanName.isEmpty) {
+        throw const StoreException('Habit name cannot be empty.');
+      }
+      values['name'] = cleanName;
+    }
+    if (cadence != null) {
+      final parsed = HabitCadence.parse(cadence);
+      if (parsed == null) {
+        throw StoreException(
+            'Unknown habit cadence "$cadence". Use daily, weekly or monthly.');
+      }
+      values['cadence'] = parsed.name;
+    }
+    if (target != null) {
+      if (target < 1) {
+        throw const StoreException(
+            'Habit target must be at least 1 day per period.');
+      }
+      values['target'] = target;
+    }
+    if (archived != null) values['archived'] = archived ? 1 : 0;
+    if (values.isEmpty) return;
+    await db.update('habits', values, where: 'id = ?', whereArgs: [id]);
+    await refreshAll();
+  }
+
+  /// Deletes a habit and its completion history. The child rows are removed
+  /// explicitly rather than relying on the declared cascade, so the delete is
+  /// correct even if `PRAGMA foreign_keys` were ever off.
+  Future<void> deleteHabit(int id) async {
+    await db
+        .delete('habit_completions', where: 'habit_id = ?', whereArgs: [id]);
+    await db.delete('habits', where: 'id = ?', whereArgs: [id]);
+    await refreshAll();
+  }
+
+  /// Checks [day] off ([done] true) or clears it (false) for [habitId].
+  ///
+  /// Idempotent: checking an already-checked day replaces the row instead of
+  /// failing on the UNIQUE(habit_id, day) constraint. Throws [StoreException]
+  /// when the habit no longer exists, so a coach call cannot write an orphan
+  /// completion that the FK would reject.
+  Future<void> setHabitCompletion(int habitId, DateTime day, bool done) async {
+    final exists = await db.query('habits',
+        columns: ['id'], where: 'id = ?', whereArgs: [habitId], limit: 1);
+    if (exists.isEmpty) {
+      throw StoreException('No habit with id $habitId.');
+    }
+    final key = habitDayKey(day);
+    if (done) {
+      await db.insert(
+          'habit_completions',
+          {
+            'habit_id': habitId,
+            'day': key,
+            'count': 1,
+            'created_at': DateTime.now().millisecondsSinceEpoch,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace);
+    } else {
+      await db.delete('habit_completions',
+          where: 'habit_id = ? AND day = ?', whereArgs: [habitId, key]);
+    }
+    await refreshAll();
+  }
+
+  /// Flips [day] for [habitId] and returns the new state (true = checked off).
+  Future<bool> toggleHabitCompletion(int habitId, DateTime day) async {
+    final key = habitDayKey(day);
+    final existing = await db.query('habit_completions',
+        columns: ['id'],
+        where: 'habit_id = ? AND day = ?',
+        whereArgs: [habitId, key],
+        limit: 1);
+    final done = existing.isEmpty;
+    await setHabitCompletion(habitId, day, done);
+    return done;
+  }
+
+  /// Completion history for one habit, optionally bounded by a local day range
+  /// ([from] inclusive, [to] exclusive). Day keys are zero-padded ISO dates, so
+  /// string comparison is chronological.
+  Future<List<HabitCompletion>> habitCompletionsFor(int habitId,
+      {DateTime? from, DateTime? to}) async {
+    final where = <String>['habit_id = ?'];
+    final args = <Object?>[habitId];
+    if (from != null) {
+      where.add('day >= ?');
+      args.add(habitDayKey(from));
+    }
+    if (to != null) {
+      where.add('day < ?');
+      args.add(habitDayKey(to));
+    }
+    final rows = await db.query('habit_completions',
+        where: where.join(' AND '), whereArgs: args, orderBy: 'day');
+    return rows.map(HabitCompletion.fromMap).toList();
+  }
+
+  /// Every habit's completions inside a local day range ([from] inclusive,
+  /// [to] exclusive), grouped by habit id. One query for the coach's status
+  /// tool instead of one per habit.
+  Future<Map<int, List<HabitCompletion>>> habitCompletionsInRange(
+      DateTime from, DateTime to) async {
+    final rows = await db.query('habit_completions',
+        where: 'day >= ? AND day < ?',
+        whereArgs: [habitDayKey(from), habitDayKey(to)],
+        orderBy: 'habit_id, day');
+    final grouped = <int, List<HabitCompletion>>{};
+    for (final row in rows.map(HabitCompletion.fromMap)) {
+      grouped.putIfAbsent(row.habitId, () => []).add(row);
+    }
+    return grouped;
   }
 
   // ------------------------------------------------------------ helpers

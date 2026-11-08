@@ -174,7 +174,7 @@ void main() {
       () async {
     final prefs = await SharedPreferences.getInstance();
     final store = await AppStore.open(prefs, path: path);
-    expect(await store.db.getVersion(), 9);
+    expect(await store.db.getVersion(), 10);
 
     await _expectIndexesOnTables(store.db, _indexes);
     expect(await _indexTable(store.db, 'idx_workout_sets_exercise'), isNull,
@@ -274,7 +274,7 @@ void main() {
     await store.db.close();
 
     store = await AppStore.open(prefs, path: path);
-    expect(await store.db.getVersion(), 9);
+    expect(await store.db.getVersion(), 10);
 
     // No data loss: the seeded rows are all still there.
     expect(await store.db.query('workouts'), hasLength(1));
@@ -393,7 +393,7 @@ void main() {
     await store.db.close();
 
     store = await AppStore.open(prefs, path: path);
-    expect(await store.db.getVersion(), 9);
+    expect(await store.db.getVersion(), 10);
 
     // The v9 step must have replaced both index shapes.
     expect(await _indexTable(store.db, 'idx_balance_snapshots_taken'),
@@ -442,7 +442,7 @@ void main() {
     await store.db.close();
 
     store = await AppStore.open(prefs, path: path);
-    expect(await store.db.getVersion(), 9);
+    expect(await store.db.getVersion(), 10);
     await store.db.close();
   });
 
