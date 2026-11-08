@@ -49,9 +49,7 @@ class _MindTabState extends State<MindTab> {
     final streak = Mind.moodStreak(
         store.moods.map((m) => DateTime.fromMillisecondsSinceEpoch(m.timestamp)).toList());
     final now = DateTime.now();
-    final weekAgo = DateTime(now.year, now.month, now.day - 7, now.hour,
-            now.minute, now.second, now.millisecond, now.microsecond)
-        .millisecondsSinceEpoch;
+    final weekAgo = mindWeekStart(now).millisecondsSinceEpoch;
     final weekMoods = store.moods.where((m) => m.timestamp >= weekAgo).map((m) => m.mood).toList();
     final weekAvg = Mind.averageMood(weekMoods);
 

@@ -239,6 +239,42 @@ DateTime _minDateTime(DateTime a, DateTime b) => a.isBefore(b) ? a : b;
       to: DateTime(now.year, now.month, now.day + 1),
     );
 
+/// Window for the Health screen's day charts: [days] calendar days ending
+/// today, half-open at local midnight tomorrow.
+///
+/// Calendar arithmetic, not `Duration(days: N)`: a 24-hour step from midnight
+/// lands on 23:00/01:00 across a DST boundary and would truncate or widen the
+/// chart (audit m3-dst MINOR-4).
+({DateTime from, DateTime to}) healthDataWindow(DateTime now, int days) => (
+      from: DateTime(now.year, now.month, now.day - (days - 1)),
+      to: DateTime(now.year, now.month, now.day + 1),
+    );
+
+/// Start of a Health Connect sync window.
+///
+/// [last] is the previous successful sync, or null. A first sync covers the
+/// last 30 calendar days (or all history when [fullHistory]); a resume starts
+/// one calendar day before [last] so a chunk boundary cannot skip a day.
+///
+/// Calendar arithmetic, not a 24-hour subtraction: across a DST boundary the
+/// latter lands at 23:00/01:00 and can skip or double a day (audit m3-dst
+/// MINOR-4).
+DateTime syncStartFor({
+  required DateTime now,
+  DateTime? last,
+  required bool initial,
+  required bool fullHistory,
+}) {
+  if (initial || last == null) {
+    return fullHistory
+        ? DateTime(2000)
+        : DateTime(now.year, now.month, now.day - 30, now.hour, now.minute,
+            now.second, now.millisecond, now.microsecond);
+  }
+  return DateTime(last.year, last.month, last.day - 1, last.hour, last.minute,
+      last.second, last.millisecond, last.microsecond);
+}
+
 /// Retention compaction cutoff: [now] stepped back [retentionDays] calendar
 /// days with the time-of-day preserved where that wall-clock time exists.
 ///
@@ -488,20 +524,12 @@ class HealthService extends ChangeNotifier {
       }
       final now = DateTime.now();
       final last = await repository.lastSync();
-      DateTime start;
-      if (initial || last == null) {
-        final fullHistory =
-            historyRequested && await source.isHistoryAuthorized();
-        start = fullHistory
-            ? DateTime(2000)
-            : DateTime(now.year, now.month, now.day - 30, now.hour, now.minute,
-                now.second, now.millisecond, now.microsecond);
-      } else {
-        // Calendar step, not a 24-hour subtraction: across a DST boundary the
-        // latter lands at 23:00/01:00 and can skip or double a day.
-        start = DateTime(last.year, last.month, last.day - 1, last.hour,
-            last.minute, last.second, last.millisecond, last.microsecond);
-      }
+      final needsFullHistory = initial || last == null;
+      final fullHistory = needsFullHistory &&
+          historyRequested &&
+          await source.isHistoryAuthorized();
+      final start = syncStartFor(
+          now: now, last: last, initial: initial, fullHistory: fullHistory);
 
       final resumeStates = await repository.syncStates();
       final result = await runChunkedSync(

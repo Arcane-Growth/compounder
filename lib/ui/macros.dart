@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -20,8 +21,20 @@ import 'widgets.dart';
 /// How the user chose to log a meal from the "Log meal" sheet.
 enum _MealSource { camera, gallery, manual }
 
+/// A goal or total that is safe to divide by and to plot: non-finite values
+/// (`NaN`, `Infinity`) and non-positive goals become 0 (review nutrition
+/// MINOR-4).
+double _finiteGoal(double value) => value.isFinite && value > 0 ? value : 0.0;
+
+/// A total that is safe to plot: non-finite values become 0.
+double _finiteValue(double value) => value.isFinite ? value : 0.0;
+
 class MacrosTab extends StatefulWidget {
-  const MacrosTab({super.key});
+  /// Injectable clock, so a widget test can drive the midnight rollover
+  /// without waiting for a real midnight. Defaults to [DateTime.now].
+  final DateTime Function() now;
+
+  const MacrosTab({super.key, this.now = DateTime.now});
 
   @override
   State<MacrosTab> createState() => _MacrosTabState();
@@ -30,17 +43,57 @@ class MacrosTab extends StatefulWidget {
 class _MacrosTabState extends State<MacrosTab> {
   /// The day whose totals and meal list are shown. Defaults to today and is
   /// clamped to today: future days have nothing logged yet.
-  DateTime _day = localMidnight(DateTime.now());
+  late DateTime _day = localMidnight(widget.now());
 
   /// Monday of the week shown in the tracker. It follows [_day] so the day view
   /// and the week view can never disagree about which week is on screen.
-  DateTime _weekStart = weekStartFor(DateTime.now());
+  late DateTime _weekStart = weekStartFor(widget.now());
+
+  /// Rolls the tab over at local midnight. Without it the tab kept showing
+  /// yesterday as the selected day after midnight until the user tapped
+  /// forward (review nutrition MINOR-1).
+  Timer? _rollover;
 
   NutritionMetric _metric = NutritionMetric.calories;
 
-  DateTime get _today => localMidnight(DateTime.now());
+  DateTime get _today => localMidnight(widget.now());
 
   bool get _isToday => _day == _today;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleRollover();
+  }
+
+  @override
+  void dispose() {
+    _rollover?.cancel();
+    super.dispose();
+  }
+
+  /// Arms a one-shot timer for the next local midnight. Calendar arithmetic,
+  /// not `Duration(days: 1)`: the delay is computed from the current instant to
+  /// the next day boundary, so a DST transition cannot make it fire an hour
+  /// early or late.
+  void _scheduleRollover() {
+    _rollover?.cancel();
+    final now = widget.now();
+    final nextMidnight = DateTime(now.year, now.month, now.day + 1);
+    _rollover = Timer(nextMidnight.difference(now) + const Duration(seconds: 1),
+        () {
+      if (!mounted) return;
+      setState(() {
+        // Only follow the clock when the user was looking at "today"; a day
+        // the user deliberately stepped back to must stay selected.
+        if (_day == localMidnight(now)) {
+          _day = localMidnight(widget.now());
+          _weekStart = weekStartFor(_day);
+        }
+      });
+      _scheduleRollover();
+    });
+  }
 
   /// Steps the selected day by [delta] calendar days. Calendar arithmetic, not
   /// `Duration(days: 1)`: across a DST boundary a 24-hour step lands on 23:00
@@ -88,7 +141,17 @@ class _MacrosTabState extends State<MacrosTab> {
     final store = context.watch<AppStore>();
     final scheme = Theme.of(context).colorScheme;
     final t = Theme.of(context).textTheme;
-    final goals = store.goals;
+    // A goal persisted before Settings validated its input can be NaN or
+    // Infinity; dividing by it asserts LinearProgressIndicator and poisons the
+    // chart axis. Sanitise once here so every consumer is safe (review
+    // nutrition MINOR-4).
+    final rawGoals = store.goals;
+    final goals = MacroGoals(
+      calories: _finiteGoal(rawGoals.calories),
+      protein: _finiteGoal(rawGoals.protein),
+      carbs: _finiteGoal(rawGoals.carbs),
+      fat: _finiteGoal(rawGoals.fat),
+    );
     final nutritionGoals = NutritionGoals(
       calories: goals.calories,
       protein: goals.protein,
@@ -226,13 +289,14 @@ class _MacrosTabState extends State<MacrosTab> {
 
   Widget _goalRow(BuildContext context, String label, double value, double goal, String unit) {
     final scheme = Theme.of(context).colorScheme;
-    final fraction = goal <= 0 ? 0.0 : (value / goal).clamp(0.0, 1.0);
+    final safeValue = _finiteValue(value);
+    final fraction = goal <= 0 ? 0.0 : (safeValue / goal).clamp(0.0, 1.0);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           Expanded(child: Text(label, style: Theme.of(context).textTheme.titleSmall)),
-          Text('${trimZero(value)} / ${trimZero(goal)} $unit',
+          Text('${trimZero(safeValue)} / ${trimZero(goal)} $unit',
               style: Theme.of(context).textTheme.labelLarge),
         ]),
         const SizedBox(height: 6),
@@ -259,10 +323,12 @@ class _MacrosTabState extends State<MacrosTab> {
     final scheme = Theme.of(context).colorScheme;
     final t = Theme.of(context).textTheme;
     final isCurrentWeek = _weekStart == weekStartFor(_today);
-    final goal = _metric.goalOf(goals);
-    final values = [for (final d in week) _metric.valueOf(d.totals)];
+    final goal = _finiteGoal(_metric.goalOf(goals));
+    final values = [
+      for (final d in week) _finiteValue(_metric.valueOf(d.totals))
+    ];
     final peak = [goal, ...values].reduce(math.max);
-    final maxY = peak <= 0 ? 1.0 : peak * 1.15;
+    final maxY = peak.isFinite && peak > 0 ? peak * 1.15 : 1.0;
     final summary = summarizeWeek(week, _metric);
 
     return Card(
@@ -303,74 +369,99 @@ class _MacrosTabState extends State<MacrosTab> {
             container: true,
             label: 'Weekly ${_metric.label} chart, ${week.length} days, '
                 'goal ${trimZero(goal)} ${_metric.unit} per day',
-            child: ExcludeSemantics(
-              child: SizedBox(
-                height: 150,
-                child: BarChart(
-                  BarChartData(
-                    minY: 0,
-                    maxY: maxY,
-                    alignment: BarChartAlignment.spaceAround,
-                    barGroups: [
-                      for (var i = 0; i < week.length; i++)
-                        BarChartGroupData(x: i, barRods: [
-                          BarChartRodData(
-                            toY: values[i],
-                            width: 14,
-                            borderRadius: BorderRadius.circular(3),
-                            // The part above the goal is drawn in the error
-                            // colour; the chip below carries the same fact as
-                            // text, so colour is never the only signal.
-                            rodStackItems: values[i] > goal
-                                ? [
-                                    BarChartRodStackItem(0, goal, scheme.primary),
-                                    BarChartRodStackItem(
-                                        goal, values[i], scheme.error),
-                                  ]
-                                : [BarChartRodStackItem(0, values[i], scheme.primary)],
+            child: SizedBox(
+              height: 150,
+              child: Stack(children: [
+                Positioned.fill(
+                  child: ExcludeSemantics(
+                    child: BarChart(
+                      BarChartData(
+                        minY: 0,
+                        maxY: maxY,
+                        alignment: BarChartAlignment.spaceAround,
+                        barGroups: [
+                          for (var i = 0; i < week.length; i++)
+                            BarChartGroupData(x: i, barRods: [
+                              BarChartRodData(
+                                toY: values[i],
+                                width: 14,
+                                borderRadius: BorderRadius.circular(3),
+                                // The part above the goal is drawn in the error
+                                // colour; the chip below carries the same fact
+                                // as text, so colour is never the only signal.
+                                rodStackItems: values[i] > goal
+                                    ? [
+                                        BarChartRodStackItem(
+                                            0, goal, scheme.primary),
+                                        BarChartRodStackItem(
+                                            goal, values[i], scheme.error),
+                                      ]
+                                    : [
+                                        BarChartRodStackItem(
+                                            0, values[i], scheme.primary)
+                                      ],
+                              ),
+                            ]),
+                        ],
+                        extraLinesData: ExtraLinesData(horizontalLines: [
+                          HorizontalLine(
+                            y: goal,
+                            color: scheme.onSurfaceVariant,
+                            strokeWidth: 1,
+                            dashArray: const [4, 4],
+                            label: HorizontalLineLabel(
+                              show: true,
+                              alignment: Alignment.topRight,
+                              style: TextStyle(
+                                  fontSize: 9, color: scheme.onSurfaceVariant),
+                              labelResolver: (_) => 'goal ${trimZero(goal)}',
+                            ),
                           ),
                         ]),
-                    ],
-                    extraLinesData: ExtraLinesData(horizontalLines: [
-                      HorizontalLine(
-                        y: goal,
-                        color: scheme.onSurfaceVariant,
-                        strokeWidth: 1,
-                        dashArray: const [4, 4],
-                        label: HorizontalLineLabel(
-                          show: true,
-                          alignment: Alignment.topRight,
-                          style: TextStyle(
-                              fontSize: 9, color: scheme.onSurfaceVariant),
-                          labelResolver: (_) => 'goal ${trimZero(goal)}',
+                        titlesData: FlTitlesData(
+                          leftTitles: const AxisTitles(),
+                          topTitles: const AxisTitles(),
+                          rightTitles: const AxisTitles(),
+                          bottomTitles: AxisTitles(
+                            sideTitles: SideTitles(
+                              showTitles: true,
+                              reservedSize: 18,
+                              getTitlesWidget: (value, meta) {
+                                final i = value.toInt();
+                                if (i < 0 || i >= week.length) {
+                                  return const SizedBox.shrink();
+                                }
+                                return Text(_weekdayShort(week[i].day),
+                                    style: const TextStyle(fontSize: 10));
+                              },
+                            ),
+                          ),
                         ),
-                      ),
-                    ]),
-                    titlesData: FlTitlesData(
-                      leftTitles: const AxisTitles(),
-                      topTitles: const AxisTitles(),
-                      rightTitles: const AxisTitles(),
-                      bottomTitles: AxisTitles(
-                        sideTitles: SideTitles(
-                          showTitles: true,
-                          reservedSize: 18,
-                          getTitlesWidget: (value, meta) {
-                            final i = value.toInt();
-                            if (i < 0 || i >= week.length) {
-                              return const SizedBox.shrink();
-                            }
-                            return Text(_weekdayShort(week[i].day),
-                                style: const TextStyle(fontSize: 10));
-                          },
-                        ),
+                        gridData: const FlGridData(show: false),
+                        borderData: FlBorderData(show: false),
+                        barTouchData: BarTouchData(enabled: false),
                       ),
                     ),
-                    gridData: const FlGridData(show: false),
-                    borderData: FlBorderData(show: false),
-                    barTouchData: BarTouchData(enabled: false),
                   ),
                 ),
-              ),
+                // fl_chart paints the bars on a canvas, so they carry no
+                // semantics of their own. One invisible node per bar slot
+                // exposes the same day/value/over-under label the chip below
+                // carries (review nutrition MINOR-3).
+                Positioned.fill(
+                  child: Row(children: [
+                    for (var i = 0; i < week.length; i++)
+                      Expanded(
+                        child: Semantics(
+                          key: ValueKey('macros-bar-sem-$i'),
+                          container: true,
+                          label: _daySemantics(week[i]),
+                          child: const SizedBox.expand(),
+                        ),
+                      ),
+                  ]),
+                ),
+              ]),
             ),
           ),
           const SizedBox(height: 8),
@@ -388,35 +479,41 @@ class _MacrosTabState extends State<MacrosTab> {
     );
   }
 
+  /// The semantic label for one day's bar and chip: day, value and over/under.
+  String _daySemantics(NutritionDay day) {
+    final value = _finiteValue(_metric.valueOf(day.totals));
+    final delta = day.deltaFor(_metric);
+    final longDay = _weekdayLong(day.day);
+    final unit = _metric.unit;
+    if (!day.logged) return '$longDay: nothing logged';
+    if (delta > 0) {
+      return '$longDay: ${trimZero(value)} $unit, ${trimZero(delta)} over goal';
+    }
+    if (delta < 0) {
+      return '$longDay: ${trimZero(value)} $unit, ${trimZero(-delta)} under goal';
+    }
+    return '$longDay: ${trimZero(value)} $unit, exactly on goal';
+  }
+
   /// Text counterpart of one bar: day, value and signed over/under.
   Widget _dayChip(BuildContext context, NutritionDay day) {
     final scheme = Theme.of(context).colorScheme;
-    final value = _metric.valueOf(day.totals);
+    final value = _finiteValue(_metric.valueOf(day.totals));
     final delta = day.deltaFor(_metric);
     final weekday = _weekdayShort(day.day);
-    final longDay = _weekdayLong(day.day);
-    final unit = _metric.unit;
     final String text;
-    final String semantics;
     if (!day.logged) {
       text = '$weekday —';
-      semantics = '$longDay: nothing logged';
     } else if (delta > 0) {
       text = '$weekday ${trimZero(value)} ▲${trimZero(delta)}';
-      semantics =
-          '$longDay: ${trimZero(value)} $unit, ${trimZero(delta)} over goal';
     } else if (delta < 0) {
       text = '$weekday ${trimZero(value)} ▼${trimZero(-delta)}';
-      semantics =
-          '$longDay: ${trimZero(value)} $unit, ${trimZero(-delta)} under goal';
     } else {
       text = '$weekday ${trimZero(value)} =';
-      semantics = '$longDay: ${trimZero(value)} $unit, exactly on goal';
     }
-    return Semantics(
-      container: true,
-      label: semantics,
-      excludeSemantics: true,
+    // The bar overlay above carries this day's semantics; the chip is the
+    // visual counterpart, so its duplicate text is excluded from the tree.
+    return ExcludeSemantics(
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
@@ -862,7 +959,11 @@ class _ReviewScreenState extends State<ReviewScreen> {
 /// Photo for a saved meal, with a placeholder whenever there is nothing to
 /// show. `Image.file(File(''))` throws, so an empty path must never reach it;
 /// coach-logged meals (`lib/coach/tools.dart`) always have an empty path.
-class MealPhoto extends StatelessWidget {
+///
+/// The existence check runs once per path, not on every build: the gallery
+/// builds one tile per meal, and a synchronous stat in `build` blocks the frame
+/// (review nutrition NIT-1).
+class MealPhoto extends StatefulWidget {
   final String path;
   final int? cacheWidth;
   final double? height;
@@ -876,24 +977,40 @@ class MealPhoto extends StatelessWidget {
       this.iconSize = 32});
 
   @override
+  State<MealPhoto> createState() => _MealPhotoState();
+}
+
+class _MealPhotoState extends State<MealPhoto> {
+  late bool _exists = _check();
+
+  bool _check() =>
+      widget.path.isNotEmpty && File(widget.path).existsSync();
+
+  @override
+  void didUpdateWidget(MealPhoto oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.path != widget.path) _exists = _check();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     Widget placeholder() => SizedBox(
-          height: height,
+          height: widget.height,
           child: ColoredBox(
             color: scheme.surfaceContainerHighest,
             child: Center(
               child: Icon(Icons.restaurant_outlined,
-                  size: iconSize, color: scheme.onSurfaceVariant),
+                  size: widget.iconSize, color: scheme.onSurfaceVariant),
             ),
           ),
         );
-    if (path.isEmpty || !File(path).existsSync()) return placeholder();
+    if (!_exists) return placeholder();
     return Image.file(
-      File(path),
-      height: height,
-      fit: fit,
-      cacheWidth: cacheWidth,
+      File(widget.path),
+      height: widget.height,
+      fit: widget.fit,
+      cacheWidth: widget.cacheWidth,
       errorBuilder: (context, error, stackTrace) => placeholder(),
     );
   }
@@ -1051,12 +1168,17 @@ class MealDetailScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(20),
-            child: MealPhoto(meal.imagePath,
-                height: 240, fit: BoxFit.cover, iconSize: 44),
-          ),
-          const SizedBox(height: 20),
+          // Same rule as ReviewScreen: a photo-less meal (manual or coach
+          // logged) omits the 240px placeholder rather than opening with a
+          // large empty block (review nutrition MINOR-2).
+          if (meal.imagePath.isNotEmpty) ...[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: MealPhoto(meal.imagePath,
+                  height: 240, fit: BoxFit.cover, iconSize: 44),
+            ),
+            const SizedBox(height: 20),
+          ],
           Text(formatDateTime(meal.timestamp),
               style: t.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
           const SizedBox(height: 16),

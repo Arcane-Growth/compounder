@@ -11,7 +11,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 /// concern the coach's `getNetWorthHistory` tool:
 ///
 ///  * F2 — same-timestamp balance snapshots were ordered non-deterministically
-///    in both `snapshots()` and `netWorthSeries`, so the tool and the Wealth
+///    in `snapshotSeries()` and `netWorthSeries`, so the tool and the Wealth
 ///    screen could disagree and neither was reproducible.
 ///  * F1 — the tool resolved liability status from the cached `store.accounts`
 ///    list instead of the DB, so a snapshot whose account was not in the cache
@@ -129,11 +129,34 @@ void main() {
       expect(points, reference,
           reason: 'the coach tool must agree with the Wealth screen exactly');
 
-      // Stability: repeated runs must not drift.
-      for (var run = 0; run < 5; run++) {
-        expect(await toolPoints(), points,
-            reason: 'run $run must reproduce the same points');
+      // Stability under a different physical row order: delete and re-insert
+      // the same 40 snapshots so the rowid order now disagrees with the
+      // deterministic tiebreak in the other direction (highest bank balance
+      // last, lowest debt balance last). A fold that depended on visit order
+      // would report 1019 - 400 = 619 here. The old loop re-ran the same query
+      // against unchanged rows and could not fail (review b2b3b4m1 MINOR-3).
+      await store.db.delete('balance_snapshots');
+      for (var i = 0; i < 20; i++) {
+        await store.db.insert('balance_snapshots', {
+          'account_id': bankId,
+          'balance': 1000.0 + i,
+          'taken_at': takenAt,
+        });
       }
+      for (var i = 19; i >= 0; i--) {
+        await store.db.insert('balance_snapshots', {
+          'account_id': debtId,
+          'balance': 400.0 + 2 * i,
+          'taken_at': takenAt,
+        });
+      }
+      await store.refreshAll();
+      expect(
+          await toolPoints(),
+          [
+            {'month': '2026-11', 'netWorth': '581'}
+          ],
+          reason: 'a different physical row order must not change the result');
     });
 
     test('netWorthSeries is order-independent for tied timestamps', () {

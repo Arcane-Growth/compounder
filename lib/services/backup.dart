@@ -19,10 +19,12 @@ class BackupException implements Exception {
 /// Whole-database backup as one portable JSON file. Export writes a file and
 /// hands it to the system share sheet; import replaces all local data.
 class BackupService {
-  /// Current backup format. 3 adds `balanceSnapshots` and `reminders`; 4 adds
-  /// `habits` and `habitCompletions`. An older file simply lacks the newer keys
-  /// and still imports (restoring everything it does carry); a newer file is
-  /// refused rather than silently truncated.
+  /// Current backup format. 3 adds `balanceSnapshots`, `reminders` and the
+  /// full `exercises` catalog (older builds read only `customExercises`, which
+  /// is still written as a compatibility mirror); 4 adds `habits` and
+  /// `habitCompletions`. An older file simply lacks the newer keys and still
+  /// imports (restoring everything it does carry); a newer file is refused
+  /// rather than silently truncated.
   static const int format = 4;
 
   static Future<String> export(AppStore store) async {
@@ -38,6 +40,11 @@ class BackupService {
       // every `workout_exercises.exercise_id` by NAME, and a workout may
       // reference a built-in whose id differs on the target device.
       'exercises': await db.query('exercises'),
+      // Compatibility mirror for builds that only know `customExercises`. It
+      // is a strict subset of `exercises`; import unions the two by id, so a
+      // file where they diverge still imports every row exactly once. Kept
+      // rather than dropped so an older build can still restore customs
+      // (review backup-exercise-remap F5).
       'customExercises': await db.query('exercises', where: 'is_custom = 1'),
       'meals': await db.query('meals'),
       'accounts': await db.query('accounts'),
@@ -84,10 +91,17 @@ class BackupService {
     // the missing keys read as empty lists, so the import restores everything
     // the file does carry. A newer format is refused rather than silently
     // dropping fields this build does not understand.
-    final fileFormat = data['format'];
-    if (fileFormat is int && fileFormat > format) {
+    //
+    // The guard must not fail open: `fileFormat is int` accepted a double 5.0,
+    // a string "5", null and a missing key, so only an int newer than [format]
+    // was refused (review backup MINOR-1). Parse any numeric spelling and
+    // refuse anything above [format]; a missing/unparseable value is treated as
+    // an old file, which is the documented compatibility path.
+    final fileFormat = _declaredFormat(data['format']);
+    if (fileFormat != null && fileFormat > format) {
       throw BackupException(
-          'Backup format $fileFormat is newer than this app supports ($format)');
+          'Backup format ${_formatLabel(fileFormat)} is newer than this app '
+          'supports ($format)');
     }
     final db = store.db;
 
@@ -112,7 +126,7 @@ class BackupService {
       return out;
     }
 
-    await db.transaction((txn) async {
+    Future<void> writeAll(Transaction txn) async {
       for (final table in [
         'workout_sets',
         'workout_exercises',
@@ -176,14 +190,20 @@ class BackupService {
       // and silently repoint every workout entry that referenced it. Resolve
       // exercises by identity instead, let SQLite assign fresh ids, and rewrite
       // the workout references through the resulting map.
+      final catalog = rows('exercises');
       final sourceExercises = <Map<String, Object?>>[];
       final seenExerciseIds = <Object?>{};
       // `exercises` carries the whole catalog (format 3 files written by this
       // build); older files only carry `customExercises`, in which case
       // built-in references keep their original ids as before.
-      for (final r in [...rows('exercises'), ...rows('customExercises')]) {
+      for (final r in [...catalog, ...rows('customExercises')]) {
         if (seenExerciseIds.add(r['id'])) sourceExercises.add(r);
       }
+      // A file that carries the full catalog must be able to resolve every
+      // workout reference. When it cannot, the reference would be left
+      // dangling and workoutDetail would silently drop the exercise
+      // (review backup-exercise-remap F3).
+      final hasFullCatalog = catalog.isNotEmpty;
       final targetByKey = <String, int>{};
       for (final r in await txn.query('exercises', orderBy: 'id')) {
         final id = r['id'];
@@ -215,7 +235,13 @@ class BackupService {
           final oldId = copy['exercise_id'];
           if (oldId is int) {
             final newId = exerciseIdMap[oldId];
-            if (newId != null) copy['exercise_id'] = newId;
+            if (newId != null) {
+              copy['exercise_id'] = newId;
+            } else if (hasFullCatalog) {
+              throw BackupException(
+                  'Backup file is malformed: a workout entry references '
+                  'exercise $oldId, which is not in the file.');
+            }
           }
           return copy;
         });
@@ -260,7 +286,20 @@ class BackupService {
           await insertRow(entry.value, r);
         }
       }
-    });
+    }
+
+    try {
+      await db.transaction(writeAll);
+    } on DatabaseException {
+      // A row that is missing a NOT NULL column, or carries a value of the
+      // wrong type, surfaces as a raw SqfliteFfiException ("NOT NULL
+      // constraint failed ..."). The user cannot act on that, so translate it
+      // into the same user-facing shape as the structural errors above
+      // (review backup NIT-3 / backup-exercise-identity NIT-1).
+      throw const BackupException(
+          'Backup file is malformed: a row is missing a required field or has '
+          'a value of the wrong type.');
+    }
     await store.refreshAll();
     // Count from the validated helper, not `data['workouts']`: a non-list
     // value would throw a TypeError here, after the transaction has already
@@ -286,10 +325,31 @@ class BackupService {
   /// is correct.
   static String _exerciseKey(Map<String, Object?> row) {
     final name = (row['name'] as String? ?? '').trim().toLowerCase();
-    if (row['is_custom'] != 1) return '$name|builtin';
+    final custom = row['is_custom'] == 1;
+    if (name.isEmpty) {
+      // `name` is NOT NULL, so this is only reachable with a hand-edited file.
+      // Key on the source id so two nameless rows cannot collapse into one
+      // (review backup-exercise-remap F6).
+      return '#${row['id']}|${custom ? 'custom' : 'builtin'}';
+    }
+    if (!custom) return '$name|builtin';
     final muscleGroup =
         (row['muscle_group'] as String? ?? '').trim().toLowerCase();
     final equipment = (row['equipment'] as String? ?? '').trim().toLowerCase();
     return '$name|custom|$muscleGroup|$equipment';
   }
+
+  /// The declared format of a file, or null when it is absent or unparseable.
+  ///
+  /// Accepts every numeric spelling (`5`, `5.0`, `"5"`) so the newer-format
+  /// guard cannot fail open on a double or a string (review backup MINOR-1).
+  static num? _declaredFormat(Object? value) {
+    if (value is num) return value;
+    if (value is String) return num.tryParse(value.trim());
+    return null;
+  }
+
+  /// Renders a numeric format for the refusal message: 5.0 reads as "5".
+  static String _formatLabel(num value) =>
+      value == value.roundToDouble() ? value.toInt().toString() : '$value';
 }

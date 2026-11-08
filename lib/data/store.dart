@@ -768,25 +768,26 @@ class AppStore extends ChangeNotifier {
   /// Every balance snapshot joined to its account's current type, in a
   /// deterministic total order.
   ///
-  /// The order is `(taken_at, account_id, balance)` rather than
-  /// `(taken_at, id)`: `idx_balance_snapshots_taken` is exactly
-  /// `(taken_at, account_id, balance)`, so this shape is served by the
-  /// covering index with no temp B-tree (measured 20 ms vs 45 ms at 300k rows
-  /// when `id` was added to the ORDER BY). Two snapshots that agree on all
-  /// three columns are indistinguishable to [netWorthSeries] — same account,
-  /// same balance, same instant — so the fold result cannot depend on which
-  /// one is visited first.
+  /// The order is `(taken_at, account_id, balance, id)`: the first three
+  /// columns are exactly `idx_balance_snapshots_taken`, so this shape is served
+  /// by the covering index with no temp B-tree. Appending `id` is free — rowid
+  /// is implicitly the last column of every SQLite index — and makes the order
+  /// a strict total order, so two rows that agree on all three indexed columns
+  /// still have a stable relative order. (The earlier comment claimed a
+  /// measured "20 ms vs 45 ms at 300k rows"; re-measurement showed 215.3 vs
+  /// 215.7 ms, and the temp B-tree belonged to the old `(taken_at, id)` shape,
+  /// not to appending `id` — review b2b3b4m1 NIT-3.)
   ///
   /// This is the single source for both the Wealth screen series and the
-  /// coach's `getNetWorthHistory` tool, so the two cannot disagree (review
-  /// F1/F2 on c3d71cd).
+  /// coach's `getNetWorthHistory` tool, so the two describe the same series
+  /// (review F1/F2 on c3d71cd).
   Future<List<({int accountId, double balance, bool isLiability, int takenAt})>>
       snapshotSeries() async {
     final rows = await db.rawQuery('''
         SELECT s.account_id, s.balance, s.taken_at, a.type
         FROM balance_snapshots s
         JOIN accounts a ON a.id = s.account_id
-        ORDER BY s.taken_at, s.account_id, s.balance''');
+        ORDER BY s.taken_at, s.account_id, s.balance, s.id''');
     return rows
         .map((r) => (
               accountId: r['account_id'] as int,
@@ -796,11 +797,6 @@ class AppStore extends ChangeNotifier {
             ))
         .toList();
   }
-
-  /// Raw snapshot rows, ordered deterministically. Kept for callers that need
-  /// the columns rather than the typed record; prefer [snapshotSeries].
-  Future<List<Map<String, Object?>>> snapshots() =>
-      db.query('balance_snapshots', orderBy: 'taken_at, account_id, balance');
 
   // ------------------------------------------------------------ reminders
 

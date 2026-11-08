@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:compounder/data/store.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -56,7 +59,7 @@ const _plans = <String, ({String sql, bool avoidsTempBTree})>{
     sql: '''
       SELECT s.account_id, s.balance, s.taken_at, a.type
       FROM balance_snapshots s JOIN accounts a ON a.id = s.account_id
-      ORDER BY s.taken_at, s.account_id, s.balance''',
+      ORDER BY s.taken_at, s.account_id, s.balance, s.id''',
     avoidsTempBTree: true,
   ),
   'reminders due_at': (
@@ -158,16 +161,20 @@ void main() {
   databaseFactory = databaseFactoryFfi;
 
   late String path;
+  late Directory tmp;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
-    path = '${await databaseFactory.getDatabasesPath()}/'
-        'compounder_index_migration_test.db';
-    await databaseFactory.deleteDatabase(path);
+    // A unique directory per test: a fixed shared path made concurrent
+    // `flutter test` processes collide (one run failed with a UNIQUE
+    // constraint while seeding reminders; review test-hygiene item 14).
+    tmp = await Directory.systemTemp.createTemp('compounder_index_migration');
+    path = p.join(tmp.path, 'index_migration.db');
   });
 
   tearDown(() async {
     await databaseFactory.deleteDatabase(path);
+    await tmp.delete(recursive: true);
   });
 
   test('fresh install creates the v8/v9 indexes and drops the old name',

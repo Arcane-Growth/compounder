@@ -2,8 +2,6 @@ import 'dart:math' as math;
 
 import 'package:intl/intl.dart';
 
-import '../data/models.dart';
-
 // ---------------------------------------------------------------- fitness
 
 double epley(double weightKg, int reps) {
@@ -335,6 +333,15 @@ DateTime previousDayKey(DateTime day) =>
 /// boundary, so it is not a day key.
 DateTime nextDayKey(DateTime day) => DateTime(day.year, day.month, day.day + 1);
 
+/// Local instant seven calendar days before [now], preserving the time of day.
+///
+/// Calendar arithmetic, not `Duration(days: 7)`: a 168-hour subtraction lands
+/// on 23:00/01:00 across a DST boundary and would shift the "last 7 days" mood
+/// window by an hour (audit m3-dst MINOR-4).
+DateTime mindWeekStart(DateTime now) => DateTime(now.year, now.month,
+    now.day - 7, now.hour, now.minute, now.second, now.millisecond,
+    now.microsecond);
+
 class Mind {
   static double? averageMood(List<int> moods) =>
       moods.isEmpty ? null : moods.reduce((a, b) => a + b) / moods.length;
@@ -376,13 +383,29 @@ DateTime localMidnight(DateTime day) => DateTime(day.year, day.month, day.day);
 DateTime weekStartFor(DateTime day) =>
     DateTime(day.year, day.month, day.day - (day.weekday - DateTime.monday));
 
+/// The nutrition fields the aggregates below need, without importing the
+/// persistence model into the domain layer.
+///
+/// `Meal` (lib/data/models.dart) implements this interface, so the dependency
+/// points data → domain, never domain → data (review nutrition MINOR-6).
+abstract interface class MealNutrition {
+  int get timestamp;
+  double get calories;
+  double get protein;
+  double get carbs;
+  double get fat;
+}
+
 /// Meals inside the half-open local-day window
 /// `[localMidnight(day), localMidnight(day + 1))`.
 ///
 /// The exclusive upper bound is what keeps the next day's 00:00 — and any
 /// future-dated row — out of the day's totals. The lower bound is inclusive,
 /// so a meal logged at exactly 00:00 belongs to that day.
-List<Meal> mealsOnDay(List<Meal> meals, DateTime day) {
+///
+/// Generic over [MealNutrition] so a caller keeps its concrete row type
+/// (`List<Meal>` in, `List<Meal>` out) while the domain stays model-free.
+List<T> mealsOnDay<T extends MealNutrition>(Iterable<T> meals, DateTime day) {
   final start = localMidnight(day).millisecondsSinceEpoch;
   final end = nextDayKey(day).millisecondsSinceEpoch;
   return meals.where((m) => m.timestamp >= start && m.timestamp < end).toList();
@@ -466,10 +489,11 @@ class NutritionDay {
 }
 
 /// Calories and macros summed over the local day [day].
-NutritionTotals nutritionTotalsForDay(List<Meal> meals, DateTime day) =>
+NutritionTotals nutritionTotalsForDay(
+        Iterable<MealNutrition> meals, DateTime day) =>
     _totalsOf(mealsOnDay(meals, day));
 
-NutritionTotals _totalsOf(Iterable<Meal> meals) {
+NutritionTotals _totalsOf(Iterable<MealNutrition> meals) {
   var totals = const NutritionTotals();
   for (final meal in meals) {
     totals = totals +
@@ -485,7 +509,7 @@ NutritionTotals _totalsOf(Iterable<Meal> meals) {
 
 /// Totals and goal deltas for a single local day.
 NutritionDay nutritionDayFor(
-    List<Meal> meals, DateTime day, NutritionGoals goals) {
+    Iterable<MealNutrition> meals, DateTime day, NutritionGoals goals) {
   final inDay = mealsOnDay(meals, day);
   final totals = _totalsOf(inDay);
   return NutritionDay(
@@ -504,7 +528,7 @@ NutritionDay nutritionDayFor(
 /// Each bucket is built with calendar arithmetic, so a week containing a DST
 /// transition still yields seven real days with correct local boundaries.
 List<NutritionDay> weeklyNutrition(
-    List<Meal> meals, DateTime weekStart, NutritionGoals goals) {
+    Iterable<MealNutrition> meals, DateTime weekStart, NutritionGoals goals) {
   final monday = weekStartFor(weekStart);
   return [
     for (var i = 0; i < 7; i++)

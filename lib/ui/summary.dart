@@ -160,9 +160,15 @@ class _SummaryScreenState extends State<SummaryScreen> {
               '${view.exercise.muscleGroup} · ${v.sets} sets · ${v.reps} reps',
               style: t.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
           trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-            Text('${trimZero(fromKg(v.totalKg, store.unit))} ${store.unit.label}',
-                style: t.labelLarge?.copyWith(color: scheme.primary),
-                textAlign: TextAlign.end),
+            // Bounded so a large volume cannot squeeze the exercise name on a
+            // narrow screen (review nutrition NIT-2).
+            Flexible(
+              child: Text(
+                  '${trimZero(fromKg(v.totalKg, store.unit))} ${store.unit.label}',
+                  style: t.labelLarge?.copyWith(color: scheme.primary),
+                  textAlign: TextAlign.end,
+                  overflow: TextOverflow.ellipsis),
+            ),
             const SizedBox(width: 4),
             Semantics(
               container: true,

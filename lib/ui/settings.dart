@@ -18,6 +18,24 @@ import 'widgets.dart';
 /// there is no runtime source of truth to read.
 const String appVersionLabel = 'Compounder v0.3.2';
 
+/// Copy for the import confirmation dialog. Kept as a constant so a test can
+/// pin that it names every table the import wipes (review backup MINOR-2).
+const String importConfirmText =
+    'Importing replaces all workouts, meals, accounts, net-worth history, '
+    'reminders and mind data on this device.';
+
+/// Parses a daily-goal field. Returns null for empty, non-numeric, non-finite
+/// (`NaN`, `Infinity`) or non-positive input.
+///
+/// `double.tryParse('NaN')` returns NaN rather than null, so a pasted "NaN"
+/// used to persist as the goal and then assert `LinearProgressIndicator` and
+/// poison the chart's `maxY` (review nutrition MINOR-4).
+double? parseGoal(String text) {
+  final value = double.tryParse(text.trim());
+  if (value == null || !value.isFinite || value <= 0) return null;
+  return value;
+}
+
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
@@ -207,11 +225,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 12),
                 FilledButton(
                   onPressed: () async {
+                    final current = store.goals;
                     await store.saveGoals(MacroGoals(
-                      calories: double.tryParse(goalCal.text) ?? 2000,
-                      protein: double.tryParse(goalProtein.text) ?? 150,
-                      carbs: double.tryParse(goalCarbs.text) ?? 250,
-                      fat: double.tryParse(goalFat.text) ?? 70,
+                      calories: parseGoal(goalCal.text) ?? current.calories,
+                      protein: parseGoal(goalProtein.text) ?? current.protein,
+                      carbs: parseGoal(goalCarbs.text) ?? current.carbs,
+                      fat: parseGoal(goalFat.text) ?? current.fat,
                     ));
                     if (context.mounted) snack('Goals saved');
                   },
@@ -657,8 +676,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       context: context,
                       builder: (context) => AlertDialog(
                         title: const Text('Import backup?'),
-                        content: const Text(
-                            'Importing replaces all workouts, meals, accounts and mind data on this device.'),
+                        content: const Text(importConfirmText),
                         actions: [
                           TextButton(
                               onPressed: () => Navigator.pop(context, false),
@@ -676,6 +694,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       // them now so they actually fire (audit backup MINOR-4).
                       await notify.rescheduleReminders(store);
                       if (context.mounted) snack('Backup imported');
+                    } on BackupException catch (e) {
+                      // Already user-facing copy; never prefix it with a raw
+                      // exception type.
+                      if (context.mounted) snack(e.message);
                     } catch (e) {
                       if (context.mounted) snack('Import failed: $e');
                     }

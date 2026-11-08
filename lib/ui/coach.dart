@@ -21,6 +21,23 @@ class CoachMessage {
   const CoachMessage(this.role, this.text);
 }
 
+/// The transcript after a completed turn: the user-facing note (when the turn
+/// carries one) followed by the final answer.
+///
+/// Pure so the ordering and the blank-note rule can be unit-tested without a
+/// widget (review coach-history-followup MINOR-2). A blank note is dropped
+/// rather than rendered as an empty bubble.
+List<CoachMessage> messagesAfterTurn(
+    List<CoachMessage> messages, CoachTurn turn) {
+  final note = turn.note?.trim();
+  return [
+    ...messages,
+    if (note != null && note.isNotEmpty)
+      CoachMessage(ChatMessage.roleAssistant, note),
+    if (turn.reply != null) CoachMessage(ChatMessage.roleAssistant, turn.reply!),
+  ];
+}
+
 class CoachTab extends StatefulWidget {
   const CoachTab({super.key});
 
@@ -163,14 +180,7 @@ class _CoachTabState extends State<CoachTab> {
       thinking = false;
       activeTool = null;
       pending = turn.pending;
-      final note = turn.note?.trim();
-      messages = [
-        ...messages,
-        if (note != null && note.isNotEmpty)
-          CoachMessage(ChatMessage.roleAssistant, note),
-        if (turn.reply != null)
-          CoachMessage(ChatMessage.roleAssistant, turn.reply!),
-      ];
+      messages = messagesAfterTurn(messages, turn);
     });
   }
 

@@ -205,6 +205,14 @@ void main() {
         find.bySemanticsLabel(
             '${longDays[today.weekday - 1]}: 500 kcal, 1500 under goal'),
         findsOneWidget);
+    // The bar overlay itself, not just the chip below it, carries the label
+    // (review nutrition MINOR-3).
+    expect(
+        tester
+            .getSemantics(
+                find.byKey(ValueKey('macros-bar-sem-${today.weekday - 1}')))
+            .label,
+        '${longDays[today.weekday - 1]}: 500 kcal, 1500 under goal');
 
     await tester.tap(find.byKey(const ValueKey('macros-metric-protein')));
     await tester.pumpAndSettle();
@@ -220,5 +228,71 @@ void main() {
         findsOneWidget);
 
     handle.dispose();
+  });
+
+  testWidgets('the tab rolls over to the new day at local midnight',
+      (tester) async {
+    var clock = DateTime(2026, 11, 8, 23, 59, 30);
+    await tallViewport(tester);
+    await tester.pumpWidget(host(
+        ShellNav(openDrawer: () {}, child: MacrosTab(now: () => clock))));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sun, Nov 8, 2026'), findsOneWidget);
+    expect(find.text('Today'), findsOneWidget);
+
+    // Cross midnight: the one-shot timer fires at 00:00:01 and the tab must
+    // follow the clock instead of leaving yesterday selected (review nutrition
+    // MINOR-1).
+    clock = DateTime(2026, 11, 9, 0, 0, 1);
+    await tester.pump(const Duration(seconds: 31));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Mon, Nov 9, 2026'), findsOneWidget);
+    expect(find.text('Sun, Nov 8, 2026'), findsNothing,
+        reason: 'the selected day must follow the clock across midnight');
+    expect(find.text('Today'), findsOneWidget);
+  });
+
+  testWidgets('a NaN goal cannot assert the progress bar or poison the chart',
+      (tester) async {
+    await tester.runAsync(() async {
+      await store.saveGoals(const MacroGoals(
+          calories: double.nan,
+          protein: double.infinity,
+          carbs: -5,
+          fat: 0));
+    });
+    await tallViewport(tester);
+    await tester.pumpWidget(
+        host(ShellNav(openDrawer: () {}, child: const MacrosTab())));
+    await tester.pumpAndSettle();
+
+    // Non-finite and non-positive goals are sanitised to 0, so the progress
+    // bars render at 0 and the chart axis stays finite (review nutrition
+    // MINOR-4).
+    expect(find.text('0 / 0 kcal'), findsOneWidget);
+    expect(find.text('0 / 0 g'), findsNWidgets(3));
+    expect(
+        find.bySemanticsLabel('Weekly Calories chart, 7 days, '
+            'goal 0 kcal per day'),
+        findsOneWidget);
+  });
+
+  testWidgets('a photo-less meal detail omits the 240px placeholder',
+      (tester) async {
+    late int mealId;
+    await tester.runAsync(() async {
+      await store.addMeal(mealAt(
+          DateTime(2026, 11, 8, 12), dish: 'Manual bowl', calories: 500));
+      mealId = store.meals.single.id;
+    });
+    await tester.pumpWidget(host(MealDetailScreen(mealId: mealId)));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Manual bowl'), findsOneWidget);
+    expect(find.byType(MealPhoto), findsNothing,
+        reason: 'a photo-less meal must not open with an empty grey block '
+            '(review nutrition MINOR-2)');
   });
 }

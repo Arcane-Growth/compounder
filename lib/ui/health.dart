@@ -31,10 +31,9 @@ class _HealthDataScreenState extends State<HealthDataScreen> {
         List<HealthDayStat> heart,
       })> _load(HealthService service) async {
     final now = DateTime.now();
-    final from = DateTime(now.year, now.month, now.day - (_days - 1));
-    final to = DateTime(now.year, now.month, now.day + 1);
-    final fromMs = from.millisecondsSinceEpoch;
-    final toMs = to.millisecondsSinceEpoch;
+    final window = healthDataWindow(now, _days);
+    final fromMs = window.from.millisecondsSinceEpoch;
+    final toMs = window.to.millisecondsSinceEpoch;
     return (
       overview: await service.repository.overview(from: fromMs, to: toMs),
       status: await service.status(),

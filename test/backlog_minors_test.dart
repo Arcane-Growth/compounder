@@ -1,10 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:compounder/coach/agent.dart';
 import 'package:compounder/data/store.dart';
 import 'package:compounder/health/repository.dart';
 import 'package:compounder/health/service.dart';
+import 'package:compounder/llm/llm.dart';
 import 'package:compounder/seeder.dart';
+import 'package:compounder/ui/coach.dart';
 import 'package:compounder/ui/settings.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health/health.dart';
@@ -259,6 +262,61 @@ void main() {
           ]));
       expect(store.exercises, hasLength(1));
       expect(store.exercises.single.name, 'Curl');
+    });
+  });
+
+  group('nutrition MINOR-4 goal parsing', () {
+    test('a finite positive goal is accepted', () {
+      expect(parseGoal('2500'), 2500);
+      expect(parseGoal(' 180 '), 180);
+      expect(parseGoal('72.5'), 72.5);
+    });
+
+    test('NaN and Infinity are rejected, not persisted', () {
+      // `double.tryParse('NaN')` returns NaN, which used to persist and then
+      // assert LinearProgressIndicator and poison the chart's maxY.
+      expect(parseGoal('NaN'), isNull);
+      expect(parseGoal('Infinity'), isNull);
+      expect(parseGoal('-Infinity'), isNull);
+    });
+
+    test('zero, negative and non-numeric input is rejected', () {
+      expect(parseGoal('0'), isNull);
+      expect(parseGoal('-10'), isNull);
+      expect(parseGoal(''), isNull);
+      expect(parseGoal('abc'), isNull);
+    });
+  });
+
+  group('backup MINOR-2 import confirmation copy', () {
+    test('names every table the import replaces', () {
+      for (final word in [
+        'workouts',
+        'meals',
+        'accounts',
+        'net-worth',
+        'reminders',
+        'mind',
+      ]) {
+        expect(importConfirmText, contains(word),
+            reason: 'the dialog must not understate what is wiped');
+      }
+    });
+  });
+
+  group('coach-history MINOR-2 transcript assembly', () {
+    test('a blank note is dropped and the reply is kept', () {
+      final out = messagesAfterTurn(
+          const [], const CoachTurn(note: '   ', reply: 'Done.'));
+      expect(out, hasLength(1));
+      expect(out.single.text, 'Done.');
+      expect(out.single.role, ChatMessage.roleAssistant);
+    });
+
+    test('a non-blank note is kept before the reply', () {
+      final out = messagesAfterTurn(
+          const [], const CoachTurn(note: '3 calls skipped', reply: 'Done.'));
+      expect(out.map((m) => m.text).toList(), ['3 calls skipped', 'Done.']);
     });
   });
 }

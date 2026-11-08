@@ -548,15 +548,26 @@ void main() {
       expect(turn.note, contains('3 more tool calls skipped'));
       expect(turn.note, contains('On it.'),
           reason: 'the model text is kept alongside the skip note');
-      // The model sees the same note, so it can re-issue the dropped calls.
+      expect(turn.note, isNot(contains('Ask again if you still need them')),
+          reason: 'the model-directed sentence must not leak into the user '
+              'bubble');
+      // The model sees the same skip count plus the instruction to re-issue
+      // the dropped calls; the user-facing note deliberately omits it.
       await agent.approve(client);
       final sent = client.sent.last
           .where((m) => m.role != ChatMessage.roleSystem)
           .toList();
       final assistant =
           sent.lastWhere((m) => m.role == ChatMessage.roleAssistant);
-      expect(assistant.content, turn.note,
-          reason: 'the chat note and the wire note must match');
+      expect(assistant.content, contains('3 more tool calls skipped'),
+          reason: 'the wire note must still tell the model calls were dropped');
+      expect(assistant.content, contains('On it.'),
+          reason: 'the model text is kept on the wire');
+      expect(assistant.content, contains('Ask again if you still need them'),
+          reason: 'the model needs the instruction to re-issue dropped calls');
+      expect(assistant.content, isNot(turn.note),
+          reason: 'the user note and the wire note are intentionally different '
+              'when calls are dropped');
     });
 
     test('a single approval round peaks at the documented 91-message request',

@@ -182,7 +182,21 @@ void main() {
     expect(find.text('100 kg × 5 reps'), findsOneWidget);
 
     // A store notification rebuilds the screen (the FutureBuilder re-emits).
+    // The detail future is cached in State, so the rebuild must reuse the same
+    // Future instance rather than re-querying the database (review nutrition
+    // MINOR-5).
+    final before = tester
+        .widget<FutureBuilder<WorkoutDetail?>>(
+            find.byType(FutureBuilder<WorkoutDetail?>))
+        .future;
     store.notifyListeners();
+    await tester.pump();
+    final after = tester
+        .widget<FutureBuilder<WorkoutDetail?>>(
+            find.byType(FutureBuilder<WorkoutDetail?>))
+        .future;
+    expect(identical(before, after), isTrue,
+        reason: 'the cached detail future must not be re-created on rebuild');
     await tester.pumpAndSettle();
     expect(find.text('100 kg × 5 reps'), findsOneWidget,
         reason: 'expansion state must survive a rebuild');

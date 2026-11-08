@@ -1,3 +1,5 @@
+import '../domain/domain.dart';
+
 class Exercise {
   final int id;
   final String name;
@@ -154,8 +156,9 @@ class Food {
       );
 }
 
-class Meal {
+class Meal implements MealNutrition {
   final int id;
+  @override
   final int timestamp;
   final String imagePath;
   final String dish;
@@ -163,9 +166,13 @@ class Meal {
   /// Free-text note about the meal ("two slices, extra cheese"). Nullable so
   /// rows written before schema v4 stay valid.
   final String? description;
+  @override
   final double calories;
+  @override
   final double protein;
+  @override
   final double carbs;
+  @override
   final double fat;
   final List<Food> foods;
   final bool isAuto;

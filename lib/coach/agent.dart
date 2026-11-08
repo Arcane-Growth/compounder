@@ -259,7 +259,13 @@ RULES
           ? result.toolCalls.sublist(0, _maxToolCallsPerIteration)
           : result.toolCalls;
       final dropped = result.toolCalls.length - calls.length;
-      final historyNote = dropped == 0
+      // The model needs to know it may re-issue the dropped calls; the user
+      // needs to know the batch is incomplete. One sentence cannot serve both:
+      // "Ask again if you still need them" is addressed to the model and reads
+      // as nonsense in the user's bubble (review coach-history-followup
+      // MINOR-1). Keep the model-facing variant on the wire and hand the user
+      // a note without the model-directed instruction.
+      final modelNote = dropped == 0
           ? result.content
           : [
               if (result.content?.trim().isNotEmpty ?? false)
@@ -268,7 +274,15 @@ RULES
                   'most $_maxToolCallsPerIteration run per step. Ask again if '
                   'you still need them.)',
             ].join('\n\n');
-      _history.add(ChatMessage.assistant(historyNote, calls));
+      final userNote = dropped == 0
+          ? result.content
+          : [
+              if (result.content?.trim().isNotEmpty ?? false)
+                result.content!.trim(),
+              '($dropped more tool call${dropped == 1 ? '' : 's'} skipped: at '
+                  'most $_maxToolCallsPerIteration run per step.)',
+            ].join('\n\n');
+      _history.add(ChatMessage.assistant(modelNote, calls));
       final proposals = <ProposedChange>[];
       for (final call in calls) {
         final tool = tools[call.name];
@@ -303,11 +317,11 @@ RULES
 
       if (proposals.isNotEmpty) {
         _pending = PendingApproval(proposals);
-        // Show the user the same note the model sees: when the step returned
-        // more calls than the clamp allows, [historyNote] carries the
-        // "N more tool calls skipped" line. Passing [result.content] here would
-        // hide dropped writes from the approval card.
-        return CoachTurn(note: historyNote, pending: _pending);
+        // Show the user the note without the model-directed sentence: when the
+        // step returned more calls than the clamp allows, [userNote] carries
+        // the "N more tool calls skipped" line. Passing [result.content] here
+        // would hide dropped writes from the approval card.
+        return CoachTurn(note: userNote, pending: _pending);
       }
     }
 

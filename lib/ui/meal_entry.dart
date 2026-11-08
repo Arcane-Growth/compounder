@@ -126,6 +126,11 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
   double get _carbs => parseMacroGrams(carbs.text);
   double get _fat => parseMacroGrams(fat.text);
 
+  /// A meal needs at least a name or one non-zero macro. Saving an empty form
+  /// used to create a 0 kcal "Meal" row by accident (review nutrition NIT-3).
+  bool get _hasContent =>
+      dish.text.trim().isNotEmpty || _protein > 0 || _carbs > 0 || _fat > 0;
+
   @override
   void dispose() {
     for (final c in [dish, description, protein, carbs, fat]) {
@@ -185,6 +190,7 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
           TextField(
             controller: dish,
             textCapitalization: TextCapitalization.sentences,
+            onChanged: (_) => setState(() {}),
             decoration: const InputDecoration(labelText: 'Dish'),
           ),
           const SizedBox(height: 12),
@@ -242,7 +248,7 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
           FilledButton.icon(
             icon: const Icon(Icons.save),
             label: const Text('Save meal'),
-            onPressed: () => _save(store),
+            onPressed: _hasContent ? () => _save(store) : null,
           ),
           const SizedBox(height: 12),
           Text(
