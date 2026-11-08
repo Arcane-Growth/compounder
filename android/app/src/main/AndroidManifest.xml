@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- BYO-AI: the ONLY network access is to the endpoint the user configures. -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
@@ -41,7 +42,16 @@
         android:usesCleartextTraffic="true"
         android:largeHeap="true"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:debuggable="true"
+        tools:ignore="HardcodedDebugMode">
+        <!-- android:debuggable is set here, not via the release build type's
+             isDebuggable: Flutter derives the build mode from
+             buildType.isDebuggable, so a debuggable release build type would
+             silently produce a JIT debug build. Setting the manifest flag keeps
+             the release build AOT while `adb shell run-as` can still read and
+             restore compounder.db on the owner's test device. Pre-production
+             build; production keys come later. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
