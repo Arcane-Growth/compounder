@@ -12,7 +12,11 @@ import '../data/store.dart';
 import '../domain/domain.dart';
 import '../llm/llm.dart';
 import 'drawer.dart';
+import 'meal_entry.dart';
 import 'widgets.dart';
+
+/// How the user chose to log a meal from the "Log meal" sheet.
+enum _MealSource { camera, gallery, manual }
 
 class MacrosTab extends StatelessWidget {
   const MacrosTab({super.key});
@@ -50,8 +54,8 @@ class MacrosTab extends StatelessWidget {
         heroTag: 'log-meal',
         backgroundColor: scheme.primary,
         foregroundColor: scheme.onPrimary,
-        onPressed: () => _capture(context, store),
-        icon: const Icon(Icons.photo_camera),
+        onPressed: () => _logMeal(context, store),
+        icon: const Icon(Icons.add),
         label: const Text('Log meal'),
       ),
       body: ListView(
@@ -75,7 +79,8 @@ class MacrosTab extends StatelessWidget {
           if (todays.isEmpty)
             const EmptyState(
               title: 'Nothing logged yet today',
-              subtitle: 'Tap "Log meal" to photograph a plate and let your AI draft the macros.',
+              subtitle:
+                  'Tap "Log meal" to photograph a plate or enter the macros by hand.',
               icon: Icons.restaurant,
             )
           else
@@ -121,32 +126,53 @@ class MacrosTab extends StatelessWidget {
     );
   }
 
-  Future<void> _capture(BuildContext context, AppStore store) async {
-    final ai = store.ai;
-    if (!ai.configured) {
-      _snack(context, 'Configure your AI endpoint in Settings to analyze meal photos.');
-      return;
-    }
-    final source = await showModalBottomSheet<ImageSource>(
+  /// Entry point for logging a meal. Manual entry is offered first-class and
+  /// never touches the AI endpoint; the photo paths still need one configured.
+  Future<void> _logMeal(BuildContext context, AppStore store) async {
+    final source = await showModalBottomSheet<_MealSource>(
       context: context,
       builder: (sheetContext) => SafeArea(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           ListTile(
             leading: const Icon(Icons.photo_camera),
             title: const Text('Take a photo'),
-            onTap: () => Navigator.of(sheetContext).pop(ImageSource.camera),
+            subtitle: const Text('Let your AI draft the macros'),
+            onTap: () => Navigator.of(sheetContext).pop(_MealSource.camera),
           ),
           ListTile(
             leading: const Icon(Icons.photo_library_outlined),
             title: const Text('Choose from gallery'),
-            onTap: () => Navigator.of(sheetContext).pop(ImageSource.gallery),
+            subtitle: const Text('Let your AI draft the macros'),
+            onTap: () => Navigator.of(sheetContext).pop(_MealSource.gallery),
+          ),
+          ListTile(
+            leading: const Icon(Icons.edit_note),
+            title: const Text('Enter manually'),
+            subtitle: const Text('Type the macros yourself — no photo or AI needed'),
+            onTap: () => Navigator.of(sheetContext).pop(_MealSource.manual),
           ),
         ]),
       ),
     );
-    if (source == null) return;
+    if (source == null || !context.mounted) return;
+
+    if (source == _MealSource.manual) {
+      await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const ManualMealScreen()));
+      return;
+    }
+
+    final ai = store.ai;
+    if (!ai.configured) {
+      _snack(context, 'Configure your AI endpoint in Settings to analyze meal photos.');
+      return;
+    }
     final picked = await ImagePicker().pickImage(
-        source: source, maxWidth: 1280, imageQuality: 82);
+        source: source == _MealSource.camera
+            ? ImageSource.camera
+            : ImageSource.gallery,
+        maxWidth: 1280,
+        imageQuality: 82);
     if (picked == null) return;
     final bytes = await picked.readAsBytes();
     if (!context.mounted) return;
@@ -339,8 +365,6 @@ class _ReviewScreenState extends State<ReviewScreen> {
   late final TextEditingController dish = TextEditingController(text: widget.draft.dish);
   late final TextEditingController description =
       TextEditingController(text: widget.description);
-  late final TextEditingController calories =
-      TextEditingController(text: widget.draft.calories.round().toString());
   late final TextEditingController protein =
       TextEditingController(text: widget.draft.protein.round().toString());
   late final TextEditingController carbs =
@@ -350,9 +374,13 @@ class _ReviewScreenState extends State<ReviewScreen> {
 
   bool get _isEdit => widget.existing != null;
 
+  double get _protein => parseMacroGrams(protein.text);
+  double get _carbs => parseMacroGrams(carbs.text);
+  double get _fat => parseMacroGrams(fat.text);
+
   @override
   void dispose() {
-    for (final c in [dish, description, calories, protein, carbs, fat]) {
+    for (final c in [dish, description, protein, carbs, fat]) {
       c.dispose();
     }
     super.dispose();
@@ -368,10 +396,14 @@ class _ReviewScreenState extends State<ReviewScreen> {
       imagePath: widget.imagePath,
       dish: dish.text.trim().isEmpty ? 'Meal' : dish.text.trim(),
       description: note.isEmpty ? null : note,
-      calories: double.tryParse(calories.text) ?? 0,
-      protein: double.tryParse(protein.text) ?? 0,
-      carbs: double.tryParse(carbs.text) ?? 0,
-      fat: double.tryParse(fat.text) ?? 0,
+      // Calories are derived, never typed: the saved row always agrees with
+      // the macros. In edit mode the stored figure is shown next to the
+      // computed one before saving, so an AI estimate is not silently
+      // rewritten.
+      calories: caloriesFromMacros(_protein, _carbs, _fat),
+      protein: _protein,
+      carbs: _carbs,
+      fat: _fat,
       foods: existing?.foods ?? widget.draft.foods,
       isAuto: existing?.isAuto ?? true,
     );
@@ -391,12 +423,16 @@ class _ReviewScreenState extends State<ReviewScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(20),
-            child: MealPhoto(widget.imagePath,
-                height: 240, fit: BoxFit.cover, iconSize: 44),
-          ),
-          const SizedBox(height: 20),
+          // A manual meal has no photo; the 240px placeholder would just be a
+          // large empty block, so the whole photo area is omitted.
+          if (widget.imagePath.isNotEmpty) ...[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: MealPhoto(widget.imagePath,
+                  height: 240, fit: BoxFit.cover, iconSize: 44),
+            ),
+            const SizedBox(height: 20),
+          ],
           SectionHeader(_isEdit ? 'Edit the details' : 'Confirm before saving'),
           const SizedBox(height: 8),
           TextField(controller: dish, decoration: const InputDecoration(labelText: 'Dish')),
@@ -413,28 +449,39 @@ class _ReviewScreenState extends State<ReviewScreen> {
           Row(children: [
             Expanded(
                 child: TextField(
-                    controller: calories,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'kcal'))),
-            const SizedBox(width: 8),
-            Expanded(
-                child: TextField(
                     controller: protein,
-                    keyboardType: TextInputType.number,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    onChanged: (_) => setState(() {}),
                     decoration: const InputDecoration(labelText: 'Protein g'))),
             const SizedBox(width: 8),
             Expanded(
                 child: TextField(
                     controller: carbs,
-                    keyboardType: TextInputType.number,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    onChanged: (_) => setState(() {}),
                     decoration: const InputDecoration(labelText: 'Carbs g'))),
             const SizedBox(width: 8),
             Expanded(
                 child: TextField(
                     controller: fat,
-                    keyboardType: TextInputType.number,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    onChanged: (_) => setState(() {}),
                     decoration: const InputDecoration(labelText: 'Fat g'))),
           ]),
+          const SizedBox(height: 12),
+          MacroCalorieSummary(
+            protein: _protein,
+            carbs: _carbs,
+            fat: _fat,
+            // Edit mode compares against the stored row; a fresh AI draft
+            // compares against the model's own estimate.
+            referenceCalories:
+                _isEdit ? widget.existing!.calories : widget.draft.calories,
+            referenceLabel: _isEdit ? 'stored' : 'AI estimate',
+          ),
           const SizedBox(height: 20),
           FilledButton.icon(
             icon: const Icon(Icons.save),

@@ -110,6 +110,41 @@ Volume volumeOf(Iterable<({double weightKg, int reps, bool isWarmup})> sets) {
   return Volume(total, n, reps);
 }
 
+// ---------------------------------------------------------------- nutrition
+
+/// Atwater energy factors used by the macro calculator: protein and
+/// carbohydrate supply 4 kcal per gram, fat supplies 9 kcal per gram.
+const double kcalPerGramProtein = 4;
+const double kcalPerGramCarbs = 4;
+const double kcalPerGramFat = 9;
+
+/// Calories implied by a macro breakdown, using the Atwater factors above.
+///
+/// This is the single source of truth for the meal calculator: the manual
+/// entry screen and the meal review/edit screen both display this value, so
+/// calories can never drift from the macros the user typed.
+///
+/// Negative and non-finite grams are treated as zero rather than throwing:
+/// the store accepts any value, and a text field can hand back `NaN` or
+/// `Infinity` through `double.tryParse` ("NaN", "Infinity"). A negative macro
+/// cannot subtract energy, so it contributes nothing.
+double caloriesFromMacros(double protein, double carbs, double fat) {
+  double grams(double value) => value.isFinite && value > 0 ? value : 0;
+  return grams(protein) * kcalPerGramProtein +
+      grams(carbs) * kcalPerGramCarbs +
+      grams(fat) * kcalPerGramFat;
+}
+
+/// Parses a macro gram value typed into a text field.
+///
+/// Empty, non-numeric ("abc"), negative and non-finite input all read as 0,
+/// so the calculator never throws on a half-typed field.
+double parseMacroGrams(String text) {
+  final value = double.tryParse(text.trim());
+  if (value == null || !value.isFinite || value < 0) return 0;
+  return value;
+}
+
 // ---------------------------------------------------------------- units
 
 enum WeightUnit {
