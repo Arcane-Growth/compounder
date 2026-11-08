@@ -50,6 +50,14 @@ android {
         release {
             signingConfig = signingConfigs.findByName("release")
                 ?: signingConfigs.getByName("debug")
+            // The owner's Pixel 10 is the only test device and the team pulls
+            // the app's private data (compounder.db) with `adb shell run-as` to
+            // verify migrations and row counts. `run-as` refuses a
+            // non-debuggable package, so a plain release build would make the
+            // database unreadable and un-restorable after an uninstall. This is
+            // a pre-production build (owner supplies production keys later), so
+            // keep the release build debuggable.
+            isDebuggable = true
         }
     }
 }
