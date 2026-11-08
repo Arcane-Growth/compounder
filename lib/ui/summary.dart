@@ -1,13 +1,43 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../data/models.dart';
 import '../data/store.dart';
 import '../domain/domain.dart';
 import 'widgets.dart';
 
-class SummaryScreen extends StatelessWidget {
+class SummaryScreen extends StatefulWidget {
   final int workoutId;
   const SummaryScreen(this.workoutId, {super.key});
+
+  @override
+  State<SummaryScreen> createState() => _SummaryScreenState();
+}
+
+class _SummaryScreenState extends State<SummaryScreen> {
+  /// The detail future is created once so a rebuild (the store notifying, a
+  /// theme change, an expansion toggle) never re-queries the database and
+  /// never drops the loaded workout back to a loading state.
+  late final Future<WorkoutDetail?> _detail;
+
+  /// Workout-exercise ids whose set list is expanded. Held in State so the
+  /// expansion survives rebuilds and expanding one exercise does not collapse
+  /// another. Collapsed by default: the owner asked to expand "if I want".
+  final Set<int> _expanded = <int>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _detail = context.read<AppStore>().workoutDetail(widget.workoutId);
+  }
+
+  void _toggle(int workoutExerciseId) {
+    setState(() {
+      if (!_expanded.remove(workoutExerciseId)) {
+        _expanded.add(workoutExerciseId);
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -15,12 +45,12 @@ class SummaryScreen extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
 
     return FutureBuilder<WorkoutDetail?>(
-      future: store.workoutDetail(workoutId),
+      future: _detail,
       builder: (context, snap) {
         if (snap.hasError) {
           // A raw DatabaseException string is not user-facing copy; log it and
           // show a fixed subtitle, as progress.dart does (audit F7).
-          debugPrint('SummaryScreen($workoutId): ${snap.error}');
+          debugPrint('SummaryScreen(${widget.workoutId}): ${snap.error}');
           return Scaffold(
             appBar: AppBar(title: const Text('Workout summary')),
             body: const Center(
@@ -86,24 +116,7 @@ class SummaryScreen extends StatelessWidget {
               ]),
               const SizedBox(height: 16),
               const SectionHeader('Exercises'),
-              ...detail.exercises.map((view) {
-                final v = volumeOf(view.sets
-                    .where((s) => s.completedAt != null)
-                    .map((s) => (
-                          weightKg: s.weightKg,
-                          reps: s.reps,
-                          isWarmup: s.isWarmup
-                        ))
-                    .toList());
-                return CardRow(
-                  icon: Icons.fitness_center,
-                  title: view.exercise.name,
-                  subtitle:
-                      '${view.exercise.muscleGroup} · ${v.sets} sets · ${v.reps} reps',
-                  trailing:
-                      '${trimZero(fromKg(v.totalKg, store.unit))} ${store.unit.label}',
-                );
-              }),
+              ...detail.exercises.map((view) => _exerciseCard(store, view)),
               const SizedBox(height: 16),
               OutlinedButton.icon(
                 style: OutlinedButton.styleFrom(foregroundColor: scheme.error),
@@ -111,7 +124,7 @@ class SummaryScreen extends StatelessWidget {
                 label: Text('Delete workout',
                     style: TextStyle(color: scheme.error)),
                 onPressed: () async {
-                  await store.deleteWorkout(workoutId);
+                  await store.deleteWorkout(widget.workoutId);
                   if (context.mounted) Navigator.of(context).pop();
                 },
               ),
@@ -119,6 +132,122 @@ class SummaryScreen extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+
+  /// One exercise card: the same aggregate row the summary has always shown,
+  /// plus a chevron that reveals the individual sets on demand.
+  Widget _exerciseCard(AppStore store, ExerciseView view) {
+    final scheme = Theme.of(context).colorScheme;
+    final t = Theme.of(context).textTheme;
+    final v = volumeOf(view.sets
+        .where((s) => s.completedAt != null)
+        .map((s) => (weightKg: s.weightKg, reps: s.reps, isWarmup: s.isWarmup))
+        .toList());
+    final expanded = _expanded.contains(view.entry.id);
+    final sets = [...view.sets]
+      ..sort((a, b) => a.position.compareTo(b.position));
+
+    return Card(
+      color: scheme.surfaceContainerLow,
+      child: Column(children: [
+        ListTile(
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+          leading: const TintedIconCircle(Icons.fitness_center),
+          title: Text(view.exercise.name, style: t.titleMedium),
+          subtitle: Text(
+              '${view.exercise.muscleGroup} · ${v.sets} sets · ${v.reps} reps',
+              style: t.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
+          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+            Text('${trimZero(fromKg(v.totalKg, store.unit))} ${store.unit.label}',
+                style: t.labelLarge?.copyWith(color: scheme.primary),
+                textAlign: TextAlign.end),
+            const SizedBox(width: 4),
+            Semantics(
+              container: true,
+              button: true,
+              toggled: expanded,
+              label: '${expanded ? 'Collapse' : 'Expand'} sets for '
+                  '${view.exercise.name}',
+              onTap: () => _toggle(view.entry.id),
+              child: ExcludeSemantics(
+                child: IconButton(
+                  icon: Icon(
+                      expanded ? Icons.expand_less : Icons.expand_more,
+                      color: scheme.primary),
+                  tooltip: expanded ? 'Collapse sets' : 'Expand sets',
+                  onPressed: () => _toggle(view.entry.id),
+                ),
+              ),
+            ),
+          ]),
+        ),
+        if (expanded) ...[
+          Divider(height: 1, color: scheme.outlineVariant),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final set in sets) _setRow(store, set),
+              ],
+            ),
+          ),
+        ],
+      ]),
+    );
+  }
+
+  /// A read-only set line. Incomplete sets are still listed — a set the user
+  /// logged but never ticked off is real data — but they are labelled
+  /// "Not completed" and dimmed so they are never read as performed work.
+  Widget _setRow(AppStore store, WorkoutSet set) {
+    final scheme = Theme.of(context).colorScheme;
+    final t = Theme.of(context).textTheme;
+    final done = set.completedAt != null;
+    final weight = trimZero(fromKg(set.weightKg, store.unit));
+    final detail = '$weight ${store.unit.label} × ${set.reps} reps';
+    final status = done ? 'Completed' : 'Not completed';
+
+    return Semantics(
+      container: true,
+      label: 'Set ${set.position + 1}, $detail'
+          '${set.isWarmup ? ', warm-up' : ''}, ${status.toLowerCase()}',
+      child: ExcludeSemantics(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 3),
+          child: Row(children: [
+            SizedBox(
+              width: 28,
+              child: Text('${set.position + 1}',
+                  style: t.bodyMedium?.copyWith(color: scheme.onSurfaceVariant)),
+            ),
+            Expanded(
+              child: Text(detail,
+                  style: t.bodyMedium?.copyWith(
+                      color: done ? scheme.onSurface : scheme.onSurfaceVariant)),
+            ),
+            if (set.isWarmup) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: scheme.secondaryContainer,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text('Warm-up',
+                    style: t.labelSmall
+                        ?.copyWith(color: scheme.onSecondaryContainer)),
+              ),
+            ],
+            const SizedBox(width: 8),
+            Text(status,
+                style: t.labelSmall?.copyWith(
+                    color: done ? scheme.primary : scheme.outline)),
+          ]),
+        ),
+      ),
     );
   }
 }
