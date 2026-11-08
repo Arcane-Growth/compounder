@@ -166,6 +166,50 @@ void main() {
     await target.db.close();
   });
 
+  test('an orphan habit completion fails the import with a readable message',
+      () async {
+    final prefs = await SharedPreferences.getInstance();
+    final target = await AppStore.open(prefs, path: otherDbPath);
+    final keepId = await target.createHabit('Keep', 'daily', 1);
+    await target.setHabitCompletion(keepId, DateTime(2026, 11, 8), true);
+
+    final orphan = File(p.join(docs.path, 'orphan-completion.json'));
+    await orphan.writeAsString(jsonEncode({
+      'format': 4,
+      'app': 'compounder',
+      'habits': [
+        {
+          'id': 1,
+          'name': 'Read',
+          'cadence': 'daily',
+          'target': 1,
+          'archived': 0,
+          'created_at': 0,
+        },
+      ],
+      'habitCompletions': [
+        {
+          'id': 1,
+          'habit_id': 7,
+          'day': '2026-11-08',
+          'count': 1,
+          'created_at': 0,
+        },
+      ],
+    }));
+
+    await expectLater(
+        BackupService.import(target, orphan.path),
+        throwsA(isA<BackupException>().having((e) => e.message, 'message',
+            contains('references habit 7, which is not in the file'))));
+
+    // The transaction rolled back: the local habit and its completion survive.
+    expect(await target.db.query('habits'), hasLength(1));
+    expect(await target.db.query('habit_completions'), hasLength(1));
+    expect(target.habits.single.name, 'Keep');
+    await target.db.close();
+  });
+
   test('a backup from a newer format is refused', () async {
     final prefs = await SharedPreferences.getInstance();
     final target = await AppStore.open(prefs, path: otherDbPath);

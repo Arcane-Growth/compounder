@@ -837,7 +837,11 @@ class CreateHabitTool extends CoachTool {
   String summarize(Map<String, Object?> args) {
     final name = _safeText(args, 'name');
     final cadence = HabitCadence.parse(args['cadence']);
-    final target = _int(args, 'target') ?? 1;
+    // A mistyped target is rejected by [run]; show "?" rather than pretending
+    // the habit will be created with the default of 1 (review habit MINOR-1).
+    final target = args['target'] == null
+        ? '1'
+        : (_int(args, 'target')?.toString() ?? '?');
     return 'Create a habit: "${name.isEmpty ? 'habit' : name}" — '
         '$target× ${cadence == null ? 'per period' : _cadenceWord(cadence)}';
   }
@@ -850,16 +854,25 @@ class CreateHabitTool extends CoachTool {
     if (cadence == null) {
       return _jsonError('cadence must be daily, weekly or monthly');
     }
-    final target = _int(args, 'target') ?? 1;
-    if (target < 1) return _jsonError('target must be at least 1');
+    final target = _int(args, 'target');
+    // `_int` returns null for a JSON string ("3"), and defaulting that to 1
+    // silently created a habit with the wrong target while reporting
+    // `target: 1`. Only an absent key means "use the default"; a present but
+    // non-integer value is an error, matching update_habit (review habit
+    // MINOR-1).
+    if (args['target'] != null && target == null) {
+      return _jsonError('target must be an integer');
+    }
+    final effectiveTarget = target ?? 1;
+    if (effectiveTarget < 1) return _jsonError('target must be at least 1');
     try {
-      final id = await store.createHabit(name, cadence.name, target);
+      final id = await store.createHabit(name, cadence.name, effectiveTarget);
       return jsonEncode({
         'ok': true,
         'id': id,
         'name': name,
         'cadence': cadence.name,
-        'target': target,
+        'target': effectiveTarget,
       });
     } on StoreException catch (e) {
       return _jsonError(e.message);

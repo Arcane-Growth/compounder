@@ -999,8 +999,10 @@ class AppStore extends ChangeNotifier {
   }
 
   /// Every habit's completions inside a local day range ([from] inclusive,
-  /// [to] exclusive), grouped by habit id. One query for the coach's status
-  /// tool instead of one per habit.
+  /// [to] exclusive), grouped by habit id. One query instead of one per habit.
+  ///
+  /// The coach's status tool reads the in-memory cache, so this serves range
+  /// reporting and the regression tests rather than the tool loop.
   Future<Map<int, List<HabitCompletion>>> habitCompletionsInRange(
       DateTime from, DateTime to) async {
     final rows = await db.query('habit_completions',

@@ -12,13 +12,56 @@ import 'widgets.dart';
 /// No reminders or scheduling engine: the user checks off the days they
 /// actually did the habit, and the screen reports progress for the period that
 /// contains today.
-class HabitsScreen extends StatelessWidget {
-  const HabitsScreen({super.key});
+class HabitsScreen extends StatefulWidget {
+  const HabitsScreen({super.key, this.now});
+
+  /// Injectable clock, so the regression test can resume on a new day without
+  /// waiting for real midnight. Defaults to [DateTime.now].
+  final DateTime Function()? now;
+
+  @override
+  State<HabitsScreen> createState() => _HabitsScreenState();
+}
+
+class _HabitsScreenState extends State<HabitsScreen>
+    with WidgetsBindingObserver {
+  /// The day the checklist is showing. Held in state rather than read in
+  /// [build]: an app left open across midnight would otherwise keep yesterday's
+  /// checklist until some unrelated rebuild happened.
+  DateTime _today = DateTime.now();
+
+  DateTime _now() => widget.now?.call() ?? DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    _today = _now();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // A phone locked overnight resumes on a new day; follow the calendar so the
+    // checkboxes and the progress line are not stale.
+    if (state == AppLifecycleState.resumed) _refreshToday();
+  }
+
+  void _refreshToday() {
+    final now = _now();
+    if (habitDayKey(now) == habitDayKey(_today)) return;
+    setState(() => _today = now);
+  }
 
   @override
   Widget build(BuildContext context) {
     final store = context.watch<AppStore>();
-    final today = DateTime.now();
+    final today = _today;
     final active = store.habits.where((h) => !h.archived).toList();
     final archived = store.habits.where((h) => h.archived).toList();
 
@@ -95,7 +138,8 @@ class HabitsScreen extends StatelessWidget {
         leading: Checkbox(
           key: ValueKey('habit-check-${habit.id}'),
           value: doneToday,
-          onChanged: (_) => store.toggleHabitCompletion(habit.id, today),
+          onChanged: (_) => _runWrite(
+              context, () => store.toggleHabitCompletion(habit.id, today)),
         ),
         title: Text(habit.name),
         subtitle: Text(
@@ -103,18 +147,20 @@ class HabitsScreen extends StatelessWidget {
           ' · streak ${progress.streak}',
           style: t.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
         ),
-        onTap: () => store.toggleHabitCompletion(habit.id, today),
+        onTap: () => _runWrite(
+            context, () => store.toggleHabitCompletion(habit.id, today)),
         trailing: PopupMenuButton<String>(
           key: ValueKey('habit-menu-${habit.id}'),
           tooltip: 'Habit actions',
-          onSelected: (value) {
+          onSelected: (value) async {
             switch (value) {
               case 'edit':
-                _editHabit(context, store, habit);
+                await _editHabit(context, store, habit);
               case 'archive':
-                store.updateHabit(habit.id, archived: true);
+                await _runWrite(context,
+                    () => store.updateHabit(habit.id, archived: true));
               case 'delete':
-                _deleteHabit(context, store, habit);
+                await _deleteHabit(context, store, habit);
             }
           },
           itemBuilder: (_) => const [
@@ -140,7 +186,8 @@ class HabitsScreen extends StatelessWidget {
             key: ValueKey('habit-restore-${habit.id}'),
             icon: const Icon(Icons.unarchive_outlined),
             tooltip: 'Restore habit',
-            onPressed: () => store.updateHabit(habit.id, archived: false),
+            onPressed: () => _runWrite(
+                context, () => store.updateHabit(habit.id, archived: false)),
           ),
           IconButton(
             key: ValueKey('habit-delete-${habit.id}'),
@@ -152,6 +199,25 @@ class HabitsScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Runs a store write from a UI callback and reports a failure to the user.
+///
+/// The callbacks used to fire the write and drop the future, so a
+/// [StoreException] vanished without a trace (review habit MINOR-3).
+Future<void> _runWrite(
+    BuildContext context, Future<void> Function() write) async {
+  String? message;
+  try {
+    await write();
+  } on StoreException catch (e) {
+    message = e.message;
+  } catch (_) {
+    message = 'Could not save that change.';
+  }
+  if (message == null || !context.mounted) return;
+  ScaffoldMessenger.of(context)
+      .showSnackBar(SnackBar(content: Text(message)));
 }
 
 /// Add ([habit] null) or edit a habit. Validation lives here so the dialog can
@@ -231,7 +297,9 @@ Future<void> _editHabit(
                 }
                 if (context.mounted) Navigator.pop(context);
               } on StoreException catch (e) {
-                setDialogState(() => error = e.message);
+                // The dialog can be dismissed while the write is in flight;
+                // setDialogState on a disposed State throws.
+                if (context.mounted) setDialogState(() => error = e.message);
               }
             },
             child: const Text('Save'),
@@ -262,5 +330,7 @@ Future<void> _deleteHabit(
       ],
     ),
   );
-  if (confirmed == true) await store.deleteHabit(habit.id);
+  if (confirmed == true && context.mounted) {
+    await _runWrite(context, () => store.deleteHabit(habit.id));
+  }
 }

@@ -443,15 +443,6 @@ class Habit {
         archived: (m['archived'] as int) == 1,
         createdAt: m['created_at'] as int,
       );
-
-  Map<String, Object?> toMap() => {
-        if (id != 0) 'id': id,
-        'name': name,
-        'cadence': cadence,
-        'target': target,
-        'archived': archived ? 1 : 0,
-        'created_at': createdAt,
-      };
 }
 
 /// One checked-off day for a habit. [day] is a local `YYYY-MM-DD` key, not an
@@ -479,12 +470,4 @@ class HabitCompletion {
         count: m['count'] as int,
         createdAt: m['created_at'] as int,
       );
-
-  Map<String, Object?> toMap() => {
-        if (id != 0) 'id': id,
-        'habit_id': habitId,
-        'day': day,
-        'count': count,
-        'created_at': createdAt,
-      };
 }

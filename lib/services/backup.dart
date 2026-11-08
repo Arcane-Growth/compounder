@@ -271,10 +271,28 @@ class BackupService {
       // are inserted verbatim: every habit row was deleted above, so there is
       // nothing on this device for them to collide with, and the completions
       // keep pointing at the same habit.
-      for (final r in rows('habits')) {
+      final habitRows = rows('habits');
+      for (final r in habitRows) {
         await insertRow('habits', r);
       }
+      // A completion that references a habit the file does not carry would hit
+      // the FK and surface as a raw SQLite constraint error. Check it up front
+      // so the user gets a message they can act on (review habit MINOR-4). The
+      // check is only sound when every habit row carries an int id: a row
+      // without one gets a fresh id from SQLite, so the file's ids cannot be
+      // trusted and the FK fallback below reports the problem instead.
+      final habitIds = <int>{
+        for (final r in habitRows)
+          if (r['id'] is int) r['id'] as int,
+      };
+      final idsAreStable = habitIds.length == habitRows.length;
       for (final r in rows('habitCompletions')) {
+        final habitId = r['habit_id'];
+        if (idsAreStable && habitId is int && !habitIds.contains(habitId)) {
+          throw BackupException(
+              'Backup file is malformed: a habit completion references habit '
+              '$habitId, which is not in the file.');
+        }
         await insertRow('habit_completions', r);
       }
       for (final entry in {

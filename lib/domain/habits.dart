@@ -115,7 +115,6 @@ class HabitProgress {
   });
 
   bool get met => completedDays >= target;
-  double get fraction => target <= 0 ? 0 : (completedDays / target).clamp(0, 1);
 }
 
 /// Counts completed days inside [period] from [completions].

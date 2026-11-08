@@ -100,7 +100,27 @@ void main() {
       // A non-string name must not raise a _TypeError.
       expectError(await tool.run({'name': 42, 'cadence': 'daily'}));
       expectError(await tool.run({'name': 'Read', 'cadence': 7}));
+      // A numeric string is not an integer: reject it instead of silently
+      // creating the habit with target 1 (review habit MINOR-1).
+      expectError(
+          await tool.run({'name': 'Read', 'cadence': 'daily', 'target': '3'}));
+      expectError(
+          await tool.run({'name': 'Read', 'cadence': 'daily', 'target': true}));
       expect(store.habits, isEmpty);
+    });
+
+    test('create_habit defaults the target to 1 only when it is absent',
+        () async {
+      final tool = CreateHabitTool(store);
+      final created = jsonDecode(
+          await tool.run({'name': 'Read', 'cadence': 'daily'})) as Map;
+      expect(created['target'], 1);
+      expect(store.habits.single.target, 1);
+      // The approval preview must not claim the default when the argument is
+      // present but mistyped.
+      expect(
+          tool.summarize({'name': 'Read', 'cadence': 'daily', 'target': '3'}),
+          contains('?×'));
     });
 
     test('update_habit rejects missing/unknown ids and bad fields', () async {

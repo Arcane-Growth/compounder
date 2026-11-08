@@ -180,4 +180,50 @@ void main() {
     expect(store.habitCompletions, isEmpty);
     expect(find.text('No habits yet'), findsOneWidget);
   });
+
+  testWidgets('a failed write surfaces a message instead of vanishing',
+      (tester) async {
+    await tester.runAsync(() async {
+      await store.createHabit('Read', 'daily', 1);
+    });
+    // Delete the row behind the store's back: the cache still lists the habit,
+    // so the toggle hits the store's "no habit" guard.
+    await tester.runAsync(() async {
+      await store.db.delete('habits', where: 'id = ?', whereArgs: [1]);
+    });
+    await tallViewport(tester);
+    await tester.pumpWidget(host());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('habit-check-1')));
+    await settle(tester);
+
+    expect(find.text('No habit with id 1.'), findsOneWidget,
+        reason: 'the StoreException must reach the user, not be dropped');
+  });
+
+  testWidgets('resuming on a new day refreshes the checklist date',
+      (tester) async {
+    await tester.runAsync(() async {
+      await store.createHabit('Read', 'daily', 1);
+    });
+    var clock = DateTime(2026, 11, 8, 23, 50);
+    await tallViewport(tester);
+    await tester.pumpWidget(ChangeNotifierProvider<AppStore>.value(
+      value: store,
+      child: MaterialApp(home: HabitsScreen(now: () => clock)),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('0/1 today · streak 0'), findsOneWidget);
+
+    // The app was backgrounded overnight and resumes on the next day.
+    clock = DateTime(2026, 11, 9, 0, 10);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('habit-check-1')));
+    await settle(tester);
+    expect(store.habitCompletions.single.day, '2026-11-09',
+        reason: 'the checklist must follow the calendar, not the build date');
+  });
 }
