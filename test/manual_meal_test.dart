@@ -116,6 +116,10 @@ void main() {
     await tester.pumpWidget(
         host(ShellNav(openDrawer: () {}, child: const MacrosTab())));
     await tester.pumpAndSettle();
+    // The weekly tracker card sits above the day's meal list, so on the test
+    // viewport the list starts below the fold.
+    await tester.scrollUntilVisible(find.text('Chicken bowl'), 200,
+        scrollable: find.byType(Scrollable).first);
     expect(find.text('Chicken bowl'), findsOneWidget);
   });
 

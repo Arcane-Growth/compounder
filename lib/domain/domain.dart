@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:intl/intl.dart';
 
+import '../data/models.dart';
+
 // ---------------------------------------------------------------- fitness
 
 double epley(double weightKg, int reps) {
@@ -328,6 +330,11 @@ class Finance {
 DateTime previousDayKey(DateTime day) =>
     DateTime(day.year, day.month, day.day - 1);
 
+/// Next calendar day at local midnight. Same calendar-arithmetic rule as
+/// [previousDayKey]: a 24-hour addition lands on 01:00 across a spring-forward
+/// boundary, so it is not a day key.
+DateTime nextDayKey(DateTime day) => DateTime(day.year, day.month, day.day + 1);
+
 class Mind {
   static double? averageMood(List<int> moods) =>
       moods.isEmpty ? null : moods.reduce((a, b) => a + b) / moods.length;
@@ -354,4 +361,187 @@ class Mind {
           .where((s) => !s.$1.isBefore(start) && s.$1.isBefore(end))
           .map((s) => s.$2)
           .fold(0, (a, b) => a + b);
+}
+
+// ---------------------------------------------------------------- nutrition
+
+/// Local midnight for [day]: the inclusive lower bound of that calendar day.
+DateTime localMidnight(DateTime day) => DateTime(day.year, day.month, day.day);
+
+/// Monday of the week containing [day], at local midnight.
+///
+/// Calendar arithmetic only. `DateTime(y, m, d - n)` stays on a day boundary
+/// across a DST transition, where `Duration(days: n)` lands on 23:00 or 01:00
+/// and would silently widen or truncate the week.
+DateTime weekStartFor(DateTime day) =>
+    DateTime(day.year, day.month, day.day - (day.weekday - DateTime.monday));
+
+/// Meals inside the half-open local-day window
+/// `[localMidnight(day), localMidnight(day + 1))`.
+///
+/// The exclusive upper bound is what keeps the next day's 00:00 — and any
+/// future-dated row — out of the day's totals. The lower bound is inclusive,
+/// so a meal logged at exactly 00:00 belongs to that day.
+List<Meal> mealsOnDay(List<Meal> meals, DateTime day) {
+  final start = localMidnight(day).millisecondsSinceEpoch;
+  final end = nextDayKey(day).millisecondsSinceEpoch;
+  return meals.where((m) => m.timestamp >= start && m.timestamp < end).toList();
+}
+
+/// Calories and macros summed over one local day.
+class NutritionTotals {
+  final double calories, protein, carbs, fat;
+  const NutritionTotals({
+    this.calories = 0,
+    this.protein = 0,
+    this.carbs = 0,
+    this.fat = 0,
+  });
+
+  NutritionTotals operator +(NutritionTotals other) => NutritionTotals(
+        calories: calories + other.calories,
+        protein: protein + other.protein,
+        carbs: carbs + other.carbs,
+        fat: fat + other.fat,
+      );
+}
+
+/// Daily targets the weekly tracker compares against. Mirrors the persisted
+/// `MacroGoals` (lib/data/store.dart) without importing the store into the
+/// domain layer.
+class NutritionGoals {
+  final double calories, protein, carbs, fat;
+  const NutritionGoals({
+    this.calories = 2000,
+    this.protein = 150,
+    this.carbs = 250,
+    this.fat = 70,
+  });
+}
+
+/// The metric the weekly tracker is currently charting.
+enum NutritionMetric {
+  calories('Calories', 'kcal'),
+  protein('Protein', 'g'),
+  carbs('Carbs', 'g'),
+  fat('Fat', 'g');
+
+  const NutritionMetric(this.label, this.unit);
+  final String label;
+  final String unit;
+
+  double valueOf(NutritionTotals totals) => switch (this) {
+        NutritionMetric.calories => totals.calories,
+        NutritionMetric.protein => totals.protein,
+        NutritionMetric.carbs => totals.carbs,
+        NutritionMetric.fat => totals.fat,
+      };
+
+  double goalOf(NutritionGoals goals) => switch (this) {
+        NutritionMetric.calories => goals.calories,
+        NutritionMetric.protein => goals.protein,
+        NutritionMetric.carbs => goals.carbs,
+        NutritionMetric.fat => goals.fat,
+      };
+}
+
+/// One day of a week: its totals, whether anything was logged, and the signed
+/// distance from the goal for every metric (positive = over).
+class NutritionDay {
+  final DateTime day;
+  final NutritionTotals totals;
+  final bool logged;
+  final Map<NutritionMetric, double> deltas;
+
+  const NutritionDay({
+    required this.day,
+    required this.totals,
+    required this.logged,
+    required this.deltas,
+  });
+
+  double deltaFor(NutritionMetric metric) => deltas[metric] ?? 0;
+
+  bool isOver(NutritionMetric metric) => deltaFor(metric) > 0;
+}
+
+/// Calories and macros summed over the local day [day].
+NutritionTotals nutritionTotalsForDay(List<Meal> meals, DateTime day) =>
+    _totalsOf(mealsOnDay(meals, day));
+
+NutritionTotals _totalsOf(Iterable<Meal> meals) {
+  var totals = const NutritionTotals();
+  for (final meal in meals) {
+    totals = totals +
+        NutritionTotals(
+          calories: meal.calories,
+          protein: meal.protein,
+          carbs: meal.carbs,
+          fat: meal.fat,
+        );
+  }
+  return totals;
+}
+
+/// Totals and goal deltas for a single local day.
+NutritionDay nutritionDayFor(
+    List<Meal> meals, DateTime day, NutritionGoals goals) {
+  final inDay = mealsOnDay(meals, day);
+  final totals = _totalsOf(inDay);
+  return NutritionDay(
+    day: localMidnight(day),
+    totals: totals,
+    logged: inDay.isNotEmpty,
+    deltas: {
+      for (final metric in NutritionMetric.values)
+        metric: metric.valueOf(totals) - metric.goalOf(goals),
+    },
+  );
+}
+
+/// Seven consecutive days starting at the Monday of [weekStart]'s week.
+///
+/// Each bucket is built with calendar arithmetic, so a week containing a DST
+/// transition still yields seven real days with correct local boundaries.
+List<NutritionDay> weeklyNutrition(
+    List<Meal> meals, DateTime weekStart, NutritionGoals goals) {
+  final monday = weekStartFor(weekStart);
+  return [
+    for (var i = 0; i < 7; i++)
+      nutritionDayFor(
+          meals, DateTime(monday.year, monday.month, monday.day + i), goals),
+  ];
+}
+
+/// How many days of a week landed over, under or exactly on the goal for
+/// [metric], and how many had nothing logged.
+class NutritionWeekSummary {
+  final int over, under, onTarget, unlogged;
+  const NutritionWeekSummary({
+    required this.over,
+    required this.under,
+    required this.onTarget,
+    required this.unlogged,
+  });
+}
+
+NutritionWeekSummary summarizeWeek(
+    List<NutritionDay> days, NutritionMetric metric) {
+  var over = 0, under = 0, onTarget = 0, unlogged = 0;
+  for (final day in days) {
+    if (!day.logged) {
+      unlogged++;
+      continue;
+    }
+    final delta = day.deltaFor(metric);
+    if (delta > 0) {
+      over++;
+    } else if (delta < 0) {
+      under++;
+    } else {
+      onTarget++;
+    }
+  }
+  return NutritionWeekSummary(
+      over: over, under: under, onTarget: onTarget, unlogged: unlogged);
 }

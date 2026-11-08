@@ -1,6 +1,8 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
@@ -18,19 +20,84 @@ import 'widgets.dart';
 /// How the user chose to log a meal from the "Log meal" sheet.
 enum _MealSource { camera, gallery, manual }
 
-class MacrosTab extends StatelessWidget {
+class MacrosTab extends StatefulWidget {
   const MacrosTab({super.key});
+
+  @override
+  State<MacrosTab> createState() => _MacrosTabState();
+}
+
+class _MacrosTabState extends State<MacrosTab> {
+  /// The day whose totals and meal list are shown. Defaults to today and is
+  /// clamped to today: future days have nothing logged yet.
+  DateTime _day = localMidnight(DateTime.now());
+
+  /// Monday of the week shown in the tracker. It follows [_day] so the day view
+  /// and the week view can never disagree about which week is on screen.
+  DateTime _weekStart = weekStartFor(DateTime.now());
+
+  NutritionMetric _metric = NutritionMetric.calories;
+
+  DateTime get _today => localMidnight(DateTime.now());
+
+  bool get _isToday => _day == _today;
+
+  /// Steps the selected day by [delta] calendar days. Calendar arithmetic, not
+  /// `Duration(days: 1)`: across a DST boundary a 24-hour step lands on 23:00
+  /// or 01:00 and stops being a day key.
+  void _stepDay(int delta) {
+    final next = DateTime(_day.year, _day.month, _day.day + delta);
+    if (next.isAfter(_today)) return;
+    setState(() {
+      _day = next;
+      _weekStart = weekStartFor(next);
+    });
+  }
+
+  /// Steps the shown week by [delta] weeks and keeps the day view on the same
+  /// weekday inside it, clamped to today so a future day is never selected.
+  void _stepWeek(int delta) {
+    final nextWeek =
+        DateTime(_weekStart.year, _weekStart.month, _weekStart.day + 7 * delta);
+    if (nextWeek.isAfter(weekStartFor(_today))) return;
+    var nextDay = DateTime(_day.year, _day.month, _day.day + 7 * delta);
+    if (nextDay.isAfter(_today)) nextDay = _today;
+    setState(() {
+      _weekStart = weekStartFor(nextWeek);
+      _day = nextDay;
+    });
+  }
+
+  Future<void> _pickDay() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _day,
+      firstDate: DateTime(2000),
+      lastDate: _today,
+    );
+    if (picked == null || !mounted) return;
+    final day = localMidnight(picked);
+    setState(() {
+      _day = day;
+      _weekStart = weekStartFor(day);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final store = context.watch<AppStore>();
     final scheme = Theme.of(context).colorScheme;
     final t = Theme.of(context).textTheme;
-    final totals = store.todayTotals();
     final goals = store.goals;
-    final now = DateTime.now();
-    final startOfDay = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
-    final todays = store.meals.where((m) => m.timestamp >= startOfDay).toList();
+    final nutritionGoals = NutritionGoals(
+      calories: goals.calories,
+      protein: goals.protein,
+      carbs: goals.carbs,
+      fat: goals.fat,
+    );
+    final day = nutritionDayFor(store.meals, _day, nutritionGoals);
+    final dayMeals = mealsOnDay(store.meals, _day);
+    final week = weeklyNutrition(store.meals, _weekStart, nutritionGoals);
 
     return Scaffold(
       appBar: AppBar(
@@ -61,30 +128,36 @@ class MacrosTab extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 96),
         children: [
+          _dayNavCard(context),
+          const SizedBox(height: 12),
           Card(
             color: scheme.surfaceContainerLow,
             child: Padding(
               padding: const EdgeInsets.all(20),
               child: Column(children: [
-                _goalRow(context, 'Calories', totals.calories, goals.calories, 'kcal'),
-                _goalRow(context, 'Protein', totals.protein, goals.protein, 'g'),
-                _goalRow(context, 'Carbs', totals.carbs, goals.carbs, 'g'),
-                _goalRow(context, 'Fat', totals.fat, goals.fat, 'g'),
+                _goalRow(context, 'Calories', day.totals.calories,
+                    goals.calories, 'kcal'),
+                _goalRow(context, 'Protein', day.totals.protein, goals.protein,
+                    'g'),
+                _goalRow(context, 'Carbs', day.totals.carbs, goals.carbs, 'g'),
+                _goalRow(context, 'Fat', day.totals.fat, goals.fat, 'g'),
               ]),
             ),
           ),
           const SizedBox(height: 20),
-          const SectionHeader("Today"),
+          _weeklyCard(context, week, nutritionGoals),
+          const SizedBox(height: 20),
+          SectionHeader(_isToday ? 'Today' : formatDate(_day.millisecondsSinceEpoch)),
           const SizedBox(height: 8),
-          if (todays.isEmpty)
-            const EmptyState(
-              title: 'Nothing logged yet today',
+          if (dayMeals.isEmpty)
+            EmptyState(
+              title: 'Nothing logged on this day',
               subtitle:
-                  'Tap "Log meal" to photograph a plate or enter the macros by hand.',
+                  'Tap "Log meal" to add one — you can back-date it to this day.',
               icon: Icons.restaurant,
             )
           else
-            ...todays.map((meal) => CardRow(
+            ...dayMeals.map((meal) => CardRow(
                   icon: Icons.dining,
                   title: meal.dish,
                   subtitle: _mealSubtitle(meal),
@@ -98,6 +171,55 @@ class MacrosTab extends StatelessWidget {
                   onLongPress: () => _mealActions(context, store, meal),
                 )),
         ],
+      ),
+    );
+  }
+
+  /// Date header: previous/next day, plus a calendar picker. Next-day is
+  /// disabled on today so the user cannot wander into empty future days.
+  Widget _dayNavCard(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final t = Theme.of(context).textTheme;
+    return Card(
+      color: scheme.surfaceContainerLow,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+        child: Row(children: [
+          IconButton(
+            key: const ValueKey('macros-prev-day'),
+            tooltip: 'Previous day',
+            icon: const Icon(Icons.chevron_left),
+            onPressed: () => _stepDay(-1),
+          ),
+          Expanded(
+            child: InkWell(
+              onTap: _pickDay,
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Column(children: [
+                  Text(formatDate(_day.millisecondsSinceEpoch),
+                      style: t.titleMedium, textAlign: TextAlign.center),
+                  if (_isToday)
+                    Text('Today',
+                        style: t.labelSmall?.copyWith(color: scheme.primary)),
+                ]),
+              ),
+            ),
+          ),
+          IconButton(
+            key: const ValueKey('macros-next-day'),
+            tooltip: 'Next day',
+            icon: const Icon(Icons.chevron_right),
+            onPressed: _isToday ? null : () => _stepDay(1),
+          ),
+          IconButton(
+            key: const ValueKey('macros-pick-day'),
+            tooltip: 'Pick a date',
+            icon: const Icon(Icons.calendar_today_outlined),
+            onPressed: _pickDay,
+          ),
+        ]),
       ),
     );
   }
@@ -123,6 +245,186 @@ class MacrosTab extends StatelessWidget {
           ),
         ),
       ]),
+    );
+  }
+
+  /// Weekly tracker: seven bars against the saved goal for the selected
+  /// metric, a numeric over/under summary, and one labelled chip per day.
+  ///
+  /// Over/under is never conveyed by colour alone: every bar has a chip with a
+  /// signed number and a ▲/▼/= glyph, and each chip carries a semantic label
+  /// ("Monday: 2100 kcal, 100 over goal") that mirrors the bar.
+  Widget _weeklyCard(
+      BuildContext context, List<NutritionDay> week, NutritionGoals goals) {
+    final scheme = Theme.of(context).colorScheme;
+    final t = Theme.of(context).textTheme;
+    final isCurrentWeek = _weekStart == weekStartFor(_today);
+    final goal = _metric.goalOf(goals);
+    final values = [for (final d in week) _metric.valueOf(d.totals)];
+    final peak = [goal, ...values].reduce(math.max);
+    final maxY = peak <= 0 ? 1.0 : peak * 1.15;
+    final summary = summarizeWeek(week, _metric);
+
+    return Card(
+      color: scheme.surfaceContainerLow,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Expanded(
+              child: Text(
+                  'Week of ${formatDate(_weekStart.millisecondsSinceEpoch)}',
+                  style: t.titleMedium),
+            ),
+            IconButton(
+              key: const ValueKey('macros-prev-week'),
+              tooltip: 'Previous week',
+              icon: const Icon(Icons.chevron_left),
+              onPressed: () => _stepWeek(-1),
+            ),
+            IconButton(
+              key: const ValueKey('macros-next-week'),
+              tooltip: 'Next week',
+              icon: const Icon(Icons.chevron_right),
+              onPressed: isCurrentWeek ? null : () => _stepWeek(1),
+            ),
+          ]),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            for (final metric in NutritionMetric.values)
+              ChoiceChip(
+                key: ValueKey('macros-metric-${metric.name}'),
+                label: Text(metric.label),
+                selected: _metric == metric,
+                onSelected: (_) => setState(() => _metric = metric),
+              ),
+          ]),
+          const SizedBox(height: 12),
+          Semantics(
+            container: true,
+            label: 'Weekly ${_metric.label} chart, ${week.length} days, '
+                'goal ${trimZero(goal)} ${_metric.unit} per day',
+            child: ExcludeSemantics(
+              child: SizedBox(
+                height: 150,
+                child: BarChart(
+                  BarChartData(
+                    minY: 0,
+                    maxY: maxY,
+                    alignment: BarChartAlignment.spaceAround,
+                    barGroups: [
+                      for (var i = 0; i < week.length; i++)
+                        BarChartGroupData(x: i, barRods: [
+                          BarChartRodData(
+                            toY: values[i],
+                            width: 14,
+                            borderRadius: BorderRadius.circular(3),
+                            // The part above the goal is drawn in the error
+                            // colour; the chip below carries the same fact as
+                            // text, so colour is never the only signal.
+                            rodStackItems: values[i] > goal
+                                ? [
+                                    BarChartRodStackItem(0, goal, scheme.primary),
+                                    BarChartRodStackItem(
+                                        goal, values[i], scheme.error),
+                                  ]
+                                : [BarChartRodStackItem(0, values[i], scheme.primary)],
+                          ),
+                        ]),
+                    ],
+                    extraLinesData: ExtraLinesData(horizontalLines: [
+                      HorizontalLine(
+                        y: goal,
+                        color: scheme.onSurfaceVariant,
+                        strokeWidth: 1,
+                        dashArray: const [4, 4],
+                        label: HorizontalLineLabel(
+                          show: true,
+                          alignment: Alignment.topRight,
+                          style: TextStyle(
+                              fontSize: 9, color: scheme.onSurfaceVariant),
+                          labelResolver: (_) => 'goal ${trimZero(goal)}',
+                        ),
+                      ),
+                    ]),
+                    titlesData: FlTitlesData(
+                      leftTitles: const AxisTitles(),
+                      topTitles: const AxisTitles(),
+                      rightTitles: const AxisTitles(),
+                      bottomTitles: AxisTitles(
+                        sideTitles: SideTitles(
+                          showTitles: true,
+                          reservedSize: 18,
+                          getTitlesWidget: (value, meta) {
+                            final i = value.toInt();
+                            if (i < 0 || i >= week.length) {
+                              return const SizedBox.shrink();
+                            }
+                            return Text(_weekdayShort(week[i].day),
+                                style: const TextStyle(fontSize: 10));
+                          },
+                        ),
+                      ),
+                    ),
+                    gridData: const FlGridData(show: false),
+                    borderData: FlBorderData(show: false),
+                    barTouchData: BarTouchData(enabled: false),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '${summary.over} over · ${summary.under} under · '
+            '${summary.unlogged} not logged',
+            style: t.labelLarge,
+          ),
+          const SizedBox(height: 8),
+          Wrap(spacing: 6, runSpacing: 6, children: [
+            for (final d in week) _dayChip(context, d),
+          ]),
+        ]),
+      ),
+    );
+  }
+
+  /// Text counterpart of one bar: day, value and signed over/under.
+  Widget _dayChip(BuildContext context, NutritionDay day) {
+    final scheme = Theme.of(context).colorScheme;
+    final value = _metric.valueOf(day.totals);
+    final delta = day.deltaFor(_metric);
+    final weekday = _weekdayShort(day.day);
+    final longDay = _weekdayLong(day.day);
+    final unit = _metric.unit;
+    final String text;
+    final String semantics;
+    if (!day.logged) {
+      text = '$weekday —';
+      semantics = '$longDay: nothing logged';
+    } else if (delta > 0) {
+      text = '$weekday ${trimZero(value)} ▲${trimZero(delta)}';
+      semantics =
+          '$longDay: ${trimZero(value)} $unit, ${trimZero(delta)} over goal';
+    } else if (delta < 0) {
+      text = '$weekday ${trimZero(value)} ▼${trimZero(-delta)}';
+      semantics =
+          '$longDay: ${trimZero(value)} $unit, ${trimZero(-delta)} under goal';
+    } else {
+      text = '$weekday ${trimZero(value)} =';
+      semantics = '$longDay: ${trimZero(value)} $unit, exactly on goal';
+    }
+    return Semantics(
+      container: true,
+      label: semantics,
+      excludeSemantics: true,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(text, style: Theme.of(context).textTheme.labelSmall),
+      ),
     );
   }
 
@@ -157,8 +459,11 @@ class MacrosTab extends StatelessWidget {
     if (source == null || !context.mounted) return;
 
     if (source == _MealSource.manual) {
-      await Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const ManualMealScreen()));
+      // Pre-fill the day being viewed so a meal logged from a past date lands
+      // on that date instead of silently vanishing into today.
+      await Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => ManualMealScreen(
+              initialDate: _isToday ? null : _day)));
       return;
     }
 
@@ -223,6 +528,21 @@ class MacrosTab extends StatelessWidget {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 }
+
+const _weekdayShortNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const _weekdayLongNames = [
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+  'Sunday'
+];
+
+String _weekdayShort(DateTime day) => _weekdayShortNames[day.weekday - 1];
+String _weekdayLong(DateTime day) => _weekdayLongNames[day.weekday - 1];
+
 
 class _AnalyzingSheet extends StatelessWidget {
   const _AnalyzingSheet();

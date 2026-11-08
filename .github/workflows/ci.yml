@@ -39,10 +39,10 @@ jobs:
 
       - name: Test (UTC, non-DST files)
         # The pinned zone above means the suite never runs with local time equal
-        # to UTC. This second pass covers that gap for everything except the two
+        # to UTC. This second pass covers that gap for everything except the
         # files whose setUpAll precondition requires a real DST transition
-        # (audit m3-dst NIT-3).
+        # (audit m3-dst NIT-3, plus the nutrition week buckets).
         env:
           TZ: UTC
         run: |
-          flutter test $(ls test/*_test.dart | grep -v -e dst_day_windows_test.dart -e digest_dst_test.dart)
+          flutter test $(ls test/*_test.dart | grep -v -e dst_day_windows_test.dart -e digest_dst_test.dart -e nutrition_dst_test.dart)

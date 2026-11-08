@@ -84,7 +84,11 @@ class MacroCalorieSummary extends StatelessWidget {
 /// Saves a [Meal] with an empty `imagePath` and `isAuto: false`, which is the
 /// same shape coach-logged meals use, so no schema change is involved.
 class ManualMealScreen extends StatefulWidget {
-  const ManualMealScreen({super.key});
+  /// Day to pre-fill when the Macros tab is showing a past date. Null means
+  /// "today, at the current time".
+  final DateTime? initialDate;
+
+  const ManualMealScreen({super.key, this.initialDate});
 
   @override
   State<ManualMealScreen> createState() => _ManualMealScreenState();
@@ -97,8 +101,9 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
   final TextEditingController carbs = TextEditingController();
   final TextEditingController fat = TextEditingController();
 
-  /// Defaults to now; the date picker can back-date the meal.
-  DateTime timestamp = DateTime.now();
+  /// Defaults to now; the date picker can back-date the meal. When the Macros
+  /// tab is showing a past day, that day is pre-filled instead.
+  late DateTime timestamp = widget.initialDate ?? DateTime.now();
 
   double get _protein => parseMacroGrams(protein.text);
   double get _carbs => parseMacroGrams(carbs.text);

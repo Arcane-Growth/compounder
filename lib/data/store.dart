@@ -701,18 +701,6 @@ class AppStore extends ChangeNotifier {
     await refreshAll();
   }
 
-  ({double calories, double protein, double carbs, double fat}) todayTotals() {
-    final now = DateTime.now();
-    final start = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
-    final todays = meals.where((m) => m.timestamp >= start);
-    return (
-      calories: todays.fold(0.0, (a, m) => a + m.calories),
-      protein: todays.fold(0.0, (a, m) => a + m.protein),
-      carbs: todays.fold(0.0, (a, m) => a + m.carbs),
-      fat: todays.fold(0.0, (a, m) => a + m.fat),
-    );
-  }
-
   // ------------------------------------------------------------ wealth
 
   Future<void> saveAccount(Account a) async {
