@@ -682,11 +682,15 @@ class _ElapsedTimerState extends State<_ElapsedTimer> {
     return Row(mainAxisSize: MainAxisSize.min, children: [
       Icon(Icons.timer_outlined, size: 14, color: scheme.primary),
       const SizedBox(width: 4),
-      Text(
-        '$label ${formatDuration(widget.startedAt, widget.endedAt)}',
-        style: t.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+      // The AppBar title is width-constrained; at 320dp with the Android
+      // maximum font scale the timer text must shrink rather than overflow.
+      Flexible(
+        child: Text(
+          '$label ${formatDuration(widget.startedAt, widget.endedAt)}',
+          style: t.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
       ),
     ]);
   }
