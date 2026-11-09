@@ -2,6 +2,10 @@
     xmlns:tools="http://schemas.android.com/tools">
     <!-- BYO-AI: the ONLY network access is to the endpoint the user configures. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Google Play Billing for the Compounder AI subscription. The billing
+         library's own manifest declares this too; it is repeated here so the
+         permission is visible in the app's manifest. -->
+    <uses-permission android:name="com.android.vending.BILLING"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
     <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>

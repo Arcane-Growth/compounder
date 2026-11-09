@@ -63,6 +63,41 @@ class ChatResult {
   const ChatResult(this.content, this.toolCalls);
 }
 
+/// A non-200 answer from the chat endpoint.
+///
+/// Carries the status and the gateway's error code so the UI can turn a quota
+/// rejection (HTTP 429, `quota_exceeded`) into a friendly upgrade message
+/// instead of a raw exception string.
+class ChatHttpException implements Exception {
+  final int statusCode;
+  final String? code;
+  final String body;
+
+  const ChatHttpException(this.statusCode, {this.code, this.body = ''});
+
+  bool get quotaExceeded => statusCode == 429;
+
+  @override
+  String toString() => 'Chat request failed ($statusCode)';
+}
+
+ChatHttpException _httpError(http.Response resp) {
+  String? code;
+  try {
+    final decoded = jsonDecode(resp.body);
+    if (decoded is Map) {
+      final error = decoded['error'];
+      if (error is Map && error['code'] is String) {
+        code = error['code'] as String;
+      }
+    }
+  } catch (_) {
+    // Non-JSON error body: the status code is all we have.
+  }
+  return ChatHttpException(resp.statusCode,
+      code: code, body: resp.body.substring(0, resp.body.length.clamp(0, 300)));
+}
+
 class ToolSpec {
   final String name;
   final String description;
@@ -100,7 +135,7 @@ class ChatClient {
         )
         .timeout(const Duration(seconds: 120));
     if (resp.statusCode != 200) {
-      throw Exception('Chat request failed (${resp.statusCode}): ${resp.body.substring(0, resp.body.length.clamp(0, 300))}');
+      throw _httpError(resp);
     }
     final choice = (jsonDecode(resp.body)['choices'] as List?)?.first as Map<String, Object?>?;
     if (choice == null) throw Exception('No choices in chat response');
@@ -185,7 +220,7 @@ Future<Draft> analyzeMealPhoto(ChatClient client, List<int> imageBytes, String m
       )
       .timeout(const Duration(seconds: 120));
   if (resp.statusCode != 200) {
-    throw Exception('Vision request failed (${resp.statusCode})');
+    throw _httpError(resp);
   }
   final content = ((jsonDecode(resp.body)['choices'] as List?)?.first['message']['content'] as String?) ?? '';
   return parseDraft(content);

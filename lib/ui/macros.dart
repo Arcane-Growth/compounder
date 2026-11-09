@@ -14,6 +14,7 @@ import '../data/models.dart';
 import '../data/store.dart';
 import '../domain/domain.dart';
 import '../llm/llm.dart';
+import '../llm/routing.dart';
 import 'drawer.dart';
 import 'meal_entry.dart';
 import 'widgets.dart';
@@ -564,9 +565,8 @@ class _MacrosTabState extends State<MacrosTab> {
       return;
     }
 
-    final ai = store.ai;
-    if (!ai.configured) {
-      _snack(context, 'Configure your AI endpoint in Settings to analyze meal photos.');
+    if (!aiConfigured(store)) {
+      _snack(context, aiNotConfiguredMessage(store.aiSource));
       return;
     }
     final picked = await ImagePicker().pickImage(
@@ -605,7 +605,7 @@ class _MacrosTabState extends State<MacrosTab> {
       await file.writeAsBytes(bytes);
 
       final draft = await analyzeMealPhoto(
-          ChatClient(ai.baseUrl, ai.apiKey, ai.model), bytes, 'image/jpeg', store.meals,
+          chatClientFor(store), bytes, 'image/jpeg', store.meals,
           note: description.isEmpty ? null : description);
       if (!context.mounted) return;
       Navigator.of(context).pop();
@@ -617,7 +617,7 @@ class _MacrosTabState extends State<MacrosTab> {
     } catch (e) {
       if (!context.mounted) return;
       Navigator.of(context).pop();
-      _snack(context, 'Analysis failed: $e');
+      _snack(context, friendlyAiError(e, store.aiSource));
     }
   }
 

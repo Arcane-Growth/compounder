@@ -9,26 +9,41 @@ import 'health/repository.dart';
 import 'health/service.dart';
 import 'seeder.dart';
 import 'services/notify.dart';
+import 'subscription/gateway.dart';
+import 'subscription/secrets.dart';
+import 'subscription/service.dart';
+import 'subscription/store_gateway.dart';
 import 'ui/shell.dart';
 import 'ui/widgets.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final prefs = await SharedPreferences.getInstance();
-  final store = await AppStore.open(prefs);
+  final secrets = SecureSecretStore();
+  final store = await AppStore.open(prefs, secretStore: secrets);
   await seedExercises(store);
   final notify = NotifyService();
   final healthRepo = HealthRepository(store.db);
   final health = HealthService(store: store, repository: healthRepo);
+  final subscription = SubscriptionService(
+    store: store,
+    storeGateway: InAppPurchaseStoreGateway(),
+    gateway: GatewayClient(),
+    secrets: secrets,
+  );
   // Never block startup on notification scheduling or health sync: both can
   // touch slow platform services, and the AI endpoint may be unreachable.
   unawaited(notify.rescheduleDaily(store));
   unawaited(health.syncIfDue());
+  // Pick up a purchase that was verified on a previous run, and refresh the
+  // quota so the coach shows the right number.
+  unawaited(subscription.init().then((_) => subscription.refreshEntitlement()));
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: store),
         ChangeNotifierProvider.value(value: health),
+        ChangeNotifierProvider.value(value: subscription),
         Provider.value(value: notify),
       ],
       child: const CompounderApp(),

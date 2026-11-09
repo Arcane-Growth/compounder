@@ -8,7 +8,7 @@ import 'package:timezone/timezone.dart' as tz;
 import '../data/models.dart';
 import '../data/store.dart';
 import '../domain/domain.dart';
-import '../llm/llm.dart';
+import '../llm/routing.dart';
 
 const _channel = AndroidNotificationDetails(
   'compounder_coach',
@@ -152,10 +152,9 @@ class NotifyService {
 
   static Future<String> polishDigest(AppStore store) async {
     final facts = buildDigest(store);
-    final ai = store.ai;
-    if (!ai.configured) return facts;
+    if (!aiConfigured(store)) return facts;
     try {
-      final polished = await ChatClient(ai.baseUrl, ai.apiKey, ai.model)
+      final polished = await chatClientFor(store)
           .simple(
             'You are Compounder\'s personal life coach writing a daily push notification. '
             'Rewrite the user\'s stats as one short, warm, motivating sentence (under 140 chars). '

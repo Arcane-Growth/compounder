@@ -8,6 +8,9 @@ import 'package:sqflite/sqflite.dart';
 
 import '../domain/domain.dart';
 import '../domain/habits.dart';
+import '../subscription/constants.dart';
+import '../subscription/entitlement.dart';
+import '../subscription/secrets.dart';
 import 'models.dart';
 
 class MacroGoals {
@@ -77,7 +80,14 @@ class AppStore extends ChangeNotifier {
 
   AppStore._(this.db, this.prefs);
 
-  static Future<AppStore> open(SharedPreferences prefs, {String? path}) async {
+  /// Gateway API key issued after a verified store purchase. Loaded from the
+  /// secret store at startup; never written to SharedPreferences directly.
+  String? _gatewayApiKey;
+  Entitlement? _entitlement;
+  String? _deviceToken;
+
+  static Future<AppStore> open(SharedPreferences prefs,
+      {String? path, SecretStore? secretStore}) async {
     path ??= p.join(await getDatabasesPath(), 'compounder.db');
     final db = await openDatabase(path,
         version: 10,
@@ -86,6 +96,16 @@ class AppStore extends ChangeNotifier {
         onUpgrade: _upgradeSchema);
     final store = AppStore._(db, prefs);
     await store.refreshAll();
+    // Subscription state is best-effort: a keystore failure must not stop the
+    // app from opening.
+    try {
+      final secrets = secretStore ?? PrefsSecretStore(prefs);
+      store._gatewayApiKey = await secrets.read(gatewayApiKeySecret);
+    } catch (_) {
+      store._gatewayApiKey = null;
+    }
+    store._entitlement = Entitlement.decodeCache(prefs.getString(prefEntitlement));
+    store._deviceToken = prefs.getString(prefDeviceToken);
     return store;
   }
 
@@ -424,6 +444,48 @@ class AppStore extends ChangeNotifier {
     await prefs.setString('apiKey', s.apiKey);
     await prefs.setString('model', s.model);
     notifyListeners();
+  }
+
+  // ------------------------------------------------------ Compounder AI
+
+  /// Which AI source the coach and vision calls use. Defaults to
+  /// [AiSource.byo], so every existing install keeps working with no
+  /// migration.
+  AiSource get aiSource =>
+      prefs.getString(prefAiSource) == aiSourceCompounder
+          ? AiSource.compounder
+          : AiSource.byo;
+
+  Future<void> setAiSource(AiSource source) async {
+    await prefs.setString(prefAiSource,
+        source == AiSource.compounder ? aiSourceCompounder : 'byo');
+    notifyListeners();
+  }
+
+  /// API key issued by the gateway. Held in memory and in the secret store;
+  /// this getter never touches disk.
+  String? get gatewayApiKey => _gatewayApiKey;
+
+  Future<void> saveGatewayKey(String? key) async {
+    _gatewayApiKey = key;
+    notifyListeners();
+  }
+
+  /// Last entitlement the gateway confirmed, cached so the app can show the
+  /// plan offline.
+  Entitlement? get entitlement => _entitlement;
+
+  Future<void> saveEntitlement(Entitlement entitlement) async {
+    _entitlement = entitlement;
+    await prefs.setString(prefEntitlement, entitlement.encodeCache());
+    notifyListeners();
+  }
+
+  String? get deviceToken => _deviceToken;
+
+  Future<void> saveDeviceToken(String token) async {
+    _deviceToken = token;
+    await prefs.setString(prefDeviceToken, token);
   }
 
   MacroGoals get goals => MacroGoals(

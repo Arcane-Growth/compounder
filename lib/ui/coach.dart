@@ -12,8 +12,11 @@ import '../data/store.dart';
 import '../health/service.dart';
 import '../llm/attachments.dart';
 import '../llm/llm.dart';
+import '../llm/routing.dart';
 import '../services/notify.dart';
+import '../subscription/entitlement.dart';
 import 'drawer.dart';
+import 'settings.dart';
 
 class CoachMessage {
   final String role;
@@ -61,6 +64,7 @@ class _CoachTabState extends State<CoachTab> {
   bool attaching = false;
   String? activeTool;
   String? error;
+  bool errorIsQuota = false;
   CoachAgent? agent;
   PendingApproval? pending;
 
@@ -133,10 +137,11 @@ class _CoachTabState extends State<CoachTab> {
     final store = context.read<AppStore>();
     final notify = context.read<NotifyService>();
     final health = context.read<HealthService>();
-    final ai = store.ai;
-    if (!ai.configured) {
-      setState(() => error =
-          'Set your AI endpoint and key in Settings before using the coach.');
+    if (!aiConfigured(store)) {
+      setState(() {
+        error = aiNotConfiguredMessage(store.aiSource);
+        errorIsQuota = false;
+      });
       return;
     }
     final sentAttachments = attachments;
@@ -153,13 +158,13 @@ class _CoachTabState extends State<CoachTab> {
       attachments = [];
       thinking = true;
       error = null;
+      errorIsQuota = false;
       activeTool = null;
     });
     try {
       final userMessage = await buildUserMessage(text, sentAttachments);
       agent ??= _buildAgent(store, notify, health);
-      final turn = await agent!.replyMessage(
-          ChatClient(ai.baseUrl, ai.apiKey, ai.model), userMessage);
+      final turn = await agent!.replyMessage(chatClientFor(store), userMessage);
       if (!mounted) return;
       _applyTurn(turn);
       notify.rescheduleDaily(store);
@@ -168,7 +173,8 @@ class _CoachTabState extends State<CoachTab> {
       setState(() {
         thinking = false;
         activeTool = null;
-        error = e.toString();
+        error = friendlyAiError(e, store.aiSource);
+        errorIsQuota = e is ChatHttpException && e.quotaExceeded;
       });
     }
     _scrollToBottom();
@@ -189,15 +195,15 @@ class _CoachTabState extends State<CoachTab> {
     final store = context.read<AppStore>();
     final notify = context.read<NotifyService>();
     if (agent == null || pending == null || thinking) return;
-    final ai = store.ai;
     setState(() {
       thinking = true;
       error = null;
+      errorIsQuota = false;
       activeTool = null;
       pending = null;
     });
     try {
-      final client = ChatClient(ai.baseUrl, ai.apiKey, ai.model);
+      final client = chatClientFor(store);
       final turn = approve ? await agent.approve(client) : await agent.decline(client);
       if (!mounted) return;
       _applyTurn(turn);
@@ -207,7 +213,8 @@ class _CoachTabState extends State<CoachTab> {
       setState(() {
         thinking = false;
         activeTool = null;
-        error = e.toString();
+        error = friendlyAiError(e, store.aiSource);
+        errorIsQuota = e is ChatHttpException && e.quotaExceeded;
       });
     }
     _scrollToBottom();
@@ -230,6 +237,10 @@ class _CoachTabState extends State<CoachTab> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final t = Theme.of(context).textTheme;
+    final store = context.watch<AppStore>();
+    final paid = store.aiSource == AiSource.compounder;
+    final entitlement = store.entitlement;
+    final quota = paid ? entitlement?.quota : null;
 
     return Scaffold(
       appBar: AppBar(
@@ -252,6 +263,7 @@ class _CoachTabState extends State<CoachTab> {
                       'Fresh start. What are we working on?')
                 ];
                 error = null;
+                errorIsQuota = false;
                 pending = null;
                 thinking = false;
               });
@@ -323,11 +335,41 @@ class _CoachTabState extends State<CoachTab> {
                       maxLines: 3,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(color: scheme.onErrorContainer)),
-                  trailing: TextButton(
-                      onPressed: () => setState(() => error = null),
-                      child: const Text('Dismiss')),
+                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                    if (errorIsQuota)
+                      TextButton(
+                        onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                                builder: (_) => const SettingsScreen())),
+                        child: const Text('Settings'),
+                      ),
+                    TextButton(
+                        onPressed: () => setState(() {
+                              error = null;
+                              errorIsQuota = false;
+                            }),
+                        child: const Text('Dismiss')),
+                  ]),
                 ),
               ),
+            ),
+          if (paid)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+              child: Row(children: [
+                Icon(Icons.auto_awesome, size: 14, color: scheme.primary),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    quota == null
+                        ? 'Compounder AI'
+                        : 'Compounder AI · ${quota.dailyRemaining} of '
+                            '${quota.dailyLimit} requests left today',
+                    style: t.labelMedium
+                        ?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                ),
+              ]),
             ),
           if (attachments.isNotEmpty)
             SizedBox(

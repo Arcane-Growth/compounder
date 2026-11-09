@@ -28,6 +28,20 @@ dependencies:
   pdfx: ^2.11.0
   health: ^13.3.2
   permission_handler: ^12.0.1
+  # Compounder AI subscription. in_app_purchase is the Flutter team's
+  # Play Billing / StoreKit wrapper; the two platform packages are pulled in
+  # transitively but pinned here so the Android (Billing 9.x) and iOS
+  # (StoreKit 2) implementations are explicit.
+  in_app_purchase: ^3.3.1
+  in_app_purchase_android: ^0.5.5
+  in_app_purchase_storekit: ^0.4.17
+  # The gateway API key is a bearer credential, so it is kept in the Android
+  # Keystore-backed encrypted store rather than plaintext SharedPreferences
+  # (the BYO token predates this and stays where it is).
+  flutter_secure_storage: ^11.2.0
+  # "Manage subscription" opens the store's subscription page; there is no
+  # in-app billing UI for cancelling.
+  url_launcher: ^6.3.3
 
 # health 13.3.2 and pdfx 2.11.0 still apply the Kotlin Gradle Plugin
 # unconditionally in their published Android build scripts, which Flutter

@@ -9,7 +9,10 @@ import '../health/categories.dart';
 import '../health/service.dart';
 import '../services/backup.dart';
 import '../services/notify.dart';
+import '../subscription/entitlement.dart';
+import '../subscription/service.dart';
 import 'health.dart';
+import 'subscription.dart';
 import 'widgets.dart';
 
 /// Version label shown in Settings. Kept as a constant so a test can pin it
@@ -100,6 +103,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final store = context.watch<AppStore>();
     final health = context.watch<HealthService>();
+    // Optional: the subscription service is only provided by the real app, so
+    // widget tests that pump Settings alone still work.
+    final subscription = context.watch<SubscriptionService?>();
     final notify = context.read<NotifyService>();
     final scheme = Theme.of(context).colorScheme;
     final t = Theme.of(context).textTheme;
@@ -107,12 +113,65 @@ class _SettingsScreenState extends State<SettingsScreen> {
     void snack(String text) => ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(text)));
 
+    void openSubscription() {
+      final service = subscription;
+      if (service == null) return;
+      Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => SubscriptionScreen(service: service)));
+    }
+
+    final entitlement = store.entitlement;
+    final subscribed = entitlement?.isActiveAt(DateTime.now()) ?? false;
+
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          const SectionHeader('Bring your own AI'),
+          const SectionHeader('AI source'),
+          const SizedBox(height: 8),
+          Card(
+            color: scheme.surfaceContainerLow,
+            child: Column(children: [
+              RadioGroup<AiSource>(
+                groupValue: store.aiSource,
+                onChanged: (value) async {
+                  if (value == null) return;
+                  await store.setAiSource(value);
+                },
+                child: Column(children: [
+                  RadioListTile<AiSource>(
+                    value: AiSource.compounder,
+                    title: const Text('Compounder AI (subscription)'),
+                    subtitle: Text(subscribed
+                        ? 'Active${entitlement?.currentPeriodEnd != null ? ' · renews ${formatDate(entitlement!.currentPeriodEnd!.millisecondsSinceEpoch)}' : ''}'
+                        : 'Not active — subscribe or restore a purchase.'),
+                  ),
+                  RadioListTile<AiSource>(
+                    value: AiSource.byo,
+                    title: const Text('Your own endpoint (BYO)'),
+                    subtitle: const Text(
+                        'Free and unlimited. Uses the endpoint configured below.'),
+                  ),
+                ]),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Row(children: [
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: subscription == null ? null : openSubscription,
+                      child: Text(subscribed
+                          ? 'Manage subscription'
+                          : 'View Compounder AI plans'),
+                    ),
+                  ),
+                ]),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 16),
+          const SectionHeader('Your own endpoint'),
           const SizedBox(height: 8),
           Card(
             color: scheme.surfaceContainerLow,
@@ -120,8 +179,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               padding: const EdgeInsets.all(20),
               child: Column(children: [
                 Text(
-                    'Your connection powers meal photo analysis and the coach. '
-                    'Data is sent only to this endpoint — never anywhere else.',
+                    'Used when "Your own endpoint" is selected above. It powers '
+                    'meal photo analysis and the coach. Data is sent only to '
+                    'this endpoint — never anywhere else.',
                     style:
                         t.bodyMedium?.copyWith(color: scheme.onSurfaceVariant)),
                 const SizedBox(height: 12),
