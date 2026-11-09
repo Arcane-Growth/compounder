@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:compounder/data/store.dart';
+import 'package:compounder/subscription/constants.dart';
 import 'package:compounder/subscription/entitlement.dart';
 import 'package:compounder/subscription/gateway.dart';
 import 'package:compounder/subscription/secrets.dart';
@@ -51,6 +52,10 @@ class FakeStoreGateway implements StoreGateway {
     final event = purchaseEvent;
     if (event != null) _events.add(event);
   }
+
+  /// Delivers an event on the purchase stream without going through [buy],
+  /// exactly as the real store does when a trial converts to a paid plan.
+  void emit(PurchaseEvent event) => _events.add(event);
 
   @override
   Future<void> restore() async {}
@@ -232,24 +237,43 @@ void main() {
         reason: 'quota applies during the trial');
   });
 
-  testWidgets('a trial that converted to paid renders the active copy',
+  testWidgets('a cached trial converts to paid without keeping the trial',
       (tester) async {
-    storeGateway.products = const [_monthly];
-    storeGateway.purchaseEvent = const PurchaseEvent(
+    final trialEnd = DateTime.now().add(const Duration(days: 7));
+    await store.saveEntitlement(_trial(end: trialEnd));
+    await pumpScreen(tester);
+
+    // Start from the cached trial, not the plans screen: this is the state a
+    // user is in when the trial converts.
+    expect(
+        find.text('Trial — ends ${formatDate(trialEnd.millisecondsSinceEpoch)}'),
+        findsOneWidget);
+    expect(find.text('Compounder AI is active'), findsNothing);
+
+    // The store reports the conversion on its purchase stream; the gateway
+    // verifies it as a paid active entitlement.
+    gateway.verifyResult =
+        GatewayEntitlement(apiKey: 'gw-key-123', entitlement: _active());
+    storeGateway.emit(const PurchaseEvent(
       outcome: PurchaseOutcome.purchased,
       productId: 'compounder_ai_monthly',
       token: 'play-token-abc',
-    );
-    gateway.verifyResult =
-        GatewayEntitlement(apiKey: 'gw-key-123', entitlement: _active());
-    await pumpScreen(tester);
-
-    await tester.tap(find.text('Subscribe'));
+    ));
     await tester.pumpAndSettle();
 
     expect(find.text('Compounder AI is active'), findsOneWidget);
     expect(find.textContaining('Renews:'), findsOneWidget);
     expect(find.textContaining('Trial'), findsNothing);
+
+    // The single cached slot now holds the paid entitlement: the trial was
+    // replaced, not kept alongside it.
+    final cached =
+        Entitlement.decodeCache(store.prefs.getString(prefEntitlement));
+    expect(cached, isNotNull);
+    expect(cached!.status, EntitlementStatus.active);
+    expect(cached.isTrialing, isFalse);
+    expect(store.entitlement!.status, EntitlementStatus.active);
+    expect(store.aiSource, AiSource.compounder);
   });
 
   testWidgets('an ended trial drops back to the plans, not a trial card',
@@ -282,6 +306,12 @@ void main() {
         entitlementSummary(
             _trial(end: now.subtract(const Duration(days: 1))), now),
         'Not active — subscribe or restore a purchase.');
+    expect(
+        entitlementSummary(
+            const Entitlement(status: EntitlementStatus.trialing), now),
+        'Trial',
+        reason: 'a missing end date is a dropped field, not an expiry, so the '
+            'app cannot invent a date');
   });
 
   test('the settings summary reports a past-due grace window, not active', () {

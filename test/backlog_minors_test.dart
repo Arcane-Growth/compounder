@@ -7,10 +7,15 @@ import 'package:compounder/health/repository.dart';
 import 'package:compounder/health/service.dart';
 import 'package:compounder/llm/llm.dart';
 import 'package:compounder/seeder.dart';
+import 'package:compounder/services/notify.dart';
+import 'package:compounder/subscription/entitlement.dart';
 import 'package:compounder/ui/coach.dart';
 import 'package:compounder/ui/settings.dart';
+import 'package:compounder/ui/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health/health.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -317,6 +322,47 @@ void main() {
       final out = messagesAfterTurn(
           const [], const CoachTurn(note: '3 calls skipped', reply: 'Done.'));
       expect(out.map((m) => m.text).toList(), ['3 calls skipped', 'Done.']);
+    });
+  });
+
+  group('trial-state MINOR-2 settings trial copy', () {
+    testWidgets('Settings shows "Trial · ends <date>", never "Active · renews"',
+        (tester) async {
+      final end = DateTime.now().add(const Duration(days: 7));
+      await store.saveEntitlement(Entitlement(
+        status: EntitlementStatus.trialing,
+        planCode: 'monthly',
+        currentPeriodEnd: end,
+        quota: const Quota(dailyLimit: 20, dailyUsed: 3),
+        fetchedAt: DateTime.now(),
+      ));
+      final health = HealthService(
+        store: store,
+        repository: HealthRepository(store.db),
+        source: _RevokeSource(failures: 0),
+      );
+
+      await tester.pumpWidget(MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: store),
+          ChangeNotifierProvider.value(value: health),
+          Provider.value(value: NotifyService()),
+        ],
+        child: MaterialApp(
+          theme: CompounderTheme.light(),
+          home: const SettingsScreen(),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      // The wiring at settings.dart must pass the cached trial, not a stale or
+      // null entitlement: a trial is access without a completed purchase.
+      expect(
+          find.text('Trial · ends ${formatDate(end.millisecondsSinceEpoch)}'),
+          findsOneWidget);
+      expect(find.textContaining('Active · renews'), findsNothing);
+      expect(find.text('Manage subscription'), findsOneWidget,
+          reason: 'a trial grants access, so Settings offers management');
     });
   });
 }

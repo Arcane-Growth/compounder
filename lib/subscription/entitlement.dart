@@ -84,6 +84,16 @@ class Entitlement {
   /// that has passed means the cached entitlement is stale even if the gateway
   /// last said "active" or "trialing".
   ///
+  /// A missing period end is deliberately treated as access, not as expiry.
+  /// The gateway is the authority and always sends `current_period_end` for a
+  /// trial (and for a paid plan), so a null end means the field was dropped —
+  /// an older cache, a partial response — rather than that the trial ended.
+  /// Revoking locally on a missing field would push a paying trial user back
+  /// to the plans screen and invite a duplicate purchase; the gateway still
+  /// refuses requests once the trial really ends. Pinned by
+  /// `subscription_state_test.dart` ("a trialing entitlement with no period
+  /// end stays active").
+  ///
   /// A past-due entitlement is entitled only inside the grace window, exactly
   /// like the gateway's `entitlement_grants_access`: the store's period end is
   /// already in the past, so [graceEndsAt] is the only authority. A missing

@@ -276,6 +276,16 @@ void main() {
       expect(state, isA<SubscriptionAvailable>());
     });
 
+    test('a trialing entitlement with no period end stays active', () {
+      // Documented defensive fallback (`isActiveAt`): the gateway always sends
+      // the trial end, so a null end is a dropped field, not an expiry. Fail
+      // open to the gateway rather than revoke a paying trial user locally.
+      const noEnd = Entitlement(status: EntitlementStatus.trialing);
+      expect(noEnd.isActiveAt(now), isTrue);
+      expect(noEnd.isActiveAt(now.add(const Duration(days: 3650))), isTrue,
+          reason: 'without an end date the app cannot expire the trial itself');
+    });
+
     test('a converted trial is a paid active entitlement', () {
       final converted = Entitlement(
         status: parseEntitlementStatus('active'),
