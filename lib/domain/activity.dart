@@ -12,11 +12,14 @@ const int pillarMind = 4;
 /// Bit for "a habit was checked off that day".
 const int pillarHabits = 8;
 
+/// Bit for "the day was planned" — at least one block on the day's plan.
+const int pillarPlan = 16;
+
 /// Every pillar present: a "perfect" day.
 const int allPillarsMask =
-    pillarWorkout | pillarNutrition | pillarMind | pillarHabits;
+    pillarWorkout | pillarNutrition | pillarMind | pillarHabits | pillarPlan;
 
-/// One local calendar day's logging activity across the app's four pillars.
+/// One local calendar day's logging activity across the app's five pillars.
 ///
 /// [day] is a local `YYYY-MM-DD` key, the same convention
 /// `habit_completions.day` uses (see [habitDayKey]): a pillar is "done on
@@ -29,12 +32,17 @@ class PillarDay {
   final int mindCount;
   final int habitCount;
 
+  /// Number of plan blocks on the day. A day counts as planned when this is
+  /// above zero; finishing the blocks is not required.
+  final int planCount;
+
   const PillarDay({
     required this.day,
     this.workoutCount = 0,
     this.nutritionCount = 0,
     this.mindCount = 0,
     this.habitCount = 0,
+    this.planCount = 0,
   });
 
   /// Bitmask of the pillars logged that day (see [pillarWorkout] etc.).
@@ -42,19 +50,21 @@ class PillarDay {
       (workoutCount > 0 ? pillarWorkout : 0) |
       (nutritionCount > 0 ? pillarNutrition : 0) |
       (mindCount > 0 ? pillarMind : 0) |
-      (habitCount > 0 ? pillarHabits : 0);
+      (habitCount > 0 ? pillarHabits : 0) |
+      (planCount > 0 ? pillarPlan : 0);
 
-  /// Number of distinct pillars logged, 0-4.
+  /// Number of distinct pillars logged, 0-5.
   int get pillarCount =>
       (workoutCount > 0 ? 1 : 0) +
       (nutritionCount > 0 ? 1 : 0) +
       (mindCount > 0 ? 1 : 0) +
-      (habitCount > 0 ? 1 : 0);
+      (habitCount > 0 ? 1 : 0) +
+      (planCount > 0 ? 1 : 0);
 
-  /// Heatmap intensity: exactly the number of distinct pillars, 0-4.
+  /// Heatmap intensity: exactly the number of distinct pillars, 0-5.
   int get intensity => pillarCount;
 
-  /// True when all four pillars were logged that day.
+  /// True when all five pillars were logged that day.
   bool get perfect => mask == allPillarsMask;
 
   bool hasPillar(int pillar) => (mask & pillar) != 0;
@@ -65,6 +75,7 @@ class PillarDay {
         pillarNutrition => nutritionCount,
         pillarMind => mindCount,
         pillarHabits => habitCount,
+        pillarPlan => planCount,
         _ => 0,
       };
 }
@@ -138,7 +149,7 @@ int longestStreak(Map<String, PillarDay> days) {
   return best;
 }
 
-/// Number of days in [month] (1-12) of [year] on which all four pillars were
+/// Number of days in [month] (1-12) of [year] on which all five pillars were
 /// logged.
 int perfectDaysInMonth(Map<String, PillarDay> days, int year, int month) {
   final prefix = '${year.toString().padLeft(4, '0')}-'
@@ -154,6 +165,7 @@ const List<int> allPillars = [
   pillarNutrition,
   pillarMind,
   pillarHabits,
+  pillarPlan,
 ];
 
 /// Human label for a pillar bit.
@@ -162,5 +174,6 @@ String pillarLabel(int pillar) => switch (pillar) {
       pillarNutrition => 'Nutrition',
       pillarMind => 'Mood & Mind',
       pillarHabits => 'Habits',
+      pillarPlan => 'Day plan',
       _ => 'Unknown',
     };

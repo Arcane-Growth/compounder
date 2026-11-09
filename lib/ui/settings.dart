@@ -25,7 +25,7 @@ const String appVersionLabel = 'Compounder v0.3.2';
 /// pin that it names every table the import wipes (review backup MINOR-2).
 const String importConfirmText =
     'Importing replaces all workouts, meals, accounts, net-worth history, '
-    'reminders and mind data on this device.';
+    'reminders, day plans and mind data on this device.';
 
 /// Parses a daily-goal field. Returns null for empty, non-numeric, non-finite
 /// (`NaN`, `Infinity`) or non-positive input.

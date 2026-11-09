@@ -28,6 +28,7 @@ const _indexes = <String, String>{
   'idx_meditations_timestamp': 'meditations',
   'idx_thought_records_timestamp': 'thought_records',
   'idx_habit_completions_day': 'habit_completions',
+  'idx_plan_blocks_day_start': 'plan_blocks',
 };
 
 /// The v11 activity range indexes, kept separate so the 10 -> 11 upgrade test
@@ -113,6 +114,13 @@ const _plans = <String, ({String sql, bool avoidsTempBTree})>{
         "WHERE day >= '2025-01-01' AND day < '2026-01-01' AND count > 0 "
         'GROUP BY day',
     avoidsTempBTree: false,
+  ),
+  // The planner's day query (schema v13): the (day, start_min) index serves
+  // both the equality filter and the chronological ORDER BY.
+  'plan_blocks by day': (
+    sql: "SELECT * FROM plan_blocks WHERE day = '2026-11-09' "
+        'ORDER BY start_min',
+    avoidsTempBTree: true,
   ),
 };
 
@@ -230,6 +238,22 @@ Future<void> _seedHotPathTables(Database db) async {
       'created_at': 0,
     });
   }
+  // Planner rows (schema v13), spread over days so the day index has real
+  // cardinality.
+  for (var i = 0; i < 60; i++) {
+    final day = DateTime(2026, 11, 1 + (i % 9));
+    await db.insert('plan_blocks', {
+      'day': '${day.year.toString().padLeft(4, '0')}-'
+          '${day.month.toString().padLeft(2, '0')}-'
+          '${day.day.toString().padLeft(2, '0')}',
+      'title': 'b$i',
+      'start_min': 480 + (i % 12) * 30,
+      'end_min': 510 + (i % 12) * 30,
+      'done': 0,
+      'created_at': 0,
+      'position': i,
+    });
+  }
 }
 
 void main() {
@@ -257,7 +281,7 @@ void main() {
       () async {
     final prefs = await SharedPreferences.getInstance();
     final store = await AppStore.open(prefs, path: path);
-    expect(await store.db.getVersion(), 12);
+    expect(await store.db.getVersion(), 13);
 
     await _expectIndexesOnTables(store.db, _indexes);
     expect(await _indexTable(store.db, 'idx_workout_sets_exercise'), isNull,
@@ -357,7 +381,7 @@ void main() {
     await store.db.close();
 
     store = await AppStore.open(prefs, path: path);
-    expect(await store.db.getVersion(), 12);
+    expect(await store.db.getVersion(), 13);
 
     // No data loss: the seeded rows are all still there.
     expect(await store.db.query('workouts'), hasLength(1));
@@ -476,7 +500,7 @@ void main() {
     await store.db.close();
 
     store = await AppStore.open(prefs, path: path);
-    expect(await store.db.getVersion(), 12);
+    expect(await store.db.getVersion(), 13);
 
     // The v9 step must have replaced both index shapes.
     expect(await _indexTable(store.db, 'idx_balance_snapshots_taken'),
@@ -568,7 +592,7 @@ void main() {
     await store.db.close();
 
     store = await AppStore.open(prefs, path: path);
-    expect(await store.db.getVersion(), 12);
+    expect(await store.db.getVersion(), 13);
     await _expectIndexesOnTables(store.db, _v11Indexes);
 
     // No data loss: every seeded row survives the migration.
@@ -589,7 +613,7 @@ void main() {
     await store.db.close();
 
     store = await AppStore.open(prefs, path: path);
-    expect(await store.db.getVersion(), 12);
+    expect(await store.db.getVersion(), 13);
     await store.db.close();
   });
 
@@ -661,6 +685,8 @@ void main() {
         contains('idx_thought_records_timestamp'));
     expect(await _plan(store.db, _plans['habit_completions by day']!.sql),
         contains('idx_habit_completions_day'));
+    expect(await _plan(store.db, _plans['plan_blocks by day']!.sql),
+        contains('idx_plan_blocks_day_start'));
 
     // deleteAccount filters on account_id alone; the account_id-leading index
     // must keep that a seek rather than a full scan.
@@ -669,6 +695,104 @@ void main() {
             store.db, 'DELETE FROM balance_snapshots WHERE account_id = 7'),
         contains('idx_balance_snapshots_account_taken'));
 
+    await store.db.close();
+  });
+
+  test('upgrade 12 -> 13 adds plan_blocks without losing existing data',
+      () async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // Build a current-schema database, seed one row in every table a v12
+    // install could hold, then rewind to a genuine v12 shape: no plan_blocks
+    // table and no plan index.
+    var store = await AppStore.open(prefs, path: path);
+    await store.db.insert('workouts', {
+      'name': 'Leg day',
+      'started_at': 1000,
+      'ended_at': 2000,
+    });
+    await store.db.insert('meals', {
+      'timestamp': 3000,
+      'dish': 'Oats',
+      'calories': 400.0,
+      'protein': 20.0,
+      'carbs': 50.0,
+      'fat': 8.0,
+    });
+    final accountId = await store.db.insert('accounts', {
+      'name': 'Checking',
+      'type': 'Cash',
+      'balance': 1234.0,
+      'updated_at': 4000,
+    });
+    await store.db.insert('balance_snapshots', {
+      'account_id': accountId,
+      'balance': 1234.0,
+      'taken_at': 4000,
+    });
+    final habitId = await store.db.insert('habits', {
+      'name': 'Read',
+      'cadence': 'daily',
+      'target': 1,
+      'created_at': 0,
+    });
+    await store.db.insert('habit_completions', {
+      'habit_id': habitId,
+      'day': '2026-11-08',
+      'count': 1,
+      'created_at': 0,
+    });
+    await store.db.insert('moods', {'timestamp': 5000, 'mood': 4});
+    await store.db.insert('health_records', {
+      'uuid': 'uuid-steps-1',
+      'type': 'STEPS',
+      'value': 1.0,
+      'date_from': 6000,
+      'date_to': 6100,
+      'synced_at': 9000,
+    });
+
+    // Rewind to v12: drop the v13 objects and stamp the old version.
+    await store.db.execute('DROP INDEX IF EXISTS idx_plan_blocks_day_start');
+    await store.db.execute('DROP TABLE IF EXISTS plan_blocks');
+    await store.db.setVersion(12);
+    expect(await store.db.getVersion(), 12);
+    expect(await _indexTable(store.db, 'idx_plan_blocks_day_start'), isNull,
+        reason: 'a v12 database has no plan_blocks index');
+    await store.db.close();
+
+    store = await AppStore.open(prefs, path: path);
+    expect(await store.db.getVersion(), 13);
+
+    // The v13 step creates the planner table and its index.
+    expect(await _indexTable(store.db, 'idx_plan_blocks_day_start'),
+        'plan_blocks');
+    expect(await _indexColumns(store.db, 'idx_plan_blocks_day_start'),
+        ['day', 'start_min']);
+    expect(await store.db.query('plan_blocks'), isEmpty,
+        reason: 'existing days simply have no plan');
+
+    // No data loss: every seeded v12 row survives the migration.
+    expect(await store.db.query('workouts'), hasLength(1));
+    expect(await store.db.query('meals'), hasLength(1));
+    expect(await store.db.query('accounts'), hasLength(1));
+    expect(await store.db.query('balance_snapshots'), hasLength(1));
+    expect(await store.db.query('habits'), hasLength(1));
+    expect(await store.db.query('habit_completions'), hasLength(1));
+    expect(await store.db.query('moods'), hasLength(1));
+    expect(await store.db.query('health_records'), hasLength(1));
+    expect((await store.db.query('meals')).single['dish'], 'Oats');
+    await store.db.close();
+  });
+
+  test('the 12 -> 13 step is safe to re-run (IF NOT EXISTS)', () async {
+    final prefs = await SharedPreferences.getInstance();
+    var store = await AppStore.open(prefs, path: path);
+    await store.db.setVersion(12);
+    await store.db.close();
+
+    store = await AppStore.open(prefs, path: path);
+    expect(await store.db.getVersion(), 13);
     await store.db.close();
   });
 }

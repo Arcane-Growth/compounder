@@ -9,6 +9,7 @@ import 'package:sqflite/sqflite.dart';
 import '../domain/activity.dart';
 import '../domain/domain.dart';
 import '../domain/habits.dart';
+import '../domain/plan.dart';
 import '../subscription/constants.dart';
 import '../subscription/entitlement.dart';
 import '../subscription/gateway.dart';
@@ -117,7 +118,7 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
       {String? path, SecretStore? secretStore}) async {
     path ??= p.join(await getDatabasesPath(), 'compounder.db');
     final db = await openDatabase(path,
-        version: 12,
+        version: 13,
         onConfigure: _configureSchema,
         onCreate: _createSchema,
         onUpgrade: _upgradeSchema);
@@ -183,6 +184,7 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
     await _createV9Indexes(db);
     await _createV10Tables(db);
     await _createV11Indexes(db);
+    await _createV13Tables(db);
   }
 
   static Future<void> _createV2Tables(Database db) async {
@@ -311,6 +313,13 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
           db, 'workout_sets', 'is_pr', 'INTEGER NOT NULL DEFAULT 0');
       await _addColumnIfMissing(db, 'workout_sets', 'pr_e1rm_kg', 'REAL');
     }
+    if (oldVersion < 13) {
+      // Day planner. Purely additive: one new table and its index, no existing
+      // row is touched, so a v12 install keeps every workout, meal, account,
+      // habit and health record. Existing days simply have no plan. IF NOT
+      // EXISTS makes the step safe to re-run on a partially applied migration.
+      await _createV13Tables(db);
+    }
   }
 
   /// Indexes for the non-health tables (schema v8/v9). Idempotent so both
@@ -381,6 +390,29 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
         'CREATE INDEX IF NOT EXISTS idx_thought_records_timestamp ON thought_records(timestamp)');
     await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_habit_completions_day ON habit_completions(day)');
+  }
+
+  /// Schema v13: the day planner table. Idempotent, additive only.
+  ///
+  /// `plan_blocks.day` is a local `YYYY-MM-DD` key rather than an epoch
+  /// timestamp, for the same reason `habit_completions.day` is: a block belongs
+  /// to a calendar day, and a timestamp would shift across timezones and DST.
+  /// `start_min`/`end_min` are minutes from local midnight, so a block carries
+  /// no timezone at all. The `(day, start_min)` index serves the planner's
+  /// chronological day query and the heatmap's per-day plan count.
+  static Future<void> _createV13Tables(Database db) async {
+    await db.execute('''CREATE TABLE IF NOT EXISTS plan_blocks(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      day TEXT NOT NULL,
+      title TEXT NOT NULL,
+      start_min INTEGER NOT NULL,
+      end_min INTEGER NOT NULL,
+      done INTEGER NOT NULL DEFAULT 0,
+      done_at INTEGER,
+      created_at INTEGER NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0)''');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_plan_blocks_day_start ON plan_blocks(day, start_min)');
   }
 
   /// Adds [column] to [table] only when it is absent, so a partially applied
@@ -1361,19 +1393,121 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
     return grouped;
   }
 
+  // ------------------------------------------------------------ day planner
+
+  /// The blocks planned for [day]'s local day, in chronological order.
+  ///
+  /// Ordered by start time, then the stored position, then id, so two blocks
+  /// that start at the same minute keep a deterministic order.
+  Future<List<PlanBlock>> planBlocksForDay(DateTime day) async {
+    final rows = await db.query('plan_blocks',
+        where: 'day = ?',
+        whereArgs: [planDayKey(day)],
+        orderBy: 'start_min, position, id');
+    return rows.map(PlanBlock.fromMap).toList();
+  }
+
+  /// Creates a block on [day]'s plan. Throws [StoreException] when the title is
+  /// blank or too long, or the times are out of range or not increasing, so the
+  /// planner dialog and any future coach tool share one validation boundary.
+  Future<int> createPlanBlock({
+    required DateTime day,
+    required String title,
+    required int startMin,
+    required int endMin,
+  }) async {
+    final error =
+        planBlockError(title: title, startMin: startMin, endMin: endMin);
+    if (error != null) throw StoreException(error);
+    final key = planDayKey(day);
+    final posRows = await db.rawQuery(
+        'SELECT MAX(position) m FROM plan_blocks WHERE day = ?', [key]);
+    final position = ((posRows.first['m'] as int?) ?? -1) + 1;
+    final id = await db.insert('plan_blocks', {
+      'day': key,
+      'title': title.trim(),
+      'start_min': startMin,
+      'end_min': endMin,
+      'done': 0,
+      'done_at': null,
+      'created_at': DateTime.now().millisecondsSinceEpoch,
+      'position': position,
+    });
+    notifyListeners();
+    return id;
+  }
+
+  /// Updates a block in place. A no-op for an unknown id (the row was deleted
+  /// from under the editor), matching [updateHabit]'s contract.
+  ///
+  /// Validation runs against the merged row, so changing only the end time
+  /// cannot produce an end before the stored start.
+  Future<void> updatePlanBlock(int id,
+      {String? title, int? startMin, int? endMin}) async {
+    final rows =
+        await db.query('plan_blocks', where: 'id = ?', whereArgs: [id], limit: 1);
+    if (rows.isEmpty) return;
+    final current = PlanBlock.fromMap(rows.single);
+    final nextTitle = title ?? current.title;
+    final nextStart = startMin ?? current.startMin;
+    final nextEnd = endMin ?? current.endMin;
+    final error = planBlockError(
+        title: nextTitle, startMin: nextStart, endMin: nextEnd);
+    if (error != null) throw StoreException(error);
+    await db.update(
+        'plan_blocks',
+        {
+          'title': nextTitle.trim(),
+          'start_min': nextStart,
+          'end_min': nextEnd,
+        },
+        where: 'id = ?',
+        whereArgs: [id]);
+    notifyListeners();
+  }
+
+  /// Marks a block done ([done] true) or clears it. `done_at` is stamped from
+  /// the clock on completion and cleared on undo.
+  Future<void> setPlanBlockDone(int id, bool done) async {
+    await db.update(
+        'plan_blocks',
+        {
+          'done': done ? 1 : 0,
+          'done_at': done ? DateTime.now().millisecondsSinceEpoch : null,
+        },
+        where: 'id = ?',
+        whereArgs: [id]);
+    notifyListeners();
+  }
+
+  Future<void> deletePlanBlock(int id) async {
+    await db.delete('plan_blocks', where: 'id = ?', whereArgs: [id]);
+    notifyListeners();
+  }
+
+  /// True when [day]'s plan has at least one block.
+  Future<bool> hasPlanForDay(DateTime day) async {
+    final rows = await db.query('plan_blocks',
+        columns: ['id'],
+        where: 'day = ?',
+        whereArgs: [planDayKey(day)],
+        limit: 1);
+    return rows.isNotEmpty;
+  }
+
   // ------------------------------------------------------------ helpers
 
   /// Per-local-day pillar activity for the half-open local-day range
   /// [from, to): the heatmap's data source.
   ///
   /// One grouped query per pillar source — workouts, meals, the three
-  /// mood/mind tables, and habit completions — so the cost is a fixed four
-  /// queries regardless of how many days the range spans (no per-day loop, no
-  /// N+1). Timestamped tables are bucketed with SQLite's `date(...,
-  /// 'localtime')`, which uses the same OS timezone as Dart's `DateTime`, so a
-  /// row at 23:59 local lands on that day and a row at 00:00 lands on the next
-  /// one. Habit completions are already keyed by local `YYYY-MM-DD`, the same
-  /// convention [habitDayKey] produces.
+  /// mood/mind tables, habit completions and plan blocks — so the cost is a
+  /// fixed five queries regardless of how many days the range spans (no
+  /// per-day loop, no N+1). Timestamped tables are bucketed with SQLite's
+  /// `date(..., 'localtime')`, which uses the same OS timezone as Dart's
+  /// `DateTime`, so a row at 23:59 local lands on that day and a row at 00:00
+  /// lands on the next one. Habit completions and plan blocks are already keyed
+  /// by local `YYYY-MM-DD`, the same convention [habitDayKey] produces.
   ///
   /// Days with no activity are absent from the map; callers treat a missing
   /// key as intensity 0. Rows with `count <= 0` are ignored, matching
@@ -1417,10 +1551,15 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
       FROM habit_completions
       WHERE day >= ? AND day < ? AND count > 0
       GROUP BY day''', [fromKey, toKey]);
+    final planRows = await db.rawQuery('''
+      SELECT day, COUNT(*) AS c
+      FROM plan_blocks
+      WHERE day >= ? AND day < ?
+      GROUP BY day''', [fromKey, toKey]);
 
     final counts = <String, List<int>>{};
     List<int> bucket(String day) =>
-        counts.putIfAbsent(day, () => List<int>.filled(4, 0));
+        counts.putIfAbsent(day, () => List<int>.filled(5, 0));
     for (final row in workoutRows) {
       final day = row['day'] as String?;
       if (day == null) continue;
@@ -1441,6 +1580,11 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
       if (day == null) continue;
       bucket(day)[3] += (row['c'] as int?) ?? 0;
     }
+    for (final row in planRows) {
+      final day = row['day'] as String?;
+      if (day == null) continue;
+      bucket(day)[4] += (row['c'] as int?) ?? 0;
+    }
 
     return {
       for (final entry in counts.entries)
@@ -1450,6 +1594,7 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
           nutritionCount: entry.value[1],
           mindCount: entry.value[2],
           habitCount: entry.value[3],
+          planCount: entry.value[4],
         ),
     };
   }

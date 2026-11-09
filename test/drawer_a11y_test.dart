@@ -312,10 +312,16 @@ void main() {
 
       await tester.tap(find.byIcon(Icons.menu).first);
       await tester.pumpAndSettle();
-      await tester.tap(find.descendant(
+      // The drawer now lists Day planner above Activity/Habits/Settings, so
+      // Settings can sit below the fold at the test surface height. Scroll it
+      // into view before tapping; a missed tap would leave the drawer open.
+      final settingsItem = find.descendant(
         of: find.byType(AppDrawer),
         matching: find.text('Settings'),
-      ));
+      );
+      await tester.ensureVisible(settingsItem);
+      await tester.pumpAndSettle();
+      await tester.tap(settingsItem);
       await tester.pumpAndSettle();
 
       expect(find.byType(Drawer), findsNothing);

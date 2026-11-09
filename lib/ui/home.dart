@@ -7,23 +7,26 @@ import '../data/models.dart';
 import '../data/store.dart';
 import '../domain/activity.dart';
 import '../domain/domain.dart';
+import '../domain/plan.dart';
 import 'drawer.dart';
 import 'habits.dart';
 import 'health.dart';
 import 'heatmap.dart';
 import 'history.dart';
+import 'planner.dart';
 import 'progress.dart';
 import 'settings.dart';
 import 'summary.dart';
 import 'widgets.dart';
 import 'workout.dart';
 
-/// The app's front door: today's four-pillar checklist, the activity heatmap
-/// preview and quick links to every other area.
+/// The app's front door: today's five-pillar checklist, the day plan, the
+/// activity heatmap preview and quick links to every other area.
 ///
 /// The checklist is the primary call to action. Logging anything (a workout, a
-/// meal, a mood, a habit) calls `AppStore.refreshAll`, which notifies this
-/// screen, so the checklist and heatmap update without a manual refresh.
+/// meal, a mood, a habit, a plan block) calls `AppStore.refreshAll` or notifies
+/// the store, which notifies this screen, so the checklist and heatmap update
+/// without a manual refresh.
 class HomeTab extends StatefulWidget {
   const HomeTab({super.key, this.now});
 
@@ -37,6 +40,7 @@ class HomeTab extends StatefulWidget {
 class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
   AppStore? _store;
   Map<String, PillarDay> _days = {};
+  List<PlanBlock> _plan = const [];
   Workout? _active;
   DateTime _today = DateTime.now();
 
@@ -141,10 +145,12 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
     try {
       final days = await store.dailyPillarActivity(from, to);
       final active = await store.activeWorkout();
+      final plan = await store.planBlocksForDay(today);
       if (!mounted || generation != _generation) return;
       setState(() {
         _days = days;
         _active = active;
+        _plan = plan;
         _today = today;
       });
     } catch (_) {
@@ -186,6 +192,12 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
       body: ListView(
               padding: const EdgeInsets.all(20),
               children: [
+                _PlanCard(
+                  blocks: _plan,
+                  now: (widget.now ?? DateTime.now)(),
+                  onTap: () => _openPlanner(context),
+                ),
+                const SizedBox(height: 16),
                 _TodayHeader(
                   today: _today,
                   streak: streak,
@@ -367,7 +379,14 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
       case pillarHabits:
         Navigator.of(context).push(
             MaterialPageRoute(builder: (_) => const HabitsScreen()));
+      case pillarPlan:
+        _openPlanner(context);
     }
+  }
+
+  void _openPlanner(BuildContext context) {
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => PlannerScreen(now: widget.now)));
   }
 
   Future<void> _startWorkout(BuildContext context) async {
@@ -407,7 +426,7 @@ class _TodayHeader extends StatelessWidget {
       Text(
         loggedPillars == 0
             ? 'Nothing logged yet today'
-            : '$loggedPillars of 4 pillars logged today',
+            : '$loggedPillars of 5 pillars logged today',
         style: t.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
       ),
       const SizedBox(height: 10),
@@ -451,8 +470,16 @@ class _PillarTile extends StatelessWidget {
         pillarNutrition => Icons.restaurant,
         pillarMind => Icons.psychology,
         pillarHabits => Icons.checklist_rtl,
+        pillarPlan => Icons.event_note,
         _ => Icons.circle,
       };
+
+  String get _subtitle {
+    if (pillar == pillarPlan) {
+      return done ? 'Planned today' : 'Not planned yet — tap to plan';
+    }
+    return done ? 'Logged today' : 'Not yet — tap to log';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -468,12 +495,104 @@ class _PillarTile extends StatelessWidget {
       ),
       title: Text(pillarLabel(pillar), style: t.titleMedium),
       subtitle: Text(
-        done ? 'Logged today' : 'Not yet — tap to log',
+        _subtitle,
         style: t.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
       ),
       trailing: Icon(
         done ? Icons.check_circle : Icons.chevron_right,
         color: done ? scheme.primary : scheme.onSurfaceVariant,
+      ),
+    );
+  }
+}
+
+/// Top-of-home day-plan card. When today has no blocks it is the primary call
+/// to action ("Plan your day"); once a plan exists it reports the current or
+/// next block so the user can see what is next without opening the planner.
+class _PlanCard extends StatelessWidget {
+  final List<PlanBlock> blocks;
+  final DateTime now;
+  final VoidCallback onTap;
+
+  const _PlanCard({
+    required this.blocks,
+    required this.now,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final t = Theme.of(context).textTheme;
+    final planned = blocks.isNotEmpty;
+    final current = currentBlock(blocks, now);
+    final next = nextBlock(blocks, now);
+    final doneCount = blocks.where((b) => b.done).length;
+    final String headline;
+    final String detail;
+    if (!planned) {
+      headline = 'Plan your day';
+      detail = 'Nothing planned yet — start with your day.';
+    } else if (current != null) {
+      headline = 'Now: ${current.title}';
+      detail = '${formatPlanTime(current.startMin)}–'
+          '${formatPlanTime(current.endMin)} · '
+          '$doneCount of ${blocks.length} done';
+    } else if (next != null) {
+      headline = 'Next: ${next.title}';
+      detail = '${formatPlanTime(next.startMin)}–'
+          '${formatPlanTime(next.endMin)} · '
+          '$doneCount of ${blocks.length} done';
+    } else {
+      headline = "Today's plan";
+      detail = 'No more blocks today · $doneCount of ${blocks.length} done';
+    }
+    final foreground = planned ? null : scheme.onPrimaryContainer;
+    return Card(
+      color: planned ? scheme.surfaceContainerLow : scheme.primaryContainer,
+      child: Semantics(
+        button: true,
+        label: '$headline. $detail',
+        onTap: onTap,
+        excludeSemantics: true,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Row(children: [
+              Icon(Icons.event_note,
+                  color: planned ? scheme.primary : scheme.onPrimaryContainer),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      headline,
+                      style: t.titleMedium?.copyWith(color: foreground),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      detail,
+                      style: t.bodySmall?.copyWith(
+                          color: planned
+                              ? scheme.onSurfaceVariant
+                              : scheme.onPrimaryContainer),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right,
+                  color: planned
+                      ? scheme.onSurfaceVariant
+                      : scheme.onPrimaryContainer),
+            ]),
+          ),
+        ),
       ),
     );
   }

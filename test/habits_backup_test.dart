@@ -60,7 +60,8 @@ void main() {
     final file = await BackupService.export(source);
     final json =
         jsonDecode(await File(file).readAsString()) as Map<String, Object?>;
-    expect(json['format'], 4, reason: 'habits require the format bump to 4');
+    expect(json['format'], 5,
+        reason: 'plan blocks require the format bump to 5 (habits bumped it to 4)');
     expect(json['habits'], hasLength(2));
     expect(json['habitCompletions'], hasLength(3));
 
@@ -213,9 +214,9 @@ void main() {
   test('a backup from a newer format is refused', () async {
     final prefs = await SharedPreferences.getInstance();
     final target = await AppStore.open(prefs, path: otherDbPath);
-    final future = File(p.join(docs.path, 'format-5.json'));
+    final future = File(p.join(docs.path, 'format-6.json'));
     await future.writeAsString(jsonEncode({
-      'format': 5,
+      'format': 6,
       'app': 'compounder',
       'habits': <Object?>[],
     }));

@@ -121,6 +121,15 @@ void main() {
       'thought': 't',
       'reframe': 'r',
     });
+    await store.db.insert('plan_blocks', {
+      'day': '2026-11-09',
+      'title': 'Deep work',
+      'start_min': 540,
+      'end_min': 600,
+      'done': 0,
+      'created_at': 9000,
+      'position': 0,
+    });
     return dueAt;
   }
 
@@ -133,11 +142,13 @@ void main() {
     final file = await BackupService.export(source);
     final json =
         jsonDecode(await File(file).readAsString()) as Map<String, Object?>;
-    expect(json['format'], 4,
-        reason: 'habits require the format bump to 4 (M2 bumped it to 3)');
+    expect(json['format'], 5,
+        reason: 'plan blocks require the format bump to 5 (habits bumped it to 4)');
     expect(json['app'], 'compounder');
     expect(json['balanceSnapshots'], hasLength(1));
     expect(json['reminders'], hasLength(1));
+    expect(json['planBlocks'], hasLength(1),
+        reason: 'the day planner must be part of the backup');
     // The format-2 key names must not change.
     for (final key in [
       'workouts',
@@ -184,6 +195,13 @@ void main() {
     expect(await target.db.query('moods'), hasLength(1));
     expect(await target.db.query('meditations'), hasLength(1));
     expect(await target.db.query('thought_records'), hasLength(1));
+    final planBlocks = await target.db.query('plan_blocks');
+    expect(planBlocks, hasLength(1),
+        reason: 'plan blocks must survive the round-trip');
+    expect(planBlocks.single['day'], '2026-11-09');
+    expect(planBlocks.single['title'], 'Deep work');
+    expect(planBlocks.single['start_min'], 540);
+    expect(planBlocks.single['end_min'], 600);
 
     // The in-memory caches must reflect the restored rows, not the old ones.
     expect(target.accounts, hasLength(1));
@@ -591,9 +609,9 @@ void main() {
       () async {
     final prefs = await SharedPreferences.getInstance();
     final target = await AppStore.open(prefs, path: otherDbPath);
-    final future = File(p.join(docs.path, 'format-5.json'));
+    final future = File(p.join(docs.path, 'format-6.json'));
     await future.writeAsString(jsonEncode({
-      'format': 5,
+      'format': 6,
       'app': 'compounder',
       'accounts': <Object?>[],
     }));

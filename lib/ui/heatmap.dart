@@ -7,15 +7,15 @@ import '../data/store.dart';
 import '../domain/activity.dart';
 import 'widgets.dart';
 
-/// GitHub-style activity heatmap over the app's four logging pillars.
+/// GitHub-style activity heatmap over the app's five logging pillars.
 ///
 /// Intensity is the number of distinct pillars logged on a local calendar day
-/// (0-4), computed by [PillarDay.intensity]. The grid is a dense visualisation,
+/// (0-5), computed by [PillarDay.intensity]. The grid is a dense visualisation,
 /// so individual squares are smaller than the 48dp touch-target guideline;
 /// every square carries a [Semantics] label and the full screen also offers the
 /// per-day detail sheet, which is the accessible path to the same information.
 
-/// The colour ramp for intensity 0-4, theme aware.
+/// The colour ramp for intensity 0-5, theme aware.
 Color heatmapColor(BuildContext context, int intensity) {
   final scheme = Theme.of(context).colorScheme;
   final dark = Theme.of(context).brightness == Brightness.dark;
@@ -27,15 +27,17 @@ Color heatmapColor(BuildContext context, int intensity) {
     Color(0xFF40C463),
     Color(0xFF30A14E),
     Color(0xFF216E39),
+    Color(0xFF0B3D1F),
   ];
   const darkRamp = [
     Color(0xFF0E4429),
     Color(0xFF006D32),
     Color(0xFF26A641),
     Color(0xFF39D353),
+    Color(0xFF7BF5A0),
   ];
   final ramp = dark ? darkRamp : lightRamp;
-  return ramp[(intensity - 1).clamp(0, 3)];
+  return ramp[(intensity - 1).clamp(0, 4)];
 }
 
 /// One day square. [day] is the local calendar day it represents.
@@ -57,7 +59,7 @@ class HeatmapCell extends StatelessWidget {
   Widget build(BuildContext context) {
     final key = localDayKey(day);
     return Semantics(
-      label: '$key: $intensity of 4 pillars logged',
+      label: '$key: $intensity of 5 pillars logged',
       button: onTap != null,
       child: GestureDetector(
         onTap: onTap,
@@ -94,7 +96,7 @@ class HeatmapLegend extends StatelessWidget {
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         Text('Less', style: labelStyle),
-        for (var i = 0; i <= 4; i++)
+        for (var i = 0; i <= 5; i++)
           Container(
             width: swatchSize,
             height: swatchSize,
@@ -352,16 +354,19 @@ class _DayDetailSheet extends StatelessWidget {
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+        // Five pillar rows no longer fit a compact bottom sheet at large text
+        // scales, so the content scrolls instead of overflowing.
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
             Text(formatDate(day.millisecondsSinceEpoch), style: t.titleLarge),
             const SizedBox(height: 4),
             Text(
               entry == null
                   ? 'Nothing logged'
-                  : '${entry.pillarCount} of 4 pillars logged',
+                  : '${entry.pillarCount} of 5 pillars logged',
               style: t.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
             ),
             const SizedBox(height: 12),
@@ -387,7 +392,8 @@ class _DayDetailSheet extends StatelessWidget {
                   ),
                 ),
               ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -698,7 +704,7 @@ class _DayRow extends StatelessWidget {
       subtitle: Text(
         entry == null
             ? 'Nothing logged'
-            : '${entry.pillarCount} of 4 pillars logged',
+            : '${entry.pillarCount} of 5 pillars logged',
         style: t.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
       ),
       trailing: Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),

@@ -22,10 +22,10 @@ class BackupService {
   /// Current backup format. 3 adds `balanceSnapshots`, `reminders` and the
   /// full `exercises` catalog (older builds read only `customExercises`, which
   /// is still written as a compatibility mirror); 4 adds `habits` and
-  /// `habitCompletions`. An older file simply lacks the newer keys and still
-  /// imports (restoring everything it does carry); a newer file is refused
-  /// rather than silently truncated.
-  static const int format = 4;
+  /// `habitCompletions`; 5 adds `planBlocks`. An older file simply lacks the
+  /// newer keys and still imports (restoring everything it does carry); a newer
+  /// file is refused rather than silently truncated.
+  static const int format = 5;
 
   static Future<String> export(AppStore store) async {
     final db = store.db;
@@ -60,6 +60,7 @@ class BackupService {
       'thoughtRecords': await db.query('thought_records'),
       'habits': await db.query('habits'),
       'habitCompletions': await db.query('habit_completions'),
+      'planBlocks': await db.query('plan_blocks'),
       'healthRecords': await db.query('health_records'),
       'healthDaily': await db.query('health_daily'),
       'healthSyncState': await db.query('health_sync_state'),
@@ -145,6 +146,7 @@ class BackupService {
         'thought_records',
         'habit_completions',
         'habits',
+        'plan_blocks',
         'health_records',
         'health_daily',
         'health_sync_state',
@@ -299,6 +301,11 @@ class BackupService {
               '$habitId, which is not in the file.');
         }
         await insertRow('habit_completions', r);
+      }
+      // Plan blocks carry no foreign key: a block belongs to a day key, not to
+      // another row, so they insert verbatim after the wipe above.
+      for (final r in rows('planBlocks')) {
+        await insertRow('plan_blocks', r);
       }
       for (final entry in {
         'healthRecords': 'health_records',

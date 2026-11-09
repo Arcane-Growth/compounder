@@ -2,6 +2,7 @@ import 'package:compounder/data/models.dart';
 import 'package:compounder/data/store.dart';
 import 'package:compounder/domain/activity.dart';
 import 'package:compounder/domain/domain.dart';
+import 'package:compounder/domain/plan.dart';
 import 'package:compounder/health/repository.dart';
 import 'package:compounder/health/service.dart';
 import 'package:compounder/services/notify.dart';
@@ -10,6 +11,7 @@ import 'package:compounder/ui/health.dart';
 import 'package:compounder/ui/heatmap.dart';
 import 'package:compounder/ui/history.dart';
 import 'package:compounder/ui/home.dart';
+import 'package:compounder/ui/planner.dart';
 import 'package:compounder/ui/progress.dart';
 import 'package:compounder/ui/settings.dart';
 import 'package:compounder/ui/widgets.dart';
@@ -95,6 +97,11 @@ class _CountingStore extends ChangeNotifier implements AppStore {
   }
 
   @override
+  Future<List<PlanBlock>> planBlocksForDay(DateTime day) async => plan;
+
+  List<PlanBlock> plan = const [];
+
+  @override
   List<WorkoutSummary> history = const [];
 
   @override
@@ -114,13 +121,15 @@ PillarDay day(String key,
         {int workout = 0,
         int nutrition = 0,
         int mind = 0,
-        int habits = 0}) =>
+        int habits = 0,
+        int plan = 0}) =>
     PillarDay(
       day: key,
       workoutCount: workout,
       nutritionCount: nutrition,
       mindCount: mind,
       habitCount: habits,
+      planCount: plan,
     );
 
 void main() {
@@ -129,7 +138,7 @@ void main() {
   databaseFactory = databaseFactoryFfi;
 
   group('intensity mapping', () {
-    test('0-4 distinct pillars map to intensity 0-4', () {
+    test('0-5 distinct pillars map to intensity 0-5', () {
       expect(day('2026-11-09').intensity, 0);
       expect(day('2026-11-09', workout: 1).intensity, 1);
       expect(day('2026-11-09', workout: 1, nutrition: 1).intensity, 2);
@@ -139,6 +148,11 @@ void main() {
                   workout: 1, nutrition: 1, mind: 1, habits: 1)
               .intensity,
           4);
+      expect(
+          day('2026-11-09',
+                  workout: 1, nutrition: 1, mind: 1, habits: 1, plan: 1)
+              .intensity,
+          5);
     });
 
     test('several rows in one pillar still count as one pillar', () {
@@ -148,23 +162,32 @@ void main() {
       expect(many.mask, pillarWorkout | pillarNutrition);
     });
 
-    test('perfect requires all four pillars', () {
+    test('perfect requires all five pillars', () {
       expect(day('2026-11-09', workout: 1, nutrition: 1, mind: 1).perfect,
           isFalse);
       expect(
           day('2026-11-09',
                   workout: 1, nutrition: 1, mind: 1, habits: 1)
               .perfect,
+          isFalse,
+          reason: 'four of five pillars is not a perfect day');
+      expect(
+          day('2026-11-09',
+                  workout: 1, nutrition: 1, mind: 1, habits: 1, plan: 1)
+              .perfect,
           isTrue);
       expect(day('2026-11-09').perfect, isFalse);
+      expect(allPillarsMask, 31);
     });
 
     test('countFor reports the per-pillar row count', () {
-      final d = day('2026-11-09', workout: 2, mind: 3);
+      final d = day('2026-11-09', workout: 2, mind: 3, plan: 4);
       expect(d.countFor(pillarWorkout), 2);
       expect(d.countFor(pillarMind), 3);
+      expect(d.countFor(pillarPlan), 4);
       expect(d.countFor(pillarNutrition), 0);
       expect(d.hasPillar(pillarHabits), isFalse);
+      expect(d.hasPillar(pillarPlan), isTrue);
     });
   });
 
@@ -216,15 +239,15 @@ void main() {
   });
 
   group('perfect-day counting', () {
-    test('counts only 4/4 days inside the requested month', () {
+    test('counts only 5/5 days inside the requested month', () {
       final days = {
         '2026-11-01': day('2026-11-01',
-            workout: 1, nutrition: 1, mind: 1, habits: 1),
+            workout: 1, nutrition: 1, mind: 1, habits: 1, plan: 1),
         '2026-11-02': day('2026-11-02', workout: 1, nutrition: 1, mind: 1),
         '2026-11-15': day('2026-11-15',
-            workout: 1, nutrition: 1, mind: 1, habits: 1),
+            workout: 1, nutrition: 1, mind: 1, habits: 1, plan: 1),
         '2026-10-31': day('2026-10-31',
-            workout: 1, nutrition: 1, mind: 1, habits: 1),
+            workout: 1, nutrition: 1, mind: 1, habits: 1, plan: 1),
       };
       expect(perfectDaysInMonth(days, 2026, 11), 2);
       expect(perfectDaysInMonth(days, 2026, 10), 1);
@@ -251,7 +274,7 @@ void main() {
     });
 
     Future<void> seed() async {
-      // 2026-11-02: all four pillars.
+      // 2026-11-02: all five pillars.
       await store.db.insert('workouts', {
         'name': 'Legs',
         'started_at': DateTime(2026, 11, 2, 6).millisecondsSinceEpoch,
@@ -279,6 +302,15 @@ void main() {
         'day': '2026-11-02',
         'count': 1,
         'created_at': 0,
+      });
+      await store.db.insert('plan_blocks', {
+        'day': '2026-11-02',
+        'title': 'Deep work',
+        'start_min': 540,
+        'end_min': 600,
+        'done': 0,
+        'created_at': 0,
+        'position': 0,
       });
       // 2026-11-03: nutrition only.
       await store.db.insert('meals', {
@@ -329,11 +361,12 @@ void main() {
 
       final perfect = days['2026-11-02']!;
       expect(perfect.mask, allPillarsMask);
-      expect(perfect.intensity, 4);
+      expect(perfect.intensity, 5);
       expect(perfect.workoutCount, 1);
       expect(perfect.nutritionCount, 1);
       expect(perfect.mindCount, 1);
       expect(perfect.habitCount, 1);
+      expect(perfect.planCount, 1);
 
       final nutritionOnly = days['2026-11-03']!;
       expect(nutritionOnly.mask, pillarNutrition);
@@ -353,6 +386,26 @@ void main() {
           reason: '00:00 local belongs to the next day');
       expect(days.containsKey('2026-11-08'), isFalse,
           reason: 'a count <= 0 completion is not a logged habit');
+    });
+
+    test('a plan block alone counts as the planning pillar', () async {
+      await store.db.insert('plan_blocks', {
+        'day': '2026-11-09',
+        'title': 'Plan the week',
+        'start_min': 480,
+        'end_min': 510,
+        'done': 0,
+        'created_at': 0,
+        'position': 0,
+      });
+      final days = await store.dailyPillarActivity(
+          DateTime(2026, 11, 9), DateTime(2026, 11, 10));
+      final planned = days['2026-11-09']!;
+      expect(planned.mask, pillarPlan);
+      expect(planned.planCount, 1);
+      expect(planned.intensity, 1,
+          reason: 'planning the day is a pillar, not a bonus');
+      expect(planned.perfect, isFalse);
     });
 
     test('the range is half-open: rows at the end boundary are excluded',
@@ -450,7 +503,7 @@ void main() {
           ),
         );
 
-    testWidgets('shows the four-pillar checklist and opens the heatmap',
+    testWidgets('shows the five-pillar checklist and opens the heatmap',
         (tester) async {
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
@@ -482,12 +535,22 @@ void main() {
           () => Future<void>.delayed(const Duration(milliseconds: 100)));
       await tester.pump();
 
-      for (final label in ['Workout', 'Nutrition', 'Mood & Mind', 'Habits']) {
+      for (final label in [
+        'Workout',
+        'Nutrition',
+        'Mood & Mind',
+        'Habits',
+        'Day plan'
+      ]) {
         expect(find.text(label), findsOneWidget);
       }
       expect(find.text('Logged today'), findsOneWidget,
           reason: 'the seeded workout marks the Workout pillar done');
       expect(find.text('Not yet — tap to log'), findsNWidgets(3));
+      expect(find.text('Not planned yet — tap to plan'), findsOneWidget);
+      expect(find.text('1 of 5 pillars logged today'), findsOneWidget);
+      expect(find.text('Plan your day'), findsOneWidget,
+          reason: 'an unplanned today must put the planner first on Home');
       expect(find.text('1-day streak'), findsOneWidget);
 
       await tester.tap(find.text('Nutrition'));
@@ -500,6 +563,49 @@ void main() {
       await tester.tap(find.text('Last 12 weeks'));
       await tester.pumpAndSettle();
       expect(find.byType(HeatmapScreen), findsOneWidget);
+    });
+
+    testWidgets('the plan card shows the next block and opens the planner',
+        (tester) async {
+      final now = DateTime(2026, 11, 9, 12);
+      await tester.runAsync(() async {
+        await store.createPlanBlock(
+            day: DateTime(2026, 11, 9),
+            title: 'Deep work',
+            startMin: 13 * 60,
+            endMin: 14 * 60);
+        await store.refreshAll();
+      });
+
+      await tester.pumpWidget(ChangeNotifierProvider<AppStore>.value(
+        value: store,
+        child: MaterialApp(
+          theme: CompounderTheme.light(),
+          home: ShellNav(
+            openDrawer: () {},
+            selectTab: (_) {},
+            child: HomeTab(now: () => now),
+          ),
+        ),
+      ));
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)));
+      await tester.pump();
+
+      expect(find.text('Next: Deep work'), findsOneWidget,
+          reason: 'a planned day reports the next block instead of a prompt');
+      expect(find.text('13:00–14:00 · 0 of 1 done'), findsOneWidget);
+      expect(find.text('Not planned yet — tap to plan'), findsNothing);
+      expect(find.text('1 of 5 pillars logged today'), findsOneWidget,
+          reason: 'a plan block alone logs the planning pillar');
+
+      await tester.tap(find.text('Next: Deep work'));
+      await tester.pump();
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)));
+      await tester.pumpAndSettle();
+      expect(find.byType(PlannerScreen), findsOneWidget);
+      expect(find.text('Deep work'), findsOneWidget);
     });
 
     testWidgets('shows the active-workout resume card and opens the workout',
@@ -1021,7 +1127,7 @@ void main() {
             child: ActivityHeatmap(
               days: {
                 '2026-01-15': day('2026-01-15',
-                    workout: 1, nutrition: 1, mind: 1, habits: 1),
+                    workout: 1, nutrition: 1, mind: 1, habits: 1, plan: 1),
               },
               start: start,
               end: end,
@@ -1035,19 +1141,19 @@ void main() {
       final cell = find.byWidgetPredicate(
           (w) => w is HeatmapCell && w.day == DateTime(2026, 1, 15));
       expect(cell, findsOneWidget);
-      expect(tester.widget<HeatmapCell>(cell).intensity, 4);
+      expect(tester.widget<HeatmapCell>(cell).intensity, 5);
       await tester.tap(cell);
       expect(tapped, DateTime(2026, 1, 15));
     });
 
-    testWidgets('intensity 0 and 4 use different colours', (tester) async {
+    testWidgets('intensity 0 and 5 use different colours', (tester) async {
       late Color empty;
       late Color full;
       await tester.pumpWidget(MaterialApp(
         theme: CompounderTheme.light(),
         home: Builder(builder: (context) {
           empty = heatmapColor(context, 0);
-          full = heatmapColor(context, 4);
+          full = heatmapColor(context, 5);
           return const SizedBox();
         }),
       ));

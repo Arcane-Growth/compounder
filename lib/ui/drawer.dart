@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'habits.dart';
 import 'heatmap.dart';
+import 'planner.dart';
 import 'settings.dart';
 
 /// Exposes the shell's drawer opener to the tab screens so the hamburger can
@@ -120,6 +121,14 @@ class AppDrawer extends StatelessWidget {
         .push(MaterialPageRoute(builder: (_) => const HeatmapScreen()));
   }
 
+  void _openPlanner(BuildContext context) {
+    // Same invariant as _openSettings: pop is synchronous, so the push below
+    // cannot race a second tap.
+    Navigator.of(context).pop();
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const PlannerScreen()));
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -173,6 +182,11 @@ class AppDrawer extends StatelessWidget {
                 onTap: () => _selectTab(context, i),
               ),
             const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.event_note),
+              title: const Text('Day planner'),
+              onTap: () => _openPlanner(context),
+            ),
             ListTile(
               leading: const Icon(Icons.grid_on),
               title: const Text('Activity'),
