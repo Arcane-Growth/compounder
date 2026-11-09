@@ -143,9 +143,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   RadioListTile<AiSource>(
                     value: AiSource.compounder,
                     title: const Text('Compounder AI (subscription)'),
-                    subtitle: Text(subscribed
-                        ? 'Active${entitlement?.currentPeriodEnd != null ? ' · renews ${formatDate(entitlement!.currentPeriodEnd!.millisecondsSinceEpoch)}' : ''}'
-                        : 'Not active — subscribe or restore a purchase.'),
+                    subtitle: Text(entitlementSummary(entitlement, DateTime.now())),
                   ),
                   RadioListTile<AiSource>(
                     value: AiSource.byo,

@@ -230,12 +230,65 @@ void main() {
 
     test('status strings map to the documented states', () {
       expect(parseEntitlementStatus('active'), EntitlementStatus.active);
-      expect(parseEntitlementStatus('trialing'), EntitlementStatus.active);
+      expect(parseEntitlementStatus('trialing'), EntitlementStatus.trialing,
+          reason: 'a trial must not be collapsed into a paid subscription');
+      expect(parseEntitlementStatus('grace_period'), EntitlementStatus.active);
       expect(parseEntitlementStatus('pending'), EntitlementStatus.pending);
       expect(parseEntitlementStatus('expired'), EntitlementStatus.none);
       expect(parseEntitlementStatus('something-new'),
           EntitlementStatus.unknown);
       expect(parseEntitlementStatus(null), EntitlementStatus.unknown);
+    });
+
+    test('a trial grants access but stays a distinct trialing state', () {
+      final trial = Entitlement(
+        status: EntitlementStatus.trialing,
+        planCode: 'monthly',
+        currentPeriodEnd: now.add(const Duration(days: 7)),
+      );
+      expect(trial.isTrialing, isTrue);
+      expect(trial.isActiveAt(now), isTrue,
+          reason: 'quota applies during the trial');
+      final state = reduceSubscriptionState(
+          const SubscriptionPending('compounder_ai_monthly'),
+          PurchaseVerified(trial),
+          now: now);
+      expect(state, isA<SubscriptionPurchased>());
+      expect((state as SubscriptionPurchased).entitlement.status,
+          EntitlementStatus.trialing,
+          reason: 'the state machine must keep the trial status');
+    });
+
+    test('a trial that ended is not active and drops back to the plans', () {
+      final ended = Entitlement(
+        status: EntitlementStatus.trialing,
+        currentPeriodEnd: now.subtract(const Duration(days: 1)),
+      );
+      expect(ended.isActiveAt(now), isFalse);
+      final state = reduceSubscriptionState(
+          const SubscriptionAvailable([_monthly]),
+          EntitlementRefreshed(ended),
+          now: now);
+      expect(state, isA<SubscriptionAvailable>());
+    });
+
+    test('a converted trial is a paid active entitlement', () {
+      final converted = Entitlement(
+        status: parseEntitlementStatus('active'),
+        currentPeriodEnd: now.add(const Duration(days: 30)),
+      );
+      expect(converted.isTrialing, isFalse);
+      expect(converted.isActiveAt(now), isTrue);
+    });
+
+    test('a cached trial round-trips as trialing', () {
+      final cached = Entitlement.decodeCache(Entitlement(
+        status: EntitlementStatus.trialing,
+        planCode: 'monthly',
+        currentPeriodEnd: now.add(const Duration(days: 7)),
+      ).encodeCache());
+      expect(cached!.status, EntitlementStatus.trialing);
+      expect(cached.isTrialing, isTrue);
     });
   });
 

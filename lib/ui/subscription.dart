@@ -9,6 +9,26 @@ import '../subscription/state.dart';
 import '../subscription/store_gateway.dart';
 import 'widgets.dart';
 
+/// One-line entitlement status for Settings.
+///
+/// A trial is access without a completed purchase, so it says
+/// `Trial · ends <date>` and never `Active · renews`. The date comes from the
+/// gateway/store; the trial length is never assumed here.
+String entitlementSummary(Entitlement? entitlement, DateTime now) {
+  if (entitlement == null || !entitlement.isActiveAt(now)) {
+    return 'Not active — subscribe or restore a purchase.';
+  }
+  final end = entitlement.currentPeriodEnd;
+  if (entitlement.isTrialing) {
+    return end == null
+        ? 'Trial'
+        : 'Trial · ends ${formatDate(end.millisecondsSinceEpoch)}';
+  }
+  return end == null
+      ? 'Active'
+      : 'Active · renews ${formatDate(end.millisecondsSinceEpoch)}';
+}
+
 /// Compounder AI subscription: plans, purchase, restore and manage.
 ///
 /// Prices always come from the store; the screen never hardcodes one. Every
@@ -227,22 +247,32 @@ class _PurchasedCard extends StatelessWidget {
     final t = Theme.of(context).textTheme;
     final quota = entitlement.quota;
     final end = entitlement.currentPeriodEnd;
+    // A trial is access without a completed purchase: it gets its own copy and
+    // never claims a renewal date. The end date comes from the gateway/store,
+    // so the trial length is never hardcoded here.
+    final trialing = entitlement.isTrialing;
+    final title = trialing
+        ? (end == null
+            ? 'Trial'
+            : 'Trial — ends ${formatDate(end.millisecondsSinceEpoch)}')
+        : 'Compounder AI is active';
     return Card(
       color: scheme.surfaceContainerLow,
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            Icon(Icons.check_circle, color: scheme.primary, size: 20),
+            Icon(trialing ? Icons.timelapse : Icons.check_circle,
+                color: scheme.primary, size: 20),
             const SizedBox(width: 8),
             Expanded(
-              child: Text('Compounder AI is active', style: t.titleMedium),
+              child: Text(title, style: t.titleMedium),
             ),
           ]),
           const SizedBox(height: 8),
           if (entitlement.planCode.isNotEmpty)
             Text('Plan: ${entitlement.planCode}', style: t.bodyMedium),
-          if (end != null)
+          if (!trialing && end != null)
             Text('Renews: ${formatDate(end.millisecondsSinceEpoch)}',
                 style: t.bodyMedium),
           if (quota != null)

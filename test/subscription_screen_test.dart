@@ -7,6 +7,7 @@ import 'package:compounder/subscription/secrets.dart';
 import 'package:compounder/subscription/service.dart';
 import 'package:compounder/subscription/store_gateway.dart';
 import 'package:compounder/ui/subscription.dart';
+import 'package:compounder/ui/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -115,6 +116,14 @@ Entitlement _active() => Entitlement(
       fetchedAt: DateTime.now(),
     );
 
+Entitlement _trial({required DateTime end}) => Entitlement(
+      status: EntitlementStatus.trialing,
+      planCode: 'monthly',
+      currentPeriodEnd: end,
+      quota: const Quota(dailyLimit: 20, dailyUsed: 3),
+      fetchedAt: DateTime.now(),
+    );
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   sqfliteFfiInit();
@@ -196,6 +205,74 @@ void main() {
     expect(find.text('Manage subscription'), findsOneWidget);
     expect(store.aiSource, AiSource.compounder);
     expect(store.gatewayApiKey, 'gw-key-123');
+  });
+
+  testWidgets('a trial renders "Trial — ends <date>", never the paid copy',
+      (tester) async {
+    final end = DateTime.now().add(const Duration(days: 7));
+    await store.saveEntitlement(_trial(end: end));
+    await pumpScreen(tester);
+
+    expect(find.text('Trial — ends ${formatDate(end.millisecondsSinceEpoch)}'),
+        findsOneWidget);
+    expect(find.text('Compounder AI is active'), findsNothing,
+        reason: 'a trial is not a completed purchase');
+    expect(find.textContaining('Renews'), findsNothing,
+        reason: 'a trial has an end date, not a renewal');
+    expect(find.textContaining('Requests left today: 17 of 20'), findsOneWidget,
+        reason: 'quota applies during the trial');
+  });
+
+  testWidgets('a trial that converted to paid renders the active copy',
+      (tester) async {
+    storeGateway.products = const [_monthly];
+    storeGateway.purchaseEvent = const PurchaseEvent(
+      outcome: PurchaseOutcome.purchased,
+      productId: 'compounder_ai_monthly',
+      token: 'play-token-abc',
+    );
+    gateway.verifyResult =
+        GatewayEntitlement(apiKey: 'gw-key-123', entitlement: _active());
+    await pumpScreen(tester);
+
+    await tester.tap(find.text('Subscribe'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Compounder AI is active'), findsOneWidget);
+    expect(find.textContaining('Renews:'), findsOneWidget);
+    expect(find.textContaining('Trial'), findsNothing);
+  });
+
+  testWidgets('an ended trial drops back to the plans, not a trial card',
+      (tester) async {
+    storeGateway.products = const [_monthly];
+    await store.saveEntitlement(
+        _trial(end: DateTime.now().subtract(const Duration(days: 1))));
+    await pumpScreen(tester);
+
+    expect(find.text('Subscribe'), findsOneWidget);
+    expect(find.textContaining('Trial'), findsNothing);
+    expect(find.text('Compounder AI is active'), findsNothing);
+  });
+
+  test('the settings summary never calls a trial active', () {
+    final now = DateTime(2026, 11, 9, 12);
+    final end = now.add(const Duration(days: 7));
+    expect(entitlementSummary(_trial(end: end), now),
+        'Trial · ends ${formatDate(end.millisecondsSinceEpoch)}');
+    expect(
+        entitlementSummary(
+            Entitlement(
+              status: EntitlementStatus.active,
+              planCode: 'monthly',
+              currentPeriodEnd: now.add(const Duration(days: 30)),
+            ),
+            now),
+        startsWith('Active · renews '));
+    expect(
+        entitlementSummary(
+            _trial(end: now.subtract(const Duration(days: 1))), now),
+        'Not active — subscribe or restore a purchase.');
   });
 
   testWidgets('a pending purchase shows the waiting state', (tester) async {

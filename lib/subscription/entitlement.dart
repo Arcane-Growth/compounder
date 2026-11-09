@@ -8,7 +8,11 @@ import 'dart:convert';
 enum AiSource { byo, compounder }
 
 /// Subscription status as reported by the gateway.
-enum EntitlementStatus { none, active, pending, expired, unknown }
+///
+/// [trialing] is a distinct state: the trial grants access (quota applies) but
+/// it is not a completed purchase, so the UI must never call it "active" or
+/// claim a renewal date. [currentPeriodEnd] is the trial end in that case.
+enum EntitlementStatus { none, active, trialing, pending, expired, unknown }
 
 /// Daily request and monthly token allowance attached to an entitlement.
 class Quota {
@@ -65,14 +69,21 @@ class Entitlement {
     this.fetchedAt,
   });
 
-  /// Whether the subscription grants access at [now]. A known period end that
-  /// has passed means the cached entitlement is stale even if the gateway last
-  /// said "active".
+  /// Whether the entitlement grants access at [now]. A trial grants access
+  /// while it runs, so [EntitlementStatus.trialing] counts. A known period end
+  /// that has passed means the cached entitlement is stale even if the gateway
+  /// last said "active" or "trialing".
   bool isActiveAt(DateTime now) {
-    if (status != EntitlementStatus.active) return false;
+    if (status != EntitlementStatus.active &&
+        status != EntitlementStatus.trialing) {
+      return false;
+    }
     final end = currentPeriodEnd;
     return end == null || end.isAfter(now);
   }
+
+  /// True while this entitlement is a free trial rather than a paid plan.
+  bool get isTrialing => status == EntitlementStatus.trialing;
 
   Entitlement copyWith({Quota? quota}) => Entitlement(
         status: status,
@@ -129,9 +140,10 @@ EntitlementStatus parseEntitlementStatus(Object? raw) {
   final value = raw is String ? raw.trim().toLowerCase() : '';
   switch (value) {
     case 'active':
-    case 'trialing':
     case 'grace_period':
       return EntitlementStatus.active;
+    case 'trialing':
+      return EntitlementStatus.trialing;
     case 'pending':
     case 'incomplete':
       return EntitlementStatus.pending;
