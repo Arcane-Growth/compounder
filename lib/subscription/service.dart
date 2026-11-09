@@ -92,6 +92,17 @@ class SubscriptionService extends ChangeNotifier {
     try {
       final result = await gateway.entitlement(key);
       await store.saveEntitlement(result.entitlement);
+      // A gateway-confirmed inactive entitlement (expired trial, past-due
+      // outside the grace window, canceled) cannot use the gateway any more:
+      // every request would be refused with 402. Drop back to the user's own
+      // endpoint instead of leaving the coach pointed at a dead source. An
+      // unknown status is left alone — the app fails open rather than revoking
+      // on a status it does not understand.
+      if (!result.entitlement.isActiveAt(now()) &&
+          result.entitlement.status != EntitlementStatus.unknown &&
+          store.aiSource == AiSource.compounder) {
+        await store.setAiSource(AiSource.byo);
+      }
       _set(reduceSubscriptionState(
           _state, EntitlementRefreshed(result.entitlement), now: now()));
     } on GatewayException {

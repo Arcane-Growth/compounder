@@ -260,10 +260,10 @@ class GatewayClient {
           entitlementJson is Map ? entitlementJson['status'] : null),
       planCode: json['plan_code'] is String ? json['plan_code'] as String : '',
       currentPeriodEnd: entitlementJson is Map
-          ? _periodEnd(entitlementJson['current_period_end'])
+          ? _timestamp(entitlementJson['current_period_end'])
           : null,
       graceEndsAt: entitlementJson is Map
-          ? _periodEnd(entitlementJson['grace_ends_at'])
+          ? _timestamp(entitlementJson['grace_ends_at'])
           : null,
       quota: quotaJson is Map
           ? Quota.fromJson(quotaJson.cast<String, Object?>())
@@ -276,7 +276,9 @@ class GatewayClient {
     );
   }
 
-  DateTime? _periodEnd(Object? raw) {
+  /// Parses a timestamp from either an RFC 3339 string or an epoch number.
+  /// Used for both `current_period_end` and `grace_ends_at`.
+  DateTime? _timestamp(Object? raw) {
     if (raw is String) return DateTime.tryParse(raw)?.toLocal();
     if (raw is num) {
       final value = raw.toInt();

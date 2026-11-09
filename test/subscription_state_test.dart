@@ -347,6 +347,63 @@ void main() {
       expect(cached.graceEndsAt, isNotNull);
       expect(cached.isActiveAt(now), isTrue);
     });
+
+    test('an out-of-grace past_due refresh drops back to the plans', () {
+      final expired = Entitlement(
+        status: EntitlementStatus.pastDue,
+        planCode: 'monthly',
+        currentPeriodEnd: now.subtract(const Duration(days: 2)),
+        graceEndsAt: now.subtract(const Duration(hours: 1)),
+      );
+      expect(expired.isActiveAt(now), isFalse);
+
+      final refreshed = reduceSubscriptionState(
+          const SubscriptionAvailable([_monthly]),
+          EntitlementRefreshed(expired),
+          now: now);
+      expect(refreshed, isA<SubscriptionAvailable>(),
+          reason: 'once the grace window closes the user must see the plans');
+      expect((refreshed as SubscriptionAvailable).products.single.id,
+          _monthly.id);
+
+      // A purchase verified after the grace window closed must not claim
+      // access either: it stays pending rather than purchased.
+      final verified = reduceSubscriptionState(
+          const SubscriptionPending('compounder_ai_monthly'),
+          PurchaseVerified(expired),
+          now: now);
+      expect(verified, isA<SubscriptionPending>(),
+          reason: 'a verified-but-inactive entitlement must not look purchased');
+    });
+
+    test('a non-past-due entitlement omits grace_ends_at from the cache', () {
+      final active = Entitlement(
+        status: EntitlementStatus.active,
+        planCode: 'monthly',
+        currentPeriodEnd: now.add(const Duration(days: 30)),
+      );
+      expect(active.toJson().containsKey('grace_ends_at'), isFalse,
+          reason: 'only a past-due entitlement carries a grace end');
+      expect(active.encodeCache(), isNot(contains('grace_ends_at')));
+
+      final trialing = Entitlement(
+        status: EntitlementStatus.trialing,
+        currentPeriodEnd: now.add(const Duration(days: 7)),
+      );
+      expect(trialing.toJson().containsKey('grace_ends_at'), isFalse);
+
+      // A response that spells the field out as null must decode to a null
+      // grace end, not to an epoch-zero date.
+      final decoded = Entitlement.fromJson({
+        'status': 'active',
+        'plan_code': 'monthly',
+        'current_period_end':
+            now.add(const Duration(days: 30)).toUtc().toIso8601String(),
+        'grace_ends_at': null,
+      });
+      expect(decoded.graceEndsAt, isNull);
+      expect(decoded.isActiveAt(now), isTrue);
+    });
   });
 
   group('subscription service', () {
@@ -511,6 +568,56 @@ void main() {
       await service.buy('compounder_ai_monthly');
       await pumpEventQueue();
       expect(service.state, isA<SubscriptionAvailable>());
+    });
+
+    test('an expired grace window drops the coach back to the own endpoint',
+        () async {
+      gateway.verifyResult = GatewayEntitlement(
+          apiKey: 'gw-key-123', entitlement: _active());
+      storeGateway.purchaseEvent = const PurchaseEvent(
+        outcome: PurchaseOutcome.purchased,
+        productId: 'compounder_ai_monthly',
+        token: 'play-token-abc',
+      );
+      await service.load();
+      await service.buy('compounder_ai_monthly');
+      await pumpEventQueue();
+      expect(store.aiSource, AiSource.compounder);
+
+      gateway.entitlementResult = GatewayEntitlement(
+          entitlement: Entitlement(
+        status: EntitlementStatus.pastDue,
+        planCode: 'monthly',
+        currentPeriodEnd: DateTime.now().subtract(const Duration(days: 2)),
+        graceEndsAt: DateTime.now().subtract(const Duration(hours: 1)),
+      ));
+      await service.refreshEntitlement();
+
+      expect(store.aiSource, AiSource.byo,
+          reason: 'the gateway refuses every request outside the grace window, '
+              'so the coach must stop routing to it');
+      expect(store.entitlement!.isActiveAt(DateTime.now()), isFalse);
+    });
+
+    test('an unknown gateway status does not switch the source', () async {
+      gateway.verifyResult = GatewayEntitlement(
+          apiKey: 'gw-key-123', entitlement: _active());
+      storeGateway.purchaseEvent = const PurchaseEvent(
+        outcome: PurchaseOutcome.purchased,
+        productId: 'compounder_ai_monthly',
+        token: 'play-token-abc',
+      );
+      await service.load();
+      await service.buy('compounder_ai_monthly');
+      await pumpEventQueue();
+      expect(store.aiSource, AiSource.compounder);
+
+      gateway.entitlementResult = const GatewayEntitlement(
+          entitlement: Entitlement(status: EntitlementStatus.unknown));
+      await service.refreshEntitlement();
+
+      expect(store.aiSource, AiSource.compounder,
+          reason: 'a status the app does not understand must fail open');
     });
   });
 }

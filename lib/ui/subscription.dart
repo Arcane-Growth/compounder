@@ -22,10 +22,7 @@ String entitlementSummary(Entitlement? entitlement, DateTime now) {
   if (entitlement.isPastDue) {
     // The stored period end is already in the past for a past-due
     // subscription; the grace end is the date that matters.
-    final grace = entitlement.graceEndsAt;
-    return grace == null
-        ? 'Payment failed — access continues'
-        : 'Payment failed — access ends ${formatDate(grace.millisecondsSinceEpoch)}';
+    return _pastDueCopy(entitlement.graceEndsAt!);
   }
   if (entitlement.isTrialing) {
     return end == null
@@ -36,6 +33,16 @@ String entitlementSummary(Entitlement? entitlement, DateTime now) {
       ? 'Active'
       : 'Active · renews ${formatDate(end.millisecondsSinceEpoch)}';
 }
+
+/// Copy for a past-due subscription that still has access.
+///
+/// Only reached for an entitlement [Entitlement.isActiveAt] reports as active,
+/// which for [EntitlementStatus.pastDue] requires a non-null grace end in the
+/// future — so [graceEnd] is always set here. There is deliberately no
+/// "access continues" fallback: a past-due entitlement without a grace end is
+/// not active and renders as "Not active" instead.
+String _pastDueCopy(DateTime graceEnd) =>
+    'Payment failed — access ends ${formatDate(graceEnd.millisecondsSinceEpoch)}';
 
 /// Compounder AI subscription: plans, purchase, restore and manage.
 ///
@@ -263,30 +270,14 @@ class _PurchasedCard extends StatelessWidget {
     // keeps access but must say the payment failed and must not claim a
     // renewal date (the stored period end is already in the past).
     final pastDue = entitlement.isPastDue;
-    final grace = entitlement.graceEndsAt;
-    final title = trialing
-        ? (end == null
-            ? 'Trial'
-            : 'Trial — ends ${formatDate(end.millisecondsSinceEpoch)}')
-        : pastDue
-            ? (grace == null
-                ? 'Payment failed — access continues'
-                : 'Payment failed — access ends ${formatDate(grace.millisecondsSinceEpoch)}')
-            : 'Compounder AI is active';
+    final title = _purchasedTitle(entitlement);
     return Card(
       color: scheme.surfaceContainerLow,
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            Icon(
-                pastDue
-                    ? Icons.warning_amber
-                    : trialing
-                        ? Icons.timelapse
-                        : Icons.check_circle,
-                color: scheme.primary,
-                size: 20),
+            Icon(_purchasedIcon(entitlement), color: scheme.primary, size: 20),
             const SizedBox(width: 8),
             Expanded(
               child: Text(title, style: t.titleMedium),
@@ -316,6 +307,29 @@ class _PurchasedCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Title for the purchased card.
+///
+/// A trial is access without a completed purchase, so it never claims a
+/// renewal date; a past-due subscription keeps access but must say the payment
+/// failed. Both dates come from the gateway/store, never from a hardcoded
+/// trial length.
+String _purchasedTitle(Entitlement entitlement) {
+  if (entitlement.isPastDue) return _pastDueCopy(entitlement.graceEndsAt!);
+  if (entitlement.isTrialing) {
+    final end = entitlement.currentPeriodEnd;
+    return end == null
+        ? 'Trial'
+        : 'Trial — ends ${formatDate(end.millisecondsSinceEpoch)}';
+  }
+  return 'Compounder AI is active';
+}
+
+IconData _purchasedIcon(Entitlement entitlement) {
+  if (entitlement.isPastDue) return Icons.warning_amber;
+  if (entitlement.isTrialing) return Icons.timelapse;
+  return Icons.check_circle;
 }
 
 class _RestoreRow extends StatelessWidget {
