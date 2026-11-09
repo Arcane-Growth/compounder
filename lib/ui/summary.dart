@@ -35,6 +35,10 @@ class _SummaryScreenState extends State<SummaryScreen> {
     final store = context.read<AppStore>();
     _detail = store.workoutDetail(widget.workoutId);
     _prs = store.prSummary(widget.workoutId);
+    // Observe the PR future as soon as it exists: the FutureBuilder only
+    // subscribes once the workout detail has loaded, so a query that fails
+    // faster than that would otherwise surface as an unhandled async error.
+    _prs.then<void>((_) {}, onError: (Object _) {});
   }
 
   void _toggle(int workoutExerciseId) {
@@ -151,10 +155,26 @@ class _SummaryScreenState extends State<SummaryScreen> {
     return FutureBuilder<List<PrSummary>>(
       future: _prs,
       builder: (context, snap) {
-        final prs = snap.data ?? const <PrSummary>[];
-        if (prs.isEmpty) return const SizedBox.shrink();
         final scheme = Theme.of(context).colorScheme;
         final t = Theme.of(context).textTheme;
+        if (snap.hasError) {
+          // A failed PR query must not look like "this session had no PRs":
+          // log the raw error and show a quiet inline row instead.
+          debugPrint('SummaryScreen(${widget.workoutId}): PR summary failed: '
+              '${snap.error}');
+          return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SectionHeader('Personal records'),
+                const SizedBox(height: 8),
+                Text('Could not load personal records for this session.',
+                    style: t.bodySmall
+                        ?.copyWith(color: scheme.onSurfaceVariant)),
+                const SizedBox(height: 16),
+              ]);
+        }
+        final prs = snap.data ?? const <PrSummary>[];
+        if (prs.isEmpty) return const SizedBox.shrink();
         return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const SectionHeader('Personal records'),
           const SizedBox(height: 8),
@@ -183,7 +203,9 @@ class _SummaryScreenState extends State<SummaryScreen> {
     if (pr.isBaseline) return 'First PR · $newBest';
     final previous =
         '${trimZero(fromKg(pr.previousBestKg, unit))} ${unit.label}';
-    final delta = '+${trimZero(fromKg(pr.deltaKg, unit))} ${unit.label}';
+    final deltaKg = fromKg(pr.deltaKg, unit);
+    final delta =
+        '${deltaKg >= 0 ? '+' : ''}${trimZero(deltaKg)} ${unit.label}';
     return 'Previous best $previous → new best $newBest ($delta)';
   }
 

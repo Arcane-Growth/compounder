@@ -48,6 +48,27 @@ class _FakeWorkoutSounds implements WorkoutSounds {
 
 const _pathProviderChannel = MethodChannel('plugins.flutter.io/path_provider');
 
+/// A store whose PR query fails, so the summary's error path can be exercised
+/// without corrupting a real database.
+class _FailingPrStore extends ChangeNotifier implements AppStore {
+  @override
+  Future<WorkoutDetail?> workoutDetail(int id) async => const WorkoutDetail(
+        Workout(id: 1, name: 'Leg day', startedAt: 0, endedAt: 1),
+        <ExerciseView>[],
+      );
+
+  @override
+  Future<List<PrSummary>> prSummary(int id) async =>
+      throw Exception('database_closed: the database is closed');
+
+  @override
+  WeightUnit get unit => WeightUnit.kg;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      super.noSuchMethod(invocation);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   sqfliteFfiInit();
@@ -377,6 +398,97 @@ void main() {
       final active = await seedActive(exerciseId);
       await store.addSet(active.entryId, 100, 5);
       expect(await store.prSummary(active.workoutId), isEmpty);
+    });
+
+    test('a historical summary ignores sessions that finished after it',
+        () async {
+      // Session A is the first-ever session; session B comes later and is
+      // heavier. Summarising A must still report the baseline it established,
+      // not a "previous best" borrowed from the future.
+      final exerciseId = await seedExercise();
+      final a = await seedActive(exerciseId);
+      await store.addSet(a.entryId, 100, 5);
+      await store.finishWorkout(a.workoutId);
+
+      final b = await seedActive(exerciseId);
+      await store.addSet(b.entryId, 120, 5);
+      await store.finishWorkout(b.workoutId);
+
+      final prsA = await store.prSummary(a.workoutId);
+      expect(prsA, hasLength(1));
+      expect(prsA.single.previousBestKg, 0,
+          reason: 'session B finished after A and must not be its baseline');
+      expect(prsA.single.isBaseline, isTrue);
+      expect(prsA.single.newBestKg, _e1rm(100, 5));
+
+      // The later session still sees A as its prior best: the bound is
+      // "finished before", not "exclude everything".
+      final prsB = await store.prSummary(b.workoutId);
+      expect(prsB, hasLength(1));
+      expect(prsB.single.previousBestKg, _e1rm(100, 5));
+      expect(prsB.single.isBaseline, isFalse);
+    });
+
+    test('the same exercise twice in one workout shares one session baseline',
+        () async {
+      final exerciseId = await seedExercise();
+      final active = await seedActive(exerciseId);
+      final heavy = await store.addSet(active.entryId, 100, 5);
+      // The same exercise logged a second time in the same session.
+      final secondEntry = await store.db.insert('workout_exercises', {
+        'workout_id': active.workoutId,
+        'exercise_id': exerciseId,
+        'position': 1,
+      });
+      final lighter = await store.addSet(secondEntry, 90, 5);
+
+      expect((await setById(heavy)).isPr, isTrue,
+          reason: 'the first-ever 100 kg set is the baseline PR');
+      expect((await setById(lighter)).isPr, isFalse,
+          reason: '100 kg was already performed earlier in the same session');
+
+      await store.finishWorkout(active.workoutId);
+      final row =
+          store.history.firstWhere((r) => r.workoutId == active.workoutId);
+      expect(row.prCount, 1,
+          reason: 'the duplicate entry must not inflate the PR count');
+    });
+
+    test('an unfinished placeholder in a prior session does not suppress a PR',
+        () async {
+      final exerciseId = await seedExercise();
+      final priorWorkout = await store.db.insert('workouts', {
+        'name': 'Prior leg day',
+        'started_at': 1000,
+        'ended_at': 2000,
+      });
+      final priorEntry = await store.db.insert('workout_exercises', {
+        'workout_id': priorWorkout,
+        'exercise_id': exerciseId,
+        'position': 0,
+      });
+      await store.db.insert('workout_sets', {
+        'workout_exercise_id': priorEntry,
+        'position': 0,
+        'weight_kg': 100.0,
+        'reps': 5,
+        'completed_at': 1500,
+        'is_warmup': 0,
+      });
+      // A planned 120 kg set that was never performed.
+      await store.db.insert('workout_sets', {
+        'workout_exercise_id': priorEntry,
+        'position': 1,
+        'weight_kg': 120.0,
+        'reps': 5,
+        'completed_at': null,
+        'is_warmup': 0,
+      });
+
+      final active = await seedActive(exerciseId);
+      final setId = await store.addSet(active.entryId, 110, 5);
+      expect((await setById(setId)).isPr, isTrue,
+          reason: 'only performed prior sets count as the previous best');
     });
 
     test('history carries the per-session PR count', () async {
@@ -760,6 +872,28 @@ void main() {
 
       expect(find.textContaining('1 PR'), findsOneWidget,
           reason: 'the history row must surface the session PR count');
+    });
+
+    testWidgets('a failed PR query surfaces an error row, not an empty section',
+        (tester) async {
+      await tester.pumpWidget(
+        ChangeNotifierProvider<AppStore>.value(
+          value: _FailingPrStore(),
+          child: MaterialApp(
+            theme: CompounderTheme.light(),
+            home: const SummaryScreen(1),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('PERSONAL RECORDS'), findsOneWidget,
+          reason: 'a DB error must not look like "this session had no PRs"');
+      expect(find.text('Could not load personal records for this session.'),
+          findsOneWidget);
+      expect(find.text('EXERCISES'), findsOneWidget,
+          reason: 'the rest of the summary still renders');
     });
   });
 }

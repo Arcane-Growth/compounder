@@ -811,19 +811,40 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
 
   // ------------------------------------------------------ personal records
 
-  /// Best e1RM for [exerciseId] across finished sessions other than
-  /// [excludeWorkoutId]. Zero when the exercise has no prior history.
+  /// Best e1RM for [exerciseId] across sessions that finished before
+  /// [workoutId]. Zero when the exercise has no prior history.
   ///
-  /// Mirrors [progressFor]'s shape: every set in a finished session counts,
-  /// warm-ups and zero-rep placeholders are skipped (audit B4).
-  Future<double> _priorBestKg(int exerciseId, int excludeWorkoutId) async {
-    final rows = await db.rawQuery('''
+  /// "Prior" is bounded by the target session's finish time, tie-broken by id,
+  /// so a historical summary never sees a later session's numbers: the
+  /// previous best has to be the baseline the user actually faced at the time,
+  /// not a value that moves forward as they keep training. A session that is
+  /// still in progress has no finish time, so every finished session counts as
+  /// prior for it.
+  ///
+  /// Only performed sets count: warm-ups, zero-rep placeholders and sets that
+  /// were never completed are skipped, mirroring the current-session exclusion
+  /// in [_recomputePrFlags].
+  Future<double> _priorBestKg(
+      DatabaseExecutor ex, int exerciseId, int workoutId) async {
+    final target = await ex.query('workouts',
+        columns: ['ended_at'],
+        where: 'id = ?',
+        whereArgs: [workoutId],
+        limit: 1);
+    final endedAt = target.isEmpty ? null : target.first['ended_at'] as int?;
+    final args = <Object?>[exerciseId, workoutId];
+    var scope = '';
+    if (endedAt != null) {
+      scope = 'AND (w.ended_at < ? OR (w.ended_at = ? AND w.id < ?))';
+      args.addAll([endedAt, endedAt, workoutId]);
+    }
+    final rows = await ex.rawQuery('''
         SELECT s.weight_kg, s.reps FROM workouts w
         JOIN workout_exercises we ON we.workout_id = w.id
         JOIN workout_sets s ON s.workout_exercise_id = we.id
         WHERE we.exercise_id = ? AND w.ended_at IS NOT NULL AND w.id != ?
-          AND s.is_warmup = 0 AND s.reps >= 1''',
-        [exerciseId, excludeWorkoutId]);
+          AND s.is_warmup = 0 AND s.reps >= 1 AND s.completed_at IS NOT NULL
+          $scope''', args);
     return formatE1rm(e1rmMaxOf(rows
         .map((r) => (
               (r['weight_kg'] as num).toDouble(),
@@ -868,44 +889,65 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
   /// Recomputing the session in one pass keeps the stored flags consistent
   /// with the detection rule instead of drifting from it.
   ///
+  /// The same exercise can appear more than once in a workout, so the session
+  /// baseline is accumulated across every entry for that exercise, ordered by
+  /// when each set was performed (insertion order breaks ties). Building it per
+  /// entry would let a lighter set in a later entry claim a PR it does not own.
+  ///
   /// Only completed sets are flagged: an untouched placeholder is not a
   /// performed set, and completing it is what triggers the celebration.
+  ///
+  /// Runs in a transaction so a mid-pass failure cannot leave the session with
+  /// a half-updated set of flags.
   Future<void> _recomputePrFlags(int workoutId) async {
-    final entries = await db.query('workout_exercises',
-        where: 'workout_id = ?', whereArgs: [workoutId], orderBy: 'position');
-    for (final entry in entries) {
-      final entryId = entry['id'] as int;
-      final exerciseId = entry['exercise_id'] as int;
-      final prior = await _priorBestKg(exerciseId, workoutId);
-      final rows = await db.query('workout_sets',
-          where: 'workout_exercise_id = ?',
-          whereArgs: [entryId],
+    await db.transaction((txn) async {
+      final entries = await txn.query('workout_exercises',
+          where: 'workout_id = ?',
+          whereArgs: [workoutId],
           orderBy: 'position, id');
-      final earlier = <(double, int)>[];
-      for (final row in rows) {
-        final set = WorkoutSet.fromMap(row);
-        final assessment = assessPr(
-          weightKg: set.weightKg,
-          reps: set.reps,
-          isWarmup: set.isWarmup,
-          priorBestKg: prior,
-          earlierSets: earlier,
-        );
-        final isPr = set.completedAt != null && assessment.isPr;
-        final prE1rm = isPr ? assessment.e1rmKg : null;
-        if (set.isPr != isPr || set.prE1rmKg != prE1rm) {
-          await db.update(
-              'workout_sets', {'is_pr': isPr ? 1 : 0, 'pr_e1rm_kg': prE1rm},
-              where: 'id = ?', whereArgs: [set.id]);
-        }
-        if (!set.isWarmup && set.reps >= 1 && set.weightKg >= 0) {
-          // Only performed sets count as "earlier in this session": a heavier
-          // set that is still an untouched placeholder must not suppress the
-          // PR for a set the user actually completed.
-          if (set.completedAt != null) earlier.add((set.weightKg, set.reps));
+      final byExercise = <int, List<WorkoutSet>>{};
+      for (final entry in entries) {
+        final rows = await txn.query('workout_sets',
+            where: 'workout_exercise_id = ?', whereArgs: [entry['id'] as int]);
+        byExercise
+            .putIfAbsent(entry['exercise_id'] as int, () => <WorkoutSet>[])
+            .addAll(rows.map(WorkoutSet.fromMap));
+      }
+      for (final group in byExercise.entries) {
+        final prior = await _priorBestKg(txn, group.key, workoutId);
+        final sets = [...group.value]..sort((a, b) {
+            final ac = a.completedAt;
+            final bc = b.completedAt;
+            if (ac != null && bc != null && ac != bc) return ac.compareTo(bc);
+            if (ac == null && bc != null) return 1;
+            if (ac != null && bc == null) return -1;
+            return a.id.compareTo(b.id);
+          });
+        final earlier = <(double, int)>[];
+        for (final set in sets) {
+          final assessment = assessPr(
+            weightKg: set.weightKg,
+            reps: set.reps,
+            isWarmup: set.isWarmup,
+            priorBestKg: prior,
+            earlierSets: earlier,
+          );
+          final isPr = set.completedAt != null && assessment.isPr;
+          final prE1rm = isPr ? assessment.e1rmKg : null;
+          if (set.isPr != isPr || set.prE1rmKg != prE1rm) {
+            await txn.update(
+                'workout_sets', {'is_pr': isPr ? 1 : 0, 'pr_e1rm_kg': prE1rm},
+                where: 'id = ?', whereArgs: [set.id]);
+          }
+          if (!set.isWarmup && set.reps >= 1 && set.weightKg >= 0) {
+            // Only performed sets count as "earlier in this session": a heavier
+            // set that is still an untouched placeholder must not suppress the
+            // PR for a set the user actually completed.
+            if (set.completedAt != null) earlier.add((set.weightKg, set.reps));
+          }
         }
       }
-    }
+    });
   }
 
   /// The personal records set in [workoutId], one row per exercise, with the
@@ -932,7 +974,7 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
     }
     final summaries = <PrSummary>[];
     for (final entry in byExercise.entries) {
-      final previous = await _priorBestKg(entry.key, workoutId);
+      final previous = await _priorBestKg(db, entry.key, workoutId);
       summaries.add(PrSummary(
         exerciseId: entry.key,
         exerciseName: entry.value.name,
