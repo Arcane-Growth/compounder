@@ -6,6 +6,7 @@ import 'package:compounder/health/service.dart';
 import 'package:compounder/services/notify.dart';
 import 'package:compounder/ui/drawer.dart';
 import 'package:compounder/ui/habits.dart';
+import 'package:compounder/ui/heatmap.dart';
 import 'package:compounder/ui/settings.dart';
 import 'package:compounder/ui/shell.dart';
 import 'package:compounder/ui/widgets.dart';
@@ -344,6 +345,31 @@ void main() {
         find.byType(HabitsScreen, skipOffstage: false),
         findsOneWidget,
         reason: 'Habits must be pushed exactly once',
+      );
+    });
+
+    testWidgets('Activity pushes exactly one route and closes the drawer',
+        (tester) async {
+      await pumpShell(tester);
+
+      await tester.tap(find.byIcon(Icons.menu).first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.descendant(
+        of: find.byType(AppDrawer),
+        matching: find.text('Activity'),
+      ));
+      await tester.pumpAndSettle();
+      // HeatmapScreen loads its aggregate query in initState; let the real
+      // sqflite work finish so no fake timer outlives the test.
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)));
+      await tester.pump();
+
+      expect(find.byType(Drawer), findsNothing);
+      expect(
+        find.byType(HeatmapScreen, skipOffstage: false),
+        findsOneWidget,
+        reason: 'Activity must be pushed exactly once',
       );
     });
 

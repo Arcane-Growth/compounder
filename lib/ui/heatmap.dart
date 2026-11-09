@@ -84,23 +84,26 @@ class HeatmapLegend extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final labelStyle =
         t.labelSmall?.copyWith(color: scheme.onSurfaceVariant);
-    return Row(mainAxisSize: MainAxisSize.min, children: [
-      Text('Less', style: labelStyle),
-      const SizedBox(width: 6),
-      for (var i = 0; i <= 4; i++) ...[
-        Container(
-          width: swatchSize,
-          height: swatchSize,
-          decoration: BoxDecoration(
-            color: heatmapColor(context, i),
-            borderRadius: BorderRadius.circular(2),
+    // Wrap, not Row: five swatches plus "Less"/"More" overflowed by 24px at
+    // 320dp/2.0. Wrapping keeps every swatch visible at accessibility scales.
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text('Less', style: labelStyle),
+        for (var i = 0; i <= 4; i++)
+          Container(
+            width: swatchSize,
+            height: swatchSize,
+            decoration: BoxDecoration(
+              color: heatmapColor(context, i),
+              borderRadius: BorderRadius.circular(2),
+            ),
           ),
-        ),
-        const SizedBox(width: 3),
+        Text('More', style: labelStyle),
       ],
-      const SizedBox(width: 3),
-      Text('More', style: labelStyle),
-    ]);
+    );
   }
 }
 
@@ -180,10 +183,9 @@ class ActivityHeatmap extends StatelessWidget {
       );
     }
 
-    final grid = Row(
+    final gridColumns = Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (showWeekdayLabels) _weekdayLabels(context),
         for (final week in columns)
           Padding(
             padding: EdgeInsets.only(right: gap),
@@ -199,11 +201,33 @@ class ActivityHeatmap extends StatelessWidget {
       ],
     );
 
+    // Month labels and the grid share one column origin: the label row sits
+    // directly above the grid inside the same Column, and the weekday gutter
+    // is a sibling. Positioning the labels from x=0 while the grid started
+    // after the weekday labels put every month label over the gutter.
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (showMonthLabels) _monthLabels(context, columns, columnWidth),
-        grid,
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (showMonthLabels) const SizedBox(height: 16),
+                if (showWeekdayLabels) _weekdayLabels(context),
+              ],
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (showMonthLabels)
+                  _monthLabels(context, columns, columnWidth),
+                gridColumns,
+              ],
+            ),
+          ],
+        ),
         if (showLegend) ...[
           const SizedBox(height: 12),
           const HeatmapLegend(),

@@ -95,7 +95,17 @@ class _HomeTabState extends State<HomeTab> {
           TintedIconCircle(Icons.eco,
               background: scheme.primary, foreground: scheme.onPrimary),
           const SizedBox(width: 10),
-          Text('Compounder', style: t.titleLarge),
+          // The AppBar title is bounded by the screen width; at accessibility
+          // text scales an unconstrained Text overflows the Row.
+          Expanded(
+            child: Text(
+              'Compounder',
+              style: t.titleLarge,
+              maxLines: 1,
+              softWrap: false,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ]),
       ),
       body: ListView(
@@ -159,8 +169,12 @@ class _HomeTabState extends State<HomeTab> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Row(children: [
-                            Text('Last 12 weeks', style: t.titleMedium),
-                            const Spacer(),
+                            Expanded(
+                              child: Text('Last 12 weeks',
+                                  style: t.titleMedium,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis),
+                            ),
                             Icon(Icons.chevron_right, color: scheme.primary),
                           ]),
                           const SizedBox(height: 12),
@@ -308,20 +322,18 @@ class _TodayHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final t = Theme.of(context).textTheme;
-    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Expanded(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(formatDate(today.millisecondsSinceEpoch), style: t.titleLarge),
-          const SizedBox(height: 4),
-          Text(
-            loggedPillars == 0
-                ? 'Nothing logged yet today'
-                : '$loggedPillars of 4 pillars logged today',
-            style: t.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-          ),
-        ]),
+    // Stacked rather than a Row: at accessibility text scales the fixed-width
+    // streak chip beside an Expanded column overflowed by 31px at 320dp/2.0.
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(formatDate(today.millisecondsSinceEpoch), style: t.titleLarge),
+      const SizedBox(height: 4),
+      Text(
+        loggedPillars == 0
+            ? 'Nothing logged yet today'
+            : '$loggedPillars of 4 pillars logged today',
+        style: t.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
       ),
-      const SizedBox(width: 12),
+      const SizedBox(height: 10),
       Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
@@ -332,9 +344,13 @@ class _TodayHeader extends StatelessWidget {
           Icon(Icons.local_fire_department,
               size: 18, color: scheme.onSecondaryContainer),
           const SizedBox(width: 4),
-          Text(
-            streak == 0 ? 'No streak' : '$streak-day streak',
-            style: t.labelLarge?.copyWith(color: scheme.onSecondaryContainer),
+          Flexible(
+            child: Text(
+              streak == 0 ? 'No streak' : '$streak-day streak',
+              style: t.labelLarge?.copyWith(color: scheme.onSecondaryContainer),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
         ]),
       ),

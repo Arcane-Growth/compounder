@@ -47,15 +47,29 @@ class SectionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Row(children: [
-      Text(text.toUpperCase(),
-          style: Theme.of(context)
-              .textTheme
-              .labelMedium
-              ?.copyWith(color: scheme.primary)),
-      const SizedBox(width: 12),
-      Expanded(child: Divider(color: scheme.outlineVariant)),
-    ]);
+    return LayoutBuilder(builder: (context, constraints) {
+      // Reserve a fixed slice for the divider and bound the label: at
+      // accessibility text scales an unconstrained label overflows the Row
+      // (measured 51px at 320dp/2.0).
+      final maxLabelWidth =
+          constraints.maxWidth > 36 ? constraints.maxWidth - 36 : 0.0;
+      return Row(children: [
+        ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxLabelWidth),
+          child: Text(
+            text.toUpperCase(),
+            style: Theme.of(context)
+                .textTheme
+                .labelMedium
+                ?.copyWith(color: scheme.primary),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(child: Divider(color: scheme.outlineVariant)),
+      ]);
+    });
   }
 }
 
