@@ -137,8 +137,10 @@ class _ProgressScreenState extends State<ProgressScreen> {
                                               .clamp(1, 99),
                                           getTitlesWidget: (value, meta) {
                                             final idx = value.toInt();
-                                            if (idx < 0 || idx >= points.length)
+                                            if (idx < 0 ||
+                                                idx >= points.length) {
                                               return const SizedBox();
+                                            }
                                             return Padding(
                                               padding:
                                                   const EdgeInsets.only(top: 6),

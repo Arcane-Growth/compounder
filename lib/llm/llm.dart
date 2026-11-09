@@ -269,8 +269,9 @@ Draft parseDraft(String content) {
   var cleaned = content.trim();
   if (cleaned.startsWith('```json')) cleaned = cleaned.substring(7);
   if (cleaned.startsWith('```')) cleaned = cleaned.substring(3);
-  if (cleaned.endsWith('```'))
+  if (cleaned.endsWith('```')) {
     cleaned = cleaned.substring(0, cleaned.length - 3);
+  }
   final json = jsonDecode(cleaned.trim()) as Map<String, Object?>;
   final total = (json['total'] as Map<String, Object?>?) ?? {};
   num n(Object? v) => v is num ? v : 0;

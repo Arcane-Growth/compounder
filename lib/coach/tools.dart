@@ -751,8 +751,9 @@ class SetReminderTool extends CoachTool {
   @override
   Future<String> run(Map<String, Object?> args) async {
     final text = args['text'] as String?;
-    if (text == null || text.trim().isEmpty)
+    if (text == null || text.trim().isEmpty) {
       return '{"error":"text is required"}';
+    }
     final inMinutes = (args['inMinutes'] as num?)?.toInt();
     final when = DateTime.tryParse((args['when'] as String?) ?? '');
     int dueAt;

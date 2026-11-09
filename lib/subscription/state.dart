@@ -122,8 +122,9 @@ SubscriptionState reduceSubscriptionState(
     case PurchaseFailed(:final message):
       return SubscriptionError(message);
     case EntitlementRefreshed(:final entitlement):
-      if (entitlement.isActiveAt(now))
+      if (entitlement.isActiveAt(now)) {
         return SubscriptionPurchased(entitlement);
+      }
       final products = _productsOf(current);
       return products == null
           ? const SubscriptionLoading()
