@@ -353,6 +353,7 @@ void main() {
 
       ShellNav nav() => tester.widget<ShellNav>(find.byType(ShellNav));
       final before = nav().openDrawer;
+      final beforeSelect = nav().selectTab;
 
       // Switch tabs via the bottom bar, which rebuilds the shell.
       await tester.tap(find.text('Mind').last);
@@ -365,8 +366,11 @@ void main() {
       // switch, rebuilding all five tabs. A stable tear-off compares equal.
       expect(after == before, isTrue,
           reason: 'ShellNav must not notify dependents on every rebuild');
+      expect(nav().selectTab == beforeSelect, isTrue,
+          reason: 'the tab-switch callback must be stable too');
       expect(nav().updateShouldNotify(ShellNav(
             openDrawer: before,
+            selectTab: beforeSelect,
             child: const SizedBox(),
           )),
           isFalse);

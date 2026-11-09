@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 
+import '../domain/activity.dart';
 import '../domain/domain.dart';
 import '../domain/habits.dart';
 import '../subscription/constants.dart';
@@ -1098,6 +1099,97 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
   }
 
   // ------------------------------------------------------------ helpers
+
+  /// Per-local-day pillar activity for the half-open local-day range
+  /// [from, to): the heatmap's data source.
+  ///
+  /// One grouped query per pillar source — workouts, meals, the three
+  /// mood/mind tables, and habit completions — so the cost is a fixed four
+  /// queries regardless of how many days the range spans (no per-day loop, no
+  /// N+1). Timestamped tables are bucketed with SQLite's `date(...,
+  /// 'localtime')`, which uses the same OS timezone as Dart's `DateTime`, so a
+  /// row at 23:59 local lands on that day and a row at 00:00 lands on the next
+  /// one. Habit completions are already keyed by local `YYYY-MM-DD`, the same
+  /// convention [habitDayKey] produces.
+  ///
+  /// Days with no activity are absent from the map; callers treat a missing
+  /// key as intensity 0. Rows with `count <= 0` are ignored, matching
+  /// [habitCompletedDays].
+  Future<Map<String, PillarDay>> dailyPillarActivity(
+      DateTime from, DateTime to) async {
+    final start = DateTime(from.year, from.month, from.day);
+    final end = DateTime(to.year, to.month, to.day);
+    if (!end.isAfter(start)) return {};
+    final fromMs = start.millisecondsSinceEpoch;
+    final toMs = end.millisecondsSinceEpoch;
+    final fromKey = habitDayKey(start);
+    final toKey = habitDayKey(end);
+
+    final workoutRows = await db.rawQuery('''
+      SELECT date(started_at / 1000, 'unixepoch', 'localtime') AS day,
+             COUNT(*) AS c
+      FROM workouts
+      WHERE started_at >= ? AND started_at < ?
+      GROUP BY day''', [fromMs, toMs]);
+    final nutritionRows = await db.rawQuery('''
+      SELECT date(timestamp / 1000, 'unixepoch', 'localtime') AS day,
+             COUNT(*) AS c
+      FROM meals
+      WHERE timestamp >= ? AND timestamp < ?
+      GROUP BY day''', [fromMs, toMs]);
+    final mindRows = await db.rawQuery('''
+      SELECT day, COUNT(*) AS c FROM (
+        SELECT date(timestamp / 1000, 'unixepoch', 'localtime') AS day
+        FROM moods WHERE timestamp >= ? AND timestamp < ?
+        UNION ALL
+        SELECT date(timestamp / 1000, 'unixepoch', 'localtime') AS day
+        FROM meditations WHERE timestamp >= ? AND timestamp < ?
+        UNION ALL
+        SELECT date(timestamp / 1000, 'unixepoch', 'localtime') AS day
+        FROM thought_records WHERE timestamp >= ? AND timestamp < ?
+      )
+      GROUP BY day''', [fromMs, toMs, fromMs, toMs, fromMs, toMs]);
+    final habitRows = await db.rawQuery('''
+      SELECT day, COUNT(*) AS c
+      FROM habit_completions
+      WHERE day >= ? AND day < ? AND count > 0
+      GROUP BY day''', [fromKey, toKey]);
+
+    final counts = <String, List<int>>{};
+    List<int> bucket(String day) =>
+        counts.putIfAbsent(day, () => List<int>.filled(4, 0));
+    for (final row in workoutRows) {
+      final day = row['day'] as String?;
+      if (day == null) continue;
+      bucket(day)[0] += (row['c'] as int?) ?? 0;
+    }
+    for (final row in nutritionRows) {
+      final day = row['day'] as String?;
+      if (day == null) continue;
+      bucket(day)[1] += (row['c'] as int?) ?? 0;
+    }
+    for (final row in mindRows) {
+      final day = row['day'] as String?;
+      if (day == null) continue;
+      bucket(day)[2] += (row['c'] as int?) ?? 0;
+    }
+    for (final row in habitRows) {
+      final day = row['day'] as String?;
+      if (day == null) continue;
+      bucket(day)[3] += (row['c'] as int?) ?? 0;
+    }
+
+    return {
+      for (final entry in counts.entries)
+        entry.key: PillarDay(
+          day: entry.key,
+          workoutCount: entry.value[0],
+          nutritionCount: entry.value[1],
+          mindCount: entry.value[2],
+          habitCount: entry.value[3],
+        ),
+    };
+  }
 
   Future<List<Map<String, Object?>>> finishedWorkoutRows(int from, int to) =>
       db.rawQuery('''

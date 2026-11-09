@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'habits.dart';
+import 'heatmap.dart';
 import 'settings.dart';
 
 /// Exposes the shell's drawer opener to the tab screens so the hamburger can
@@ -9,9 +10,14 @@ import 'settings.dart';
 class ShellNav extends InheritedWidget {
   final VoidCallback openDrawer;
 
+  /// Switches the shell's tab. Nullable so widget tests can mount a tab with
+  /// only [openDrawer]; the app always supplies it.
+  final ValueChanged<int>? selectTab;
+
   const ShellNav({
     super.key,
     required this.openDrawer,
+    this.selectTab,
     required super.child,
   });
 
@@ -23,7 +29,7 @@ class ShellNav extends InheritedWidget {
 
   @override
   bool updateShouldNotify(ShellNav oldWidget) =>
-      openDrawer != oldWidget.openDrawer;
+      openDrawer != oldWidget.openDrawer || selectTab != oldWidget.selectTab;
 }
 
 /// A single destination listed in the app drawer.
@@ -79,6 +85,12 @@ class AppDrawer extends StatelessWidget {
         .push(MaterialPageRoute(builder: (_) => const HabitsScreen()));
   }
 
+  void _openActivity(BuildContext context) {
+    Navigator.of(context).pop();
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const HeatmapScreen()));
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -132,6 +144,11 @@ class AppDrawer extends StatelessWidget {
                 onTap: () => _selectTab(context, i),
               ),
             const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.grid_on),
+              title: const Text('Activity'),
+              onTap: () => _openActivity(context),
+            ),
             ListTile(
               leading: const Icon(Icons.checklist_rtl),
               title: const Text('Habits'),

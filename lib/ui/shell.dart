@@ -26,6 +26,10 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
   // rebuild all five tabs.
   void _openDrawer() => _scaffoldKey.currentState?.openDrawer();
 
+  // Same stability requirement for the tab switch callback: HomeTab's pillar
+  // checklist and the drawer both call it.
+  void _selectTab(int i) => setState(() => _index = i);
+
   @override
   void initState() {
     super.initState();
@@ -54,10 +58,11 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
       key: _scaffoldKey,
       drawer: AppDrawer(
         currentIndex: _index,
-        onSelectTab: (i) => setState(() => _index = i),
+        onSelectTab: _selectTab,
       ),
       body: ShellNav(
         openDrawer: _openDrawer,
+        selectTab: _selectTab,
         child: IndexedStack(
           index: _index,
           children: const [
