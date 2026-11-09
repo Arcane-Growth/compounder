@@ -138,9 +138,11 @@ jobs:
 
           keystore_sha=$(keytool -list -v -keystore android/upload-keystore.jks \
             -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" \
-            | sed -n 's/.*SHA-256: //p' | head -1 | tr -d ':' | tr 'A-F' 'a-f')
+            | grep -oE 'SHA-?256: [0-9A-Fa-f:]+' | head -1 \
+            | sed -E 's/^SHA-?256: //' | tr -d ':' | tr 'A-F' 'a-f')
           apk_sha=$("$apksigner" verify --print-certs "$apk" \
-            | sed -n 's/.*SHA-256 digest: //p' | head -1 | tr -d ':' | tr 'A-F' 'a-f')
+            | grep -oE 'SHA-256 digest: [0-9A-Fa-f:]+' | head -1 \
+            | sed -E 's/^SHA-256 digest: //' | tr -d ':' | tr 'A-F' 'a-f')
 
           echo "keystore cert sha256: ${keystore_sha}"
           echo "apk signer cert sha256: ${apk_sha}"
