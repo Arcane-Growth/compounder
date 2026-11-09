@@ -162,6 +162,76 @@ void main() {
           reason: 'Mind stays mounted at its own index');
     });
 
+    testWidgets('bottom-bar order matches the shell tab indices',
+        (tester) async {
+      await pumpShell(tester);
+
+      // The bar index *is* the tab index, so a reorder silently opens the
+      // wrong tab. Pin the exact sequence, not just presence.
+      expect(
+        ShellBottomBar.destinations.map((d) => d.label).toList(),
+        ['Home', 'Fitness', 'Macros', 'Wealth', 'Coach'],
+        reason: 'the bottom-bar order must match tabHome..tabCoach',
+      );
+
+      const expected = {
+        'Home': tabHome,
+        'Fitness': tabFitness,
+        'Macros': tabMacros,
+        'Wealth': tabWealth,
+        'Coach': tabCoach,
+      };
+      for (final entry in expected.entries) {
+        await tester.tap(barText(entry.key));
+        await tester.pumpAndSettle();
+        expect(tester.widget<IndexedStack>(find.byType(IndexedStack)).index,
+            entry.value,
+            reason: 'tapping ${entry.key} must select tab ${entry.value}');
+      }
+
+      // Let any query the newly visible tabs started finish before teardown.
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 200)));
+      await tester.pump();
+    });
+
+    testWidgets('bottom bar does not overflow at 320dp/textScaler 2.0',
+        (tester) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(MaterialApp(
+        theme: CompounderTheme.light(),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context)
+              .copyWith(textScaler: const TextScaler.linear(2.0)),
+          child: child!,
+        ),
+        home: Scaffold(
+          body: const SizedBox.shrink(),
+          bottomNavigationBar: ShellBottomBar(
+            selectedIndex: 0,
+            onSelect: (_) {},
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull,
+          reason: 'the bottom bar must not overflow at 320dp/textScaler 2.0');
+
+      // Positive proof the labels are constrained to their fifth of the bar
+      // rather than merely lucky: at 2.0 each label is wider than its slot.
+      final barWidth = tester.getSize(find.byType(ShellBottomBar)).width;
+      for (final label in ['Home', 'Fitness', 'Macros', 'Wealth', 'Coach']) {
+        expect(tester.getSize(barText(label)).width,
+            lessThanOrEqualTo(barWidth / 5 + 0.5),
+            reason: '$label must stay inside its fifth of the bar');
+      }
+    });
+
     testWidgets('drawer still reaches Mind and clears the bar selection',
         (tester) async {
       await pumpShell(tester);

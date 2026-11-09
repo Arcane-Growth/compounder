@@ -790,12 +790,51 @@ void main() {
       expect(todayCell, findsOneWidget,
           reason: 'the grid must contain today');
       final rect = tester.getRect(todayCell);
-      final width =
-          tester.view.physicalSize.width / tester.view.devicePixelRatio;
-      expect(rect.left, greaterThanOrEqualTo(0.0));
-      expect(rect.right, lessThanOrEqualTo(width),
+      // Bound by the grid's own viewport, not the screen: the card padding
+      // sits between the two, so a screen-width bound would still pass with
+      // the newest cell hidden under the padding.
+      final grid = tester.getRect(find.byType(ActivityHeatmap));
+      expect(rect.left, greaterThanOrEqualTo(grid.left));
+      expect(rect.right, lessThanOrEqualTo(grid.right),
           reason: 'the newest week must be on screen when the screen opens; '
               'without the auto-scroll it sits ~900dp to the right');
+    });
+
+    testWidgets('activity screen re-pins the newest week after a failed load',
+        (tester) async {
+      // The error branch replaces the grid with a retry column, destroying its
+      // ScrollPosition. "Try again" rebuilds the grid at offset 0, so the pin
+      // flag must be reset for the new position or the screen shows the oldest
+      // week again — the exact defect the auto-scroll fixes.
+      final now = DateTime(2026, 11, 9, 12);
+      final fake = _CountingStore()..fail = true;
+      await tester.pumpWidget(ChangeNotifierProvider<AppStore>.value(
+        value: fake,
+        child: MaterialApp(
+          theme: CompounderTheme.light(),
+          home: HeatmapScreen(now: () => now),
+        ),
+      ));
+      await tester.pump();
+      expect(find.text('Could not load activity'), findsOneWidget,
+          reason: 'the first load must fail so the grid is torn down');
+
+      fake.fail = false;
+      await tester.tap(find.text('Try again'));
+      // Let the retry load, the grid build, and the post-frame pin run.
+      for (var i = 0; i < 4; i++) {
+        await tester.pump();
+      }
+
+      final todayCell = find.byWidgetPredicate((w) =>
+          w is HeatmapCell && localDayKey(w.day) == '2026-11-09');
+      expect(todayCell, findsOneWidget,
+          reason: 'the retry must rebuild the grid');
+      final rect = tester.getRect(todayCell);
+      final grid = tester.getRect(find.byType(ActivityHeatmap));
+      expect(rect.right, lessThanOrEqualTo(grid.right),
+          reason: 'after a failed load and retry the newest week must be '
+              'pinned again, not left at the oldest week');
     });
 
     testWidgets('activity screen re-pins the newest week after a resize',

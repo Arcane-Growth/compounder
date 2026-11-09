@@ -434,6 +434,15 @@ class _HeatmapScreenState extends State<HeatmapScreen>
   /// horizontal position.
   bool _pinnedToNewest = false;
 
+  /// The [ScrollPosition] the grid was last pinned on.
+  ///
+  /// The grid subtree is torn down whenever the error branch replaces it with
+  /// the retry column, and "Try again" rebuilds it with a fresh position at
+  /// offset 0. Comparing identity lets the metrics listener notice that and
+  /// re-pin, instead of trusting a flag that describes a position that no
+  /// longer exists (which would leave the screen on the oldest week).
+  ScrollPosition? _pinnedPosition;
+
   /// Viewport width of the grid at the last pin, used to detect a resize or
   /// rotation that must re-pin.
   double? _gridViewportWidth;
@@ -519,6 +528,14 @@ class _HeatmapScreenState extends State<HeatmapScreen>
   /// changes (rotation, split-screen, a desktop window resize).
   bool _onGridMetrics(ScrollMetricsNotification notification) {
     if (notification.depth != 0) return false;
+    // A different position means the grid was rebuilt from scratch (the error
+    // branch tore it down, or the whole subtree was replaced): the pin no
+    // longer applies, so re-pin on this layout.
+    final position = _gridScroll.hasClients ? _gridScroll.position : null;
+    if (position != _pinnedPosition) {
+      _pinnedPosition = position;
+      _pinnedToNewest = false;
+    }
     final width = notification.metrics.viewportDimension;
     final resized = _gridViewportWidth != null && _gridViewportWidth != width;
     _gridViewportWidth = width;
