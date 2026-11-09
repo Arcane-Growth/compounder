@@ -182,9 +182,17 @@ void main() {
     });
 
     test('fall-back instants stay on the same calendar day', () {
-      // 2026-11-01 02:00 EDT -> 01:00 EST in America/New_York.
+      // 2026-11-01 02:00 EDT -> 01:00 EST in America/New_York: 01:30 happens
+      // twice. Constructing the ambiguous local time twice resolves to the same
+      // instant, so step an hour forward to reach the second (EST) 01:30.
       final firstOneThirty = tz.TZDateTime(ny(), 2026, 11, 1, 1, 30);
-      final secondOneThirty = tz.TZDateTime(ny(), 2026, 11, 1, 1, 30);
+      final secondOneThirty = firstOneThirty.add(const Duration(hours: 1));
+      expect(firstOneThirty.timeZoneOffset, const Duration(hours: -4),
+          reason: 'the first 01:30 is EDT');
+      expect(secondOneThirty.timeZoneOffset, const Duration(hours: -5),
+          reason: 'the second 01:30 is EST — the test must cross the boundary');
+      expect(secondOneThirty.hour, 1);
+      expect(secondOneThirty.minute, 30);
       expect(planDayKey(firstOneThirty), '2026-11-01');
       expect(planDayKey(secondOneThirty), '2026-11-01');
       // The day after the transition is a distinct key.
@@ -246,7 +254,6 @@ void main() {
       expect(blocks.single.done, isFalse);
       expect(blocks.single.doneAt, isNull);
       expect(blocks.single.durationMinutes, 60);
-      expect(await store.hasPlanForDay(day), isTrue);
 
       await store.updatePlanBlock(id,
           title: 'Deep work v2', startMin: 600, endMin: 690);
@@ -267,7 +274,6 @@ void main() {
 
       await store.deletePlanBlock(id);
       expect(await store.planBlocksForDay(day), isEmpty);
-      expect(await store.hasPlanForDay(day), isFalse);
     });
 
     test('blocks are scoped to their day and ordered chronologically',

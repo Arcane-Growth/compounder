@@ -16,13 +16,18 @@ import 'widgets.dart';
 /// [PlanBlock]), never by epoch timestamp, so a block cannot drift across a
 /// timezone or DST boundary.
 class PlannerScreen extends StatefulWidget {
-  const PlannerScreen({super.key, this.now, this.initialDay});
+  const PlannerScreen({super.key, this.now, this.initialDay, this.loadBlocks});
 
   /// Injectable clock for tests. Defaults to [DateTime.now].
   final DateTime Function()? now;
 
   /// The day to open on. Defaults to today.
   final DateTime? initialDay;
+
+  /// Injectable day query, mirroring [now]. Defaults to
+  /// [AppStore.planBlocksForDay]; tests use it to control query latency so a
+  /// stale result can be made to land after a newer one.
+  final Future<List<PlanBlock>> Function(DateTime day)? loadBlocks;
 
   @override
   State<PlannerScreen> createState() => _PlannerScreenState();
@@ -34,6 +39,11 @@ class _PlannerScreenState extends State<PlannerScreen>
   late DateTime _day;
   List<PlanBlock> _blocks = const [];
   bool _loaded = false;
+
+  /// Invalidates in-flight day queries. Two rapid day shifts (or a slow DB) can
+  /// otherwise let the earlier query land last and paint the wrong day's blocks
+  /// under the selected date header. Same guard as `HomeTab._reload`.
+  int _generation = 0;
 
   /// Keeps the "now" marker honest on a screen left open. Cancelled in
   /// [dispose], so it cannot outlive the route.
@@ -49,7 +59,11 @@ class _PlannerScreenState extends State<PlannerScreen>
     _day = DateTime(initial.year, initial.month, initial.day);
     WidgetsBinding.instance.addObserver(this);
     _clock = Timer.periodic(const Duration(minutes: 1), (_) {
-      if (mounted) setState(() {});
+      // Only a day that is showing "now" needs the minute tick; a past or
+      // future day's marker never moves.
+      if (!mounted) return;
+      if (planDayKey(_day) != planDayKey(_now())) return;
+      setState(() {});
     });
   }
 
@@ -80,9 +94,13 @@ class _PlannerScreenState extends State<PlannerScreen>
   Future<void> _load() async {
     final store = _store;
     if (store == null) return;
+    final generation = ++_generation;
+    final day = _day;
+    final load = widget.loadBlocks;
     try {
-      final blocks = await store.planBlocksForDay(_day);
-      if (!mounted) return;
+      final blocks =
+          load != null ? await load(day) : await store.planBlocksForDay(day);
+      if (!mounted || generation != _generation) return;
       setState(() {
         _blocks = blocks;
         _loaded = true;
@@ -90,7 +108,7 @@ class _PlannerScreenState extends State<PlannerScreen>
     } catch (_) {
       // A closed database (test teardown) or a transient query failure must not
       // take the screen down: the last known plan stays on screen.
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
       setState(() => _loaded = true);
     }
   }
@@ -264,16 +282,19 @@ class _PlannerScreenState extends State<PlannerScreen>
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
           child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Semantics(
-              label: block.done
-                  ? 'Mark ${block.title} not done'
-                  : 'Mark ${block.title} done',
-              child: Checkbox(
-                key: ValueKey('plan-done-${block.id}'),
-                value: block.done,
-                onChanged: (value) =>
-                    _runWrite(context, () => _store!.setPlanBlockDone(
-                        block.id, value ?? false)),
+            MergeSemantics(
+              child: Semantics(
+                // Name the control, not the action: the checkbox already
+                // reports its checked state, so "Mark X done, checked" would
+                // announce the action and the state twice.
+                label: block.title,
+                child: Checkbox(
+                  key: ValueKey('plan-done-${block.id}'),
+                  value: block.done,
+                  onChanged: (value) =>
+                      _runWrite(context, () => _store!.setPlanBlockDone(
+                          block.id, value ?? false)),
+                ),
               ),
             ),
             Expanded(
@@ -457,6 +478,10 @@ class _BlockEditorDialogState extends State<_BlockEditorDialog> {
       // The dialog can be dismissed while the write is in flight; setState on
       // a disposed State throws.
       if (mounted) setState(() => _error = e.message);
+    } catch (_) {
+      // A closed or failed database throws something that is not a
+      // StoreException; report it instead of leaving the dialog open silently.
+      if (mounted) setState(() => _error = 'Could not save that block.');
     }
   }
 

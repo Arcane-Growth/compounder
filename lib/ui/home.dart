@@ -524,7 +524,7 @@ class _PlanCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final t = Theme.of(context).textTheme;
-    final planned = blocks.isNotEmpty;
+    final planned = dayHasPlan(blocks, now);
     final current = currentBlock(blocks, now);
     final next = nextBlock(blocks, now);
     final doneCount = blocks.where((b) => b.done).length;

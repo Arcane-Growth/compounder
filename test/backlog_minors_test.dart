@@ -301,6 +301,7 @@ void main() {
         'accounts',
         'net-worth',
         'reminders',
+        'day plans',
         'mind',
       ]) {
         expect(importConfirmText, contains(word),

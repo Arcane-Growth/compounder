@@ -1420,6 +1420,9 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
         planBlockError(title: title, startMin: startMin, endMin: endMin);
     if (error != null) throw StoreException(error);
     final key = planDayKey(day);
+    // MAX(position)+1 is not atomic: two concurrent creates on the same day can
+    // share a position. Harmless in a single-user app — the id tie-break in
+    // `chronological` keeps the order deterministic.
     final posRows = await db.rawQuery(
         'SELECT MAX(position) m FROM plan_blocks WHERE day = ?', [key]);
     final position = ((posRows.first['m'] as int?) ?? -1) + 1;
@@ -1483,16 +1486,6 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
   Future<void> deletePlanBlock(int id) async {
     await db.delete('plan_blocks', where: 'id = ?', whereArgs: [id]);
     notifyListeners();
-  }
-
-  /// True when [day]'s plan has at least one block.
-  Future<bool> hasPlanForDay(DateTime day) async {
-    final rows = await db.query('plan_blocks',
-        columns: ['id'],
-        where: 'day = ?',
-        whereArgs: [planDayKey(day)],
-        limit: 1);
-    return rows.isNotEmpty;
   }
 
   // ------------------------------------------------------------ helpers

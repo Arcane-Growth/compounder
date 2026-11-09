@@ -1,4 +1,5 @@
 import 'package:compounder/data/store.dart';
+import 'package:compounder/domain/plan.dart';
 import 'package:compounder/ui/planner.dart';
 import 'package:compounder/ui/widgets.dart';
 import 'package:flutter/material.dart';
@@ -178,6 +179,58 @@ void main() {
     expect(find.text('Now 12:00'), findsOneWidget,
         reason: 'today must show a now indicator');
     expect(find.text('Afternoon'), findsOneWidget);
+  });
+
+  testWidgets('a stale day query cannot overwrite the selected day',
+      (tester) async {
+    // Two rapid day shifts: the 11-10 query is slow (400 ms) and the 11-11
+    // query is fast (20 ms). Without a generation guard the 11-10 result lands
+    // last and paints day 10's block under the day 11 header.
+    Future<List<PlanBlock>> load(DateTime d) async {
+      final delay = switch (d.day) {
+        10 => const Duration(milliseconds: 400),
+        11 => const Duration(milliseconds: 20),
+        _ => Duration.zero,
+      };
+      await Future<void>.delayed(delay);
+      return [
+        PlanBlock(
+          id: d.day,
+          day: planDayKey(d),
+          title: 'Block for day ${d.day}',
+          startMin: 540,
+          endMin: 600,
+          createdAt: 0,
+        ),
+      ];
+    }
+
+    await tester.pumpWidget(ChangeNotifierProvider<AppStore>.value(
+      value: store,
+      child: MaterialApp(
+        theme: CompounderTheme.light(),
+        home: PlannerScreen(
+          now: () => now,
+          initialDay: day,
+          loadBlocks: load,
+        ),
+      ),
+    ));
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey('plan-next')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('plan-next')));
+    await tester.pump();
+
+    // The fast 11-11 query lands first, then the slow 11-10 one.
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.text('Wed, Nov 11, 2026'), findsOneWidget);
+    expect(find.text('Block for day 11'), findsOneWidget);
+    expect(find.text('Block for day 10'), findsNothing,
+        reason: 'the stale day-10 query must not overwrite day 11');
   });
 
   testWidgets('does not overflow at 320dp with 2.0 text scale',

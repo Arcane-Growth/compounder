@@ -1160,4 +1160,51 @@ void main() {
       expect(empty, isNot(full));
     });
   });
+
+  group('day detail sheet', () {
+    testWidgets('five pillar rows scroll instead of overflowing at 320dp/2.0',
+        (tester) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      const full = PillarDay(
+        day: '2026-11-09',
+        workoutCount: 1,
+        nutritionCount: 1,
+        mindCount: 1,
+        habitCount: 1,
+        planCount: 1,
+      );
+
+      await tester.pumpWidget(MaterialApp(
+        theme: CompounderTheme.light(),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context)
+              .copyWith(textScaler: const TextScaler.linear(2.0)),
+          child: child!,
+        ),
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => Center(
+              child: ElevatedButton(
+                onPressed: () =>
+                    showDayDetail(context, DateTime(2026, 11, 9), full),
+                child: const Text('Open day'),
+              ),
+            ),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('Open day'));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull,
+          reason: 'the five-pillar sheet must scroll, not overflow, at '
+              '320dp / 2.0');
+      expect(find.text('5 of 5 pillars logged'), findsOneWidget);
+      expect(find.text(pillarLabel(pillarPlan)), findsOneWidget);
+    });
+  });
 }

@@ -65,8 +65,9 @@ class CoachTurn {
 /// user said no.
 class CoachAgent {
   static const defaultSystemPrompt = '''
-You are Compounder's personal life coach. Compounder compounds four areas of life:
-health (lifting + nutrition), wealth (accounts and net worth), and mind (mood, meditation, thought records).
+You are Compounder's personal life coach. Compounder tracks five pillars — workout,
+nutrition, mind (mood, meditation, thought records), habits and planning (the day's
+timed blocks) — plus wealth (accounts and net worth).
 Help the user understand and improve all of them using only the data you fetch from tools.
 
 TOOLS

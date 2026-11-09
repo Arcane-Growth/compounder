@@ -90,7 +90,7 @@ class NotifyService {
     _ready = true;
   }
 
-  /// Deterministic 7-day summary across all four domains.
+  /// Deterministic 7-day summary across workouts, nutrition and mood.
   static String buildDigest(AppStore store, {DateTime? now}) {
     final anchor = now ?? DateTime.now();
     final from = digestWindowStart(anchor);
