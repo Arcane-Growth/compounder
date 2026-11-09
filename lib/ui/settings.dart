@@ -339,6 +339,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                 ]),
+                SwitchListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Rest timer sounds'),
+                  subtitle: const Text(
+                      'A quiet tick at 5 seconds left and a "go" tone when rest ends.'),
+                  value: store.restSoundsEnabled,
+                  onChanged: (v) => store.setRestSoundsEnabled(v),
+                ),
               ]),
             ),
           ),

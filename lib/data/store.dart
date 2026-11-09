@@ -569,6 +569,14 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
     notifyListeners();
   }
 
+  /// Audible rest-timer cues (5s warning tick and the "go" tone). On by
+  /// default; the user can mute them in Settings.
+  bool get restSoundsEnabled => prefs.getBool('restSoundsEnabled') ?? true;
+  Future<void> setRestSoundsEnabled(bool enabled) async {
+    await prefs.setBool('restSoundsEnabled', enabled);
+    notifyListeners();
+  }
+
   bool get coachEnabled => prefs.getBool('coachEnabled') ?? false;
   int get coachMinutes => prefs.getInt('coachMinutes') ?? 18 * 60;
   Future<void> setCoach({bool? enabled, int? minutes}) async {

@@ -6,13 +6,19 @@ import 'package:provider/provider.dart';
 import '../data/models.dart';
 import '../data/store.dart';
 import '../domain/domain.dart';
+import '../services/rest_sounds.dart';
 import 'picker.dart';
 import 'summary.dart';
 import 'widgets.dart';
 
 class WorkoutScreen extends StatefulWidget {
   final int workoutId;
-  const WorkoutScreen({super.key, required this.workoutId});
+
+  /// Injectable cue player; tests pass a fake. Defaults to the real
+  /// audioplayers-backed implementation.
+  final RestSounds? sounds;
+
+  const WorkoutScreen({super.key, required this.workoutId, this.sounds});
 
   @override
   State<WorkoutScreen> createState() => _WorkoutScreenState();
@@ -32,17 +38,28 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
   final ValueNotifier<int> _restLeft = ValueNotifier(0);
   Timer? _restTimer;
 
+  /// Bumped whenever the rest timer starts, is cancelled or the screen is
+  /// disposed. A tick whose generation no longer matches is stale and must not
+  /// fire a cue.
+  int _restGeneration = 0;
+  bool _restTickPlayed = false;
+
+  late final RestSounds _sounds;
+
   @override
   void initState() {
     super.initState();
     _store = context.read<AppStore>();
+    _sounds = widget.sounds ?? AudioRestSounds();
     _loadDetail();
   }
 
   @override
   void dispose() {
     _restTimer?.cancel();
+    _restGeneration++;
     _restLeft.dispose();
+    unawaited(_sounds.dispose());
     for (final controller in _weightControllers.values) {
       controller.dispose();
     }
@@ -185,13 +202,40 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
   void _startRest() {
     final seconds = _store!.restSeconds;
     _restTimer?.cancel();
+    _restGeneration++;
+    _restTickPlayed = false;
     _restLeft.value = seconds;
+    final generation = _restGeneration;
     _restTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!mounted) return;
+      if (!mounted || generation != _restGeneration) {
+        timer.cancel();
+        return;
+      }
       final next = _restLeft.value - 1;
       _restLeft.value = next < 0 ? 0 : next;
-      if (next <= 0) timer.cancel();
+      if (next > 0 && next <= 5 && !_restTickPlayed) {
+        _restTickPlayed = true;
+        _playRestCue(RestCue.fiveSeconds);
+      }
+      if (next <= 0) {
+        timer.cancel();
+        _playRestCue(RestCue.go);
+      }
     });
+  }
+
+  /// Cancels the rest timer without a cue (the user tapped the rest chip).
+  void _cancelRest() {
+    _restTimer?.cancel();
+    _restTimer = null;
+    _restGeneration++;
+    _restLeft.value = 0;
+  }
+
+  void _playRestCue(RestCue cue) {
+    if (!mounted) return;
+    if (!(_store?.restSoundsEnabled ?? false)) return;
+    unawaited(_sounds.play(cue));
   }
 
   Future<void> _toggleWarmup(WorkoutSet set, bool warmup) async {
@@ -247,10 +291,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
               avatar: Icon(Icons.timer, size: 16, color: scheme.primary),
               label: Text(
                   '${restLeft ~/ 60}:${(restLeft % 60).toString().padLeft(2, '0')}'),
-              onPressed: () {
-                _restTimer?.cancel();
-                _restLeft.value = 0;
-              },
+              onPressed: _cancelRest,
             ),
           ),
         );
