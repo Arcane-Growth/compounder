@@ -208,7 +208,7 @@ void main() {
     });
 
     test('the approval summary names the title and the times', () async {
-      final summary = CreatePlanBlockTool(store).summarize({
+      final summary = await CreatePlanBlockTool(store).summarize({
         'date': '2026-11-09',
         'title': 'Deep work',
         'start': '09:00',
@@ -218,7 +218,22 @@ void main() {
       expect(summary, contains('09:00–10:00'));
       expect(summary, contains('2026-11-09'));
       // Bad input must not throw out of the approval card.
-      expect(CreatePlanBlockTool(store).summarize({}), contains('?'));
+      expect(await CreatePlanBlockTool(store).summarize({}), contains('?'));
+    });
+
+    test('rejects a non-finite numeric time instead of throwing', () async {
+      final tool = CreatePlanBlockTool(store);
+      // jsonDecode('1e999') yields Infinity; Infinity.toInt() throws
+      // UnsupportedError, and summarize runs outside the tool loop's catch.
+      expectError(await tool.run({'title': 'X', 'start': 1e999, 'end': 600}));
+      expectError(
+          await tool.run({'title': 'X', 'start': 600, 'end': double.infinity}));
+      expectError(
+          await tool.run({'title': 'X', 'start': double.nan, 'end': 600}));
+      expect(await store.planBlocksForDay(day), isEmpty);
+      // The approval card must not throw on the same input.
+      expect(await tool.summarize({'title': 'X', 'start': 1e999, 'end': 600}),
+          contains('?'));
     });
   });
 
@@ -261,10 +276,13 @@ void main() {
           day: day, title: 'Deep work', startMin: 9 * 60, endMin: 10 * 60);
       final tool = UpdatePlanBlockTool(store);
       expectError(await tool.run({}));
+      expectError(await tool.run({'id': '7', 'done': true}));
+      expectError(await tool.run({'id': 1e999, 'done': true}));
       expectError(await tool.run({'id': 9999, 'done': true}));
       expectError(await tool.run({'id': id}));
       expectError(await tool.run({'id': id, 'title': '  '}));
       expectError(await tool.run({'id': id, 'start': 'noon'}));
+      expectError(await tool.run({'id': id, 'start': 1e999}));
       expectError(await tool.run({'id': id, 'done': 'yes'}));
       // A move that would invert the block is rejected before any write.
       expectError(await tool.run({'id': id, 'start': '11:00'}));
@@ -276,12 +294,15 @@ void main() {
     });
 
     test('the approval summary describes the move', () async {
-      final summary = UpdatePlanBlockTool(store)
-          .summarize({'id': 3, 'start': '13:00', 'done': true});
-      expect(summary, contains('#3'));
+      final id = await store.createPlanBlock(
+          day: day, title: 'Deep work', startMin: 9 * 60, endMin: 10 * 60);
+      final summary = await UpdatePlanBlockTool(store)
+          .summarize({'id': id, 'start': '13:00', 'done': true});
+      expect(summary, contains('#$id'));
+      expect(summary, contains('Deep work'));
       expect(summary, contains('13:00'));
       expect(summary, contains('mark done'));
-      expect(UpdatePlanBlockTool(store).summarize({}), contains('?'));
+      expect(await UpdatePlanBlockTool(store).summarize({}), contains('?'));
     });
   });
 
@@ -300,7 +321,55 @@ void main() {
     test('rejects a missing or unknown id', () async {
       final tool = DeletePlanBlockTool(store);
       expectError(await tool.run({}));
+      expectError(await tool.run({'id': '7'}));
+      expectError(await tool.run({'id': 1e999}));
       expectError(await tool.run({'id': 42}));
+    });
+
+    test('the approval summary names the block being deleted', () async {
+      final id = await store.createPlanBlock(
+          day: day, title: 'Deep work', startMin: 9 * 60, endMin: 10 * 60);
+      final summary = await DeletePlanBlockTool(store).summarize({'id': id});
+      expect(summary, contains('#$id'));
+      expect(summary, contains('Deep work'));
+      expect(await DeletePlanBlockTool(store).summarize({}), contains('?'));
+    });
+  });
+
+  group('day isolation', () {
+    test('reads, updates and deletes only touch the requested day', () async {
+      final dayA = DateTime(2026, 11, 9);
+      final dayB = DateTime(2026, 11, 10);
+      final a = await store.createPlanBlock(
+          day: dayA, title: 'Day A', startMin: 9 * 60, endMin: 10 * 60);
+      final b = await store.createPlanBlock(
+          day: dayB, title: 'Day B', startMin: 9 * 60, endMin: 10 * 60);
+
+      // get_plan(A) must not leak B.
+      final read = jsonDecode(
+          await GetPlanTool(store, now: () => DateTime(2026, 11, 11, 12))
+              .run({'date': '2026-11-09'})) as Map;
+      expect((read['blocks'] as List).map((x) => x['title']), ['Day A']);
+
+      // Updating an A block must leave B untouched.
+      await UpdatePlanBlockTool(store).run({
+        'id': a,
+        'title': 'Day A moved',
+        'start': '11:00',
+        'end': '12:00',
+      });
+      final bAfterUpdate = await store.planBlockById(b);
+      expect(bAfterUpdate!.title, 'Day B');
+      expect(bAfterUpdate.startMin, 9 * 60);
+      expect(bAfterUpdate.endMin, 10 * 60);
+
+      // Deleting an A block must leave B intact.
+      await DeletePlanBlockTool(store).run({'id': a});
+      expect(await store.planBlocksForDay(dayA), isEmpty);
+      final bAfterDelete = await store.planBlockById(b);
+      expect(bAfterDelete, isNotNull);
+      expect(bAfterDelete!.title, 'Day B');
+      expect((await store.planBlocksForDay(dayB)).single.id, b);
     });
   });
 

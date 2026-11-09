@@ -1456,8 +1456,11 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
   ///
   /// Validation runs against the merged row, so changing only the end time
   /// cannot produce an end before the stored start.
+  ///
+  /// [done] is applied in the same UPDATE as the editable fields, so the coach's
+  /// "move and check off" call cannot half-apply (review Nit 4).
   Future<void> updatePlanBlock(int id,
-      {String? title, int? startMin, int? endMin}) async {
+      {String? title, int? startMin, int? endMin, bool? done}) async {
     final rows =
         await db.query('plan_blocks', where: 'id = ?', whereArgs: [id], limit: 1);
     if (rows.isEmpty) return;
@@ -1474,6 +1477,9 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
           'title': nextTitle.trim(),
           'start_min': nextStart,
           'end_min': nextEnd,
+          if (done != null) 'done': done ? 1 : 0,
+          if (done != null)
+            'done_at': done ? DateTime.now().millisecondsSinceEpoch : null,
         },
         where: 'id = ?',
         whereArgs: [id]);

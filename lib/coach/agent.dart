@@ -12,7 +12,10 @@ abstract class CoachTool {
 
   /// Plain-language description of what [run] would change, shown in the
   /// approval card. Only meaningful for write tools.
-  String summarize(Map<String, Object?> args) => spec.name;
+  ///
+  /// Async because a tool may need to resolve a stored row (for example the
+  /// title of the block being deleted) before the card can name it.
+  Future<String> summarize(Map<String, Object?> args) async => spec.name;
 
   Future<String> run(Map<String, Object?> args);
 }
@@ -315,7 +318,7 @@ RULES
         proposals.add(ProposedChange(
           toolCallId: call.id,
           toolName: call.name,
-          summary: tool.summarize(args),
+          summary: await tool.summarize(args),
           args: args,
         ));
       }

@@ -308,9 +308,9 @@ void main() {
       }
     });
 
-    test('summaries describe the change in plain language', () {
+    test('summaries describe the change in plain language', () async {
       expect(
-          LogMealTool(store).summarize({
+          await LogMealTool(store).summarize({
             'dish': 'Chicken bowl',
             'calories': 620,
             'protein': 40,
@@ -319,12 +319,12 @@ void main() {
             'date': '2026-01-02',
           }),
           'Log a meal: Chicken bowl — 620 kcal, 40g protein, 61g carbs, 18g fat (2026-01-02)');
-      expect(LogMoodTool(store).summarize({'mood': 4, 'note': 'good day'}),
+      expect(await LogMoodTool(store).summarize({'mood': 4, 'note': 'good day'}),
           'Log a mood check-in: 4/5 — "good day"');
-      expect(StartWorkoutTool(store).summarize({'name': 'Push Day'}),
+      expect(await StartWorkoutTool(store).summarize({'name': 'Push Day'}),
           'Start a workout: Push Day');
       expect(
-          AddSetTool(store).summarize({
+          await AddSetTool(store).summarize({
             'exerciseName': 'Barbell Bench Press',
             'weightKg': 80,
             'reps': 5,
@@ -333,9 +333,10 @@ void main() {
           'Add a set: Barbell Bench Press 80 kg × 5 reps (warm-up) to the active workout');
     });
 
-    test('a malformed write argument still produces a readable summary', () {
-      expect(LogMealTool(store).summarize({}), 'Log a meal: meal');
-      expect(AddSetTool(store).summarize({}), contains('? kg × ? reps'));
+    test('a malformed write argument still produces a readable summary',
+        () async {
+      expect(await LogMealTool(store).summarize({}), 'Log a meal: meal');
+      expect(await AddSetTool(store).summarize({}), contains('? kg × ? reps'));
     });
   });
 

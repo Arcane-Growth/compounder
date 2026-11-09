@@ -120,7 +120,8 @@ void main() {
       // The approval preview must not claim the default when the argument is
       // present but mistyped.
       expect(
-          tool.summarize({'name': 'Read', 'cadence': 'daily', 'target': '3'}),
+          await tool.summarize(
+              {'name': 'Read', 'cadence': 'daily', 'target': '3'}),
           contains('?×'));
     });
 

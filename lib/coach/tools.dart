@@ -58,7 +58,11 @@ double? _num(Map<String, Object?> args, String key) {
 
 int? _int(Map<String, Object?> args, String key) {
   final value = args[key];
-  return value is num ? value.toInt() : null;
+  // `jsonDecode('1e999')` yields Infinity; `Infinity.toInt()` throws
+  // UnsupportedError, and [CoachTool.summarize] runs outside the tool loop's
+  // try/catch, so a non-finite number must read as "absent" here.
+  if (value is! num || !value.isFinite) return null;
+  return value.toInt();
 }
 
 String _text(Map<String, Object?> args, String key) =>
@@ -297,7 +301,7 @@ class LogMealTool extends CoachTool {
   bool get isWrite => true;
 
   @override
-  String summarize(Map<String, Object?> args) {
+  Future<String> summarize(Map<String, Object?> args) async {
     final dish = _text(args, 'dish');
     final calories = _num(args, 'calories');
     final date = _text(args, 'date');
@@ -355,7 +359,7 @@ class LogMoodTool extends CoachTool {
   bool get isWrite => true;
 
   @override
-  String summarize(Map<String, Object?> args) {
+  Future<String> summarize(Map<String, Object?> args) async {
     final mood = _int(args, 'mood');
     final note = _text(args, 'note');
     final date = _text(args, 'date');
@@ -392,7 +396,7 @@ class StartWorkoutTool extends CoachTool {
   bool get isWrite => true;
 
   @override
-  String summarize(Map<String, Object?> args) {
+  Future<String> summarize(Map<String, Object?> args) async {
     final name = _text(args, 'name');
     return 'Start a workout: ${name.isEmpty ? 'Workout' : name}';
   }
@@ -449,7 +453,7 @@ class AddSetTool extends CoachTool {
   static int clampReps(int reps) => reps < 0 ? 1 : reps;
 
   @override
-  String summarize(Map<String, Object?> args) {
+  Future<String> summarize(Map<String, Object?> args) async {
     final name = _text(args, 'exerciseName');
     final rawWeight = _num(args, 'weightKg');
     final rawReps = _int(args, 'reps');
@@ -644,7 +648,7 @@ class SetReminderTool extends CoachTool {
   bool get isWrite => true;
 
   @override
-  String summarize(Map<String, Object?> args) {
+  Future<String> summarize(Map<String, Object?> args) async {
     final text = _text(args, 'text');
     final inMinutes = _int(args, 'inMinutes');
     final when = _text(args, 'when');
@@ -718,7 +722,7 @@ class CancelReminderTool extends CoachTool {
   bool get isWrite => true;
 
   @override
-  String summarize(Map<String, Object?> args) {
+  Future<String> summarize(Map<String, Object?> args) async {
     final id = _int(args, 'id');
     return 'Cancel reminder ${id == null ? '' : '#$id'}'.trim();
   }
@@ -835,7 +839,7 @@ class CreateHabitTool extends CoachTool {
   bool get isWrite => true;
 
   @override
-  String summarize(Map<String, Object?> args) {
+  Future<String> summarize(Map<String, Object?> args) async {
     final name = _safeText(args, 'name');
     final cadence = HabitCadence.parse(args['cadence']);
     // A mistyped target is rejected by [run]; show "?" rather than pretending
@@ -910,7 +914,7 @@ class UpdateHabitTool extends CoachTool {
   bool get isWrite => true;
 
   @override
-  String summarize(Map<String, Object?> args) {
+  Future<String> summarize(Map<String, Object?> args) async {
     final id = _int(args, 'id');
     final habit = id == null ? null : _habitById(store, id);
     final changes = <String>[
@@ -998,7 +1002,7 @@ class DeleteHabitTool extends CoachTool {
   bool get isWrite => true;
 
   @override
-  String summarize(Map<String, Object?> args) {
+  Future<String> summarize(Map<String, Object?> args) async {
     final id = _int(args, 'id');
     final habit = id == null ? null : _habitById(store, id);
     return 'Delete habit ${habit == null ? '#${id ?? '?'}' : '"${habit.name}"'}';
@@ -1039,7 +1043,7 @@ class LogHabitCompletionTool extends CoachTool {
   bool get isWrite => true;
 
   @override
-  String summarize(Map<String, Object?> args) {
+  Future<String> summarize(Map<String, Object?> args) async {
     final id = _int(args, 'habitId');
     final habit = id == null ? null : _habitById(store, id);
     final day = parseHabitDay(args['date']) ?? DateTime.now();
@@ -1142,6 +1146,10 @@ class HabitStatusTool extends CoachTool {
 /// reject.
 int? _parsePlanTime(Object? raw) {
   if (raw is num) {
+    // `jsonDecode('{"start": 1e999}')` yields Infinity, and `Infinity.toInt()`
+    // throws UnsupportedError. [summarize] is unguarded, so a non-finite time
+    // must return null (a JSON error) rather than crash the approval card.
+    if (!raw.isFinite) return null;
     final minutes = raw.toInt();
     if (minutes != raw) return null;
     return minutes >= 0 && minutes <= minutesPerDay ? minutes : null;
@@ -1246,7 +1254,7 @@ class CreatePlanBlockTool extends CoachTool {
   bool get isWrite => true;
 
   @override
-  String summarize(Map<String, Object?> args) {
+  Future<String> summarize(Map<String, Object?> args) async {
     final title = _safeText(args, 'title');
     final date = parseHabitDay(args['date']);
     return 'Add a plan block: "${title.isEmpty ? 'block' : title}" '
@@ -1272,12 +1280,15 @@ class CreatePlanBlockTool extends CoachTool {
       final id = await store.createPlanBlock(
           day: day, title: title, startMin: start, endMin: end);
       final created = await store.planBlockById(id);
-      return jsonEncode({
+      // `_planBlockJson` already carries `id`; adding it again would emit the
+      // same key twice in the literal (review Nit 1).
+      final payload = <String, Object?>{
         'ok': true,
-        'id': id,
         'date': planDayKey(day),
-        if (created != null) ..._planBlockJson(created),
-      });
+        'id': id,
+      };
+      if (created != null) payload.addAll(_planBlockJson(created));
+      return jsonEncode(payload);
     } on StoreException catch (e) {
       return _jsonError(e.message);
     }
@@ -1311,8 +1322,9 @@ class UpdatePlanBlockTool extends CoachTool {
   bool get isWrite => true;
 
   @override
-  String summarize(Map<String, Object?> args) {
+  Future<String> summarize(Map<String, Object?> args) async {
     final id = _int(args, 'id');
+    final block = id == null ? null : await store.planBlockById(id);
     final changes = <String>[
       if (args['title'] != null) 'title "${_safeText(args, 'title')}"',
       if (args['start'] != null) 'start ${_timeWord(args['start'])}',
@@ -1322,14 +1334,23 @@ class UpdatePlanBlockTool extends CoachTool {
       else if (args['done'] == false)
         'clear done',
     ];
-    return 'Update plan block ${id == null ? '?' : '#$id'}'
+    // Name the block being changed so the user can confirm against a title,
+    // not just an id (review Nit 2).
+    final label = id == null
+        ? '?'
+        : block == null
+            ? '#$id'
+            : '#$id "${block.title}"';
+    return 'Update plan block $label'
         '${changes.isEmpty ? '' : ': ${changes.join(', ')}'}';
   }
 
   @override
   Future<String> run(Map<String, Object?> args) async {
+    final rawId = args['id'];
+    if (rawId == null) return _jsonError('id is required');
     final id = _int(args, 'id');
-    if (id == null) return _jsonError('id is required');
+    if (id == null) return _jsonError('id must be an integer');
     final block = await store.planBlockById(id);
     if (block == null) return _jsonError('no plan block with id $id');
 
@@ -1365,11 +1386,10 @@ class UpdatePlanBlockTool extends CoachTool {
         endMin: end ?? block.endMin);
     if (error != null) return _jsonError(error);
     try {
-      if (title != null || start != null || end != null) {
-        await store.updatePlanBlock(id,
-            title: title, startMin: start, endMin: end);
-      }
-      if (done != null) await store.setPlanBlockDone(id, done);
+      // One write for the move and the done flag, so a failure cannot leave
+      // the block moved but unchecked (review Nit 4).
+      await store.updatePlanBlock(id,
+          title: title, startMin: start, endMin: end, done: done);
     } on StoreException catch (e) {
       return _jsonError(e.message);
     }
@@ -1401,15 +1421,21 @@ class DeletePlanBlockTool extends CoachTool {
   bool get isWrite => true;
 
   @override
-  String summarize(Map<String, Object?> args) {
+  Future<String> summarize(Map<String, Object?> args) async {
     final id = _int(args, 'id');
-    return 'Delete plan block ${id == null ? '?' : '#$id'}';
+    if (id == null) return 'Delete plan block ?';
+    final block = await store.planBlockById(id);
+    // Name the block so the user can confirm the deletion against a title
+    // (review Nit 2).
+    return 'Delete plan block #$id${block == null ? '' : ' "${block.title}"'}';
   }
 
   @override
   Future<String> run(Map<String, Object?> args) async {
+    final rawId = args['id'];
+    if (rawId == null) return _jsonError('id is required');
     final id = _int(args, 'id');
-    if (id == null) return _jsonError('id is required');
+    if (id == null) return _jsonError('id must be an integer');
     final block = await store.planBlockById(id);
     if (block == null) return _jsonError('no plan block with id $id');
     await store.deletePlanBlock(id);
