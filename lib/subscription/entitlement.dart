@@ -12,7 +12,12 @@ enum AiSource { byo, compounder }
 /// [trialing] is a distinct state: the trial grants access (quota applies) but
 /// it is not a completed purchase, so the UI must never call it "active" or
 /// claim a renewal date. [currentPeriodEnd] is the trial end in that case.
-enum EntitlementStatus { none, active, trialing, pending, expired, unknown }
+///
+/// [pastDue] is a documented grace state: the store reported a failed payment
+/// and the gateway still grants access until [Entitlement.graceEndsAt]. It is
+/// not collapsed into [active] because the UI must say the payment failed and
+/// must not claim a renewal date (the stored period end is already in the past).
+enum EntitlementStatus { none, active, trialing, pastDue, pending, expired, unknown }
 
 /// Daily request and monthly token allowance attached to an entitlement.
 class Quota {
@@ -58,6 +63,10 @@ class Entitlement {
   final EntitlementStatus status;
   final String planCode;
   final DateTime? currentPeriodEnd;
+
+  /// End of the gateway's grace window for a [EntitlementStatus.pastDue]
+  /// entitlement. Null for every other status.
+  final DateTime? graceEndsAt;
   final Quota? quota;
   final DateTime? fetchedAt;
 
@@ -65,6 +74,7 @@ class Entitlement {
     this.status = EntitlementStatus.none,
     this.planCode = '',
     this.currentPeriodEnd,
+    this.graceEndsAt,
     this.quota,
     this.fetchedAt,
   });
@@ -73,22 +83,36 @@ class Entitlement {
   /// while it runs, so [EntitlementStatus.trialing] counts. A known period end
   /// that has passed means the cached entitlement is stale even if the gateway
   /// last said "active" or "trialing".
+  ///
+  /// A past-due entitlement is entitled only inside the grace window, exactly
+  /// like the gateway's `entitlement_grants_access`: the store's period end is
+  /// already in the past, so [graceEndsAt] is the only authority. A missing
+  /// grace end means no access, matching the gateway.
   bool isActiveAt(DateTime now) {
-    if (status != EntitlementStatus.active &&
-        status != EntitlementStatus.trialing) {
-      return false;
+    switch (status) {
+      case EntitlementStatus.active:
+      case EntitlementStatus.trialing:
+        final end = currentPeriodEnd;
+        return end == null || end.isAfter(now);
+      case EntitlementStatus.pastDue:
+        final grace = graceEndsAt;
+        return grace != null && grace.isAfter(now);
+      default:
+        return false;
     }
-    final end = currentPeriodEnd;
-    return end == null || end.isAfter(now);
   }
 
   /// True while this entitlement is a free trial rather than a paid plan.
   bool get isTrialing => status == EntitlementStatus.trialing;
 
+  /// True while the subscription is past due but still inside the grace window.
+  bool get isPastDue => status == EntitlementStatus.pastDue;
+
   Entitlement copyWith({Quota? quota}) => Entitlement(
         status: status,
         planCode: planCode,
         currentPeriodEnd: currentPeriodEnd,
+        graceEndsAt: graceEndsAt,
         quota: quota ?? this.quota,
         fetchedAt: fetchedAt,
       );
@@ -98,6 +122,8 @@ class Entitlement {
         'plan_code': planCode,
         if (currentPeriodEnd != null)
           'current_period_end': currentPeriodEnd!.toUtc().toIso8601String(),
+        if (graceEndsAt != null)
+          'grace_ends_at': graceEndsAt!.toUtc().toIso8601String(),
         if (quota != null) 'quota': quota!.toJson(),
         if (fetchedAt != null) 'fetched_at': fetchedAt!.toUtc().toIso8601String(),
       };
@@ -110,6 +136,7 @@ class Entitlement {
       status: parseEntitlementStatus(json['status']),
       planCode: json['plan_code'] is String ? json['plan_code'] as String : '',
       currentPeriodEnd: _date(json['current_period_end']),
+      graceEndsAt: _date(json['grace_ends_at']),
       quota: quotaJson is Map
           ? Quota.fromJson(quotaJson.cast<String, Object?>())
           : null,
@@ -141,9 +168,16 @@ EntitlementStatus parseEntitlementStatus(Object? raw) {
   switch (value) {
     case 'active':
     case 'grace_period':
+    // The gateway treats a free entitlement as entitled
+    // (entitlement_grants_access), so the app must not revoke it.
+    case 'free':
       return EntitlementStatus.active;
     case 'trialing':
       return EntitlementStatus.trialing;
+    case 'past_due':
+    // The cache stores the enum name, which has no underscore.
+    case 'pastdue':
+      return EntitlementStatus.pastDue;
     case 'pending':
     case 'incomplete':
       return EntitlementStatus.pending;

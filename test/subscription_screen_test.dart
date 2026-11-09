@@ -124,6 +124,15 @@ Entitlement _trial({required DateTime end}) => Entitlement(
       fetchedAt: DateTime.now(),
     );
 
+Entitlement _pastDue({required DateTime graceEnd}) => Entitlement(
+      status: EntitlementStatus.pastDue,
+      planCode: 'monthly',
+      currentPeriodEnd: DateTime.now().subtract(const Duration(days: 2)),
+      graceEndsAt: graceEnd,
+      quota: const Quota(dailyLimit: 20, dailyUsed: 3),
+      fetchedAt: DateTime.now(),
+    );
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   sqfliteFfiInit();
@@ -273,6 +282,38 @@ void main() {
         entitlementSummary(
             _trial(end: now.subtract(const Duration(days: 1))), now),
         'Not active — subscribe or restore a purchase.');
+  });
+
+  test('the settings summary reports a past-due grace window, not active', () {
+    final now = DateTime(2026, 11, 9, 12);
+    final grace = now.add(const Duration(days: 1));
+    expect(
+        entitlementSummary(_pastDue(graceEnd: grace), now),
+        'Payment failed — access ends '
+        '${formatDate(grace.millisecondsSinceEpoch)}');
+    expect(
+        entitlementSummary(
+            _pastDue(graceEnd: now.subtract(const Duration(hours: 1))), now),
+        'Not active — subscribe or restore a purchase.',
+        reason: 'once the grace window closes the gateway refuses requests');
+  });
+
+  testWidgets('a past-due subscription keeps access but says payment failed',
+      (tester) async {
+    storeGateway.products = const [_monthly];
+    final grace = DateTime.now().add(const Duration(days: 1));
+    await store.saveEntitlement(_pastDue(graceEnd: grace));
+    await pumpScreen(tester);
+
+    expect(
+        find.text('Payment failed — access ends '
+            '${formatDate(grace.millisecondsSinceEpoch)}'),
+        findsOneWidget);
+    expect(find.text('Compounder AI is active'), findsNothing);
+    expect(find.textContaining('Renews:'), findsNothing,
+        reason: 'the stored period end is already in the past');
+    expect(find.textContaining('Requests left today: 17 of 20'),
+        findsOneWidget);
   });
 
   testWidgets('a pending purchase shows the waiting state', (tester) async {

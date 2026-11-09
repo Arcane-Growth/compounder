@@ -233,6 +233,10 @@ void main() {
       expect(parseEntitlementStatus('trialing'), EntitlementStatus.trialing,
           reason: 'a trial must not be collapsed into a paid subscription');
       expect(parseEntitlementStatus('grace_period'), EntitlementStatus.active);
+      expect(parseEntitlementStatus('past_due'), EntitlementStatus.pastDue,
+          reason: 'a grace-period subscription must not parse as unknown');
+      expect(parseEntitlementStatus('free'), EntitlementStatus.active,
+          reason: 'the gateway treats a free entitlement as entitled');
       expect(parseEntitlementStatus('pending'), EntitlementStatus.pending);
       expect(parseEntitlementStatus('expired'), EntitlementStatus.none);
       expect(parseEntitlementStatus('something-new'),
@@ -289,6 +293,49 @@ void main() {
       ).encodeCache());
       expect(cached!.status, EntitlementStatus.trialing);
       expect(cached.isTrialing, isTrue);
+    });
+
+    test('a past_due entitlement is active only inside the grace window', () {
+      final inGrace = Entitlement(
+        status: parseEntitlementStatus('past_due'),
+        planCode: 'monthly',
+        // The store's period end is already in the past for a past-due
+        // subscription; only the grace end can grant access.
+        currentPeriodEnd: now.subtract(const Duration(days: 2)),
+        graceEndsAt: now.add(const Duration(days: 1)),
+      );
+      expect(inGrace.isPastDue, isTrue);
+      expect(inGrace.isActiveAt(now), isTrue,
+          reason: 'the gateway still accepts requests inside the grace window');
+      expect(inGrace.isActiveAt(now.add(const Duration(days: 2))), isFalse,
+          reason: 'access must end when the grace window closes');
+
+      final noGrace = Entitlement(
+        status: EntitlementStatus.pastDue,
+        currentPeriodEnd: now.subtract(const Duration(days: 2)),
+      );
+      expect(noGrace.isActiveAt(now), isFalse,
+          reason: 'a missing grace end means no access, matching the gateway');
+
+      final state = reduceSubscriptionState(
+          const SubscriptionPending('compounder_ai_monthly'),
+          PurchaseVerified(inGrace),
+          now: now);
+      expect(state, isA<SubscriptionPurchased>(),
+          reason: 'a past-due subscription inside grace must not look pending');
+    });
+
+    test('a past_due entitlement round-trips its grace end through the cache',
+        () {
+      final cached = Entitlement.decodeCache(Entitlement(
+        status: EntitlementStatus.pastDue,
+        planCode: 'monthly',
+        currentPeriodEnd: now.subtract(const Duration(days: 2)),
+        graceEndsAt: now.add(const Duration(days: 1)),
+      ).encodeCache());
+      expect(cached!.status, EntitlementStatus.pastDue);
+      expect(cached.graceEndsAt, isNotNull);
+      expect(cached.isActiveAt(now), isTrue);
     });
   });
 

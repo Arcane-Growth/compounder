@@ -19,6 +19,14 @@ String entitlementSummary(Entitlement? entitlement, DateTime now) {
     return 'Not active — subscribe or restore a purchase.';
   }
   final end = entitlement.currentPeriodEnd;
+  if (entitlement.isPastDue) {
+    // The stored period end is already in the past for a past-due
+    // subscription; the grace end is the date that matters.
+    final grace = entitlement.graceEndsAt;
+    return grace == null
+        ? 'Payment failed — access continues'
+        : 'Payment failed — access ends ${formatDate(grace.millisecondsSinceEpoch)}';
+  }
   if (entitlement.isTrialing) {
     return end == null
         ? 'Trial'
@@ -251,19 +259,34 @@ class _PurchasedCard extends StatelessWidget {
     // never claims a renewal date. The end date comes from the gateway/store,
     // so the trial length is never hardcoded here.
     final trialing = entitlement.isTrialing;
+    // A past-due subscription is still inside the gateway's grace window, so it
+    // keeps access but must say the payment failed and must not claim a
+    // renewal date (the stored period end is already in the past).
+    final pastDue = entitlement.isPastDue;
+    final grace = entitlement.graceEndsAt;
     final title = trialing
         ? (end == null
             ? 'Trial'
             : 'Trial — ends ${formatDate(end.millisecondsSinceEpoch)}')
-        : 'Compounder AI is active';
+        : pastDue
+            ? (grace == null
+                ? 'Payment failed — access continues'
+                : 'Payment failed — access ends ${formatDate(grace.millisecondsSinceEpoch)}')
+            : 'Compounder AI is active';
     return Card(
       color: scheme.surfaceContainerLow,
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            Icon(trialing ? Icons.timelapse : Icons.check_circle,
-                color: scheme.primary, size: 20),
+            Icon(
+                pastDue
+                    ? Icons.warning_amber
+                    : trialing
+                        ? Icons.timelapse
+                        : Icons.check_circle,
+                color: scheme.primary,
+                size: 20),
             const SizedBox(width: 8),
             Expanded(
               child: Text(title, style: t.titleMedium),
@@ -272,7 +295,7 @@ class _PurchasedCard extends StatelessWidget {
           const SizedBox(height: 8),
           if (entitlement.planCode.isNotEmpty)
             Text('Plan: ${entitlement.planCode}', style: t.bodyMedium),
-          if (!trialing && end != null)
+          if (!trialing && !pastDue && end != null)
             Text('Renews: ${formatDate(end.millisecondsSinceEpoch)}',
                 style: t.bodyMedium),
           if (quota != null)

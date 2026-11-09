@@ -262,6 +262,9 @@ class GatewayClient {
       currentPeriodEnd: entitlementJson is Map
           ? _periodEnd(entitlementJson['current_period_end'])
           : null,
+      graceEndsAt: entitlementJson is Map
+          ? _periodEnd(entitlementJson['grace_ends_at'])
+          : null,
       quota: quotaJson is Map
           ? Quota.fromJson(quotaJson.cast<String, Object?>())
           : null,
