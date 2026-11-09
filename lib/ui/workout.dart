@@ -206,6 +206,14 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
     _restTickPlayed = false;
     _restLeft.value = seconds;
     final generation = _restGeneration;
+    // The warning cue belongs at five seconds remaining. A rest configured at
+    // or below that (the Settings minimum is 5s) starts already inside the
+    // window, so fire it now: waiting for the first timer tick would place it
+    // at 4s remaining, one second late.
+    if (seconds > 0 && seconds <= 5) {
+      _restTickPlayed = true;
+      _playCue(WorkoutCue.fiveSeconds);
+    }
     _restTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted || generation != _restGeneration) {
         timer.cancel();

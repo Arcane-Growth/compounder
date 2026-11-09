@@ -7,6 +7,7 @@ import 'package:compounder/ui/settings.dart';
 import 'package:compounder/ui/widgets.dart';
 import 'package:compounder/ui/workout.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health/health.dart';
 import 'package:provider/provider.dart';
@@ -94,17 +95,19 @@ void main() {
   databaseFactory = databaseFactoryFfiNoIsolate;
 
   late AppStore store;
+  bool storeOpen = false;
   late int workoutId;
 
   /// Seeds an active workout with two incomplete sets and a 7s rest default,
   /// so the 5s cue is two ticks away and the "go" cue seven.
-  Future<void> seed({bool soundsEnabled = true}) async {
+  Future<void> seed({bool soundsEnabled = true, int restSeconds = 7}) async {
     SharedPreferences.setMockInitialValues({
-      'restSeconds': 7,
+      'restSeconds': restSeconds,
       'restSoundsEnabled': soundsEnabled,
     });
     store = await AppStore.open(await SharedPreferences.getInstance(),
         path: inMemoryDatabasePath);
+    storeOpen = true;
     final exerciseId = await store.db.insert('exercises', {
       'name': 'Back squat',
       'muscle_group': 'Legs',
@@ -161,7 +164,7 @@ void main() {
   }
 
   tearDown(() async {
-    await store.db.close();
+    if (storeOpen) await store.db.close();
   });
 
   Future<void> pumpWorkout(WidgetTester tester, _FakeWorkoutSounds sounds) async {
@@ -230,6 +233,37 @@ void main() {
         reason: 'the rest chip disappears at zero');
 
     // Nothing more after the timer stopped.
+    await tester.pump(const Duration(seconds: 5));
+    expect(sounds.played, [WorkoutCue.fiveSeconds, WorkoutCue.go]);
+  });
+
+  testWidgets('a 5s rest ticks at five seconds left, not at four',
+      (tester) async {
+    // 5s is the minimum the Settings slider can store; the countdown starts
+    // inside the warning window, so the cue must fire immediately rather than
+    // one tick later at 4s remaining.
+    await seed(restSeconds: 5);
+    final sounds = _FakeWorkoutSounds();
+    await pumpWorkout(tester, sounds);
+
+    await completeSet(tester);
+    expect(find.text('0:05'), findsOneWidget,
+        reason: 'completing a set starts the configured 5s rest');
+    expect(sounds.played, [WorkoutCue.fiveSeconds],
+        reason: 'the warning cue fires at five seconds remaining');
+
+    // 5 -> 4 -> 3 -> 2 -> 1: no repeat.
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(seconds: 1));
+    }
+    expect(sounds.played, [WorkoutCue.fiveSeconds],
+        reason: 'the tick must fire once, not on every tick below five');
+
+    // 1 -> 0: the go tone, and nothing else at zero.
+    await tester.pump(const Duration(seconds: 1));
+    expect(sounds.played, [WorkoutCue.fiveSeconds, WorkoutCue.go],
+        reason: 'only the go tone fires when the countdown reaches zero');
+
     await tester.pump(const Duration(seconds: 5));
     expect(sounds.played, [WorkoutCue.fiveSeconds, WorkoutCue.go]);
   });
@@ -308,6 +342,24 @@ void main() {
         reason: 'a disposed screen must not fire a stale cue');
     expect(sounds.disposed, isTrue,
         reason: 'the audio players are released with the screen');
+  });
+
+  group('cue assets', () {
+    test('every cue path resolves to a bundled asset', () async {
+      // The widget tests inject a fake player, so a typo in a cue path would
+      // otherwise pass CI and silently fail on device (playback errors are
+      // swallowed). Assert the real paths against the asset bundle.
+      final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
+      final bundled = manifest.listAssets().toSet();
+      for (final cue in WorkoutCue.values) {
+        final key = 'assets/${cue.asset}';
+        expect(bundled, contains(key),
+            reason: '${cue.name} must be declared in pubspec.yaml as $key');
+        final data = await rootBundle.load(key);
+        expect(data.lengthInBytes, greaterThan(0),
+            reason: '${cue.name} must have bytes in the bundle');
+      }
+    });
   });
 
   group('restSoundsEnabled preference', () {
