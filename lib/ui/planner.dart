@@ -49,6 +49,13 @@ class _PlannerScreenState extends State<PlannerScreen>
   /// [dispose], so it cannot outlive the route.
   Timer? _clock;
 
+  /// Whether the selected day was showing "now" at the last tick. A screen
+  /// left open across midnight must rebuild once when this flips, otherwise
+  /// yesterday's plan keeps a stale "Now 23:59" marker after the day rolls
+  /// over. Initialised from the opening day so the first tick after midnight
+  /// still detects the transition.
+  bool _showedToday = false;
+
   DateTime _now() => widget.now?.call() ?? DateTime.now();
 
   @override
@@ -57,12 +64,21 @@ class _PlannerScreenState extends State<PlannerScreen>
     final now = _now();
     final initial = widget.initialDay ?? now;
     _day = DateTime(initial.year, initial.month, initial.day);
+    _showedToday = planDayKey(_day) == planDayKey(now);
     WidgetsBinding.instance.addObserver(this);
     _clock = Timer.periodic(const Duration(minutes: 1), (_) {
-      // Only a day that is showing "now" needs the minute tick; a past or
-      // future day's marker never moves.
       if (!mounted) return;
-      if (planDayKey(_day) != planDayKey(_now())) return;
+      final showingToday = planDayKey(_day) == planDayKey(_now());
+      if (showingToday != _showedToday) {
+        // The day rolled over (or the user moved between today and another
+        // day): rebuild once so the marker appears or clears.
+        _showedToday = showingToday;
+        setState(() {});
+        return;
+      }
+      // Within the same day, only a day showing "now" needs the minute tick;
+      // a past or future day's marker never moves.
+      if (!showingToday) return;
       setState(() {});
     });
   }

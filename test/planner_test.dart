@@ -181,6 +181,40 @@ void main() {
     expect(find.text('Afternoon'), findsOneWidget);
   });
 
+  testWidgets('clears the now marker when the day rolls over at midnight',
+      (tester) async {
+    await tester.runAsync(() async {
+      await store.createPlanBlock(
+          day: day,
+          title: 'Late block',
+          startMin: 23 * 60,
+          endMin: 23 * 60 + 30);
+    });
+
+    var current = DateTime(2026, 11, 9, 23, 59);
+    await tester.pumpWidget(ChangeNotifierProvider<AppStore>.value(
+      value: store,
+      child: MaterialApp(
+        theme: CompounderTheme.light(),
+        home: PlannerScreen(now: () => current, initialDay: day),
+      ),
+    ));
+    await settle(tester);
+
+    expect(find.text('Now 23:59'), findsOneWidget,
+        reason: 'today must show a now marker before midnight');
+
+    // The screen is left open across midnight. The local day key changes, so
+    // the marker must clear instead of staying frozen on yesterday's date.
+    current = DateTime(2026, 11, 10, 0, 1);
+    await tester.pump(const Duration(minutes: 1));
+    await tester.pump();
+
+    expect(find.text('Now 23:59'), findsNothing,
+        reason: 'a stale now marker must not survive the day rollover');
+    expect(find.textContaining('Now '), findsNothing);
+  });
+
   testWidgets('a stale day query cannot overwrite the selected day',
       (tester) async {
     // Two rapid day shifts: the 11-10 query is slow (400 ms) and the 11-11

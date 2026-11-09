@@ -608,6 +608,27 @@ void main() {
       expect(find.text('Deep work'), findsOneWidget);
     });
 
+    testWidgets('the Day plan pillar tile opens the planner', (tester) async {
+      final now = DateTime(2026, 11, 9, 12);
+      await tester.pumpWidget(host(now: () => now));
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)));
+      await tester.pump();
+
+      // The checklist tile, not the plan card: this exercises _openPillar's
+      // pillarPlan branch, which the plan-card test never reaches.
+      await tester.ensureVisible(find.text('Day plan'));
+      await tester.pump();
+      await tester.tap(find.text('Day plan'));
+      await tester.pump();
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(PlannerScreen), findsOneWidget,
+          reason: 'the Day plan pillar tile must open the planner');
+    });
+
     testWidgets('shows the active-workout resume card and opens the workout',
         (tester) async {
       final now = DateTime.now();

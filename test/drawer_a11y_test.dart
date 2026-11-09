@@ -7,6 +7,7 @@ import 'package:compounder/services/notify.dart';
 import 'package:compounder/ui/drawer.dart';
 import 'package:compounder/ui/habits.dart';
 import 'package:compounder/ui/heatmap.dart';
+import 'package:compounder/ui/planner.dart';
 import 'package:compounder/ui/settings.dart';
 import 'package:compounder/ui/shell.dart';
 import 'package:compounder/ui/widgets.dart';
@@ -376,6 +377,37 @@ void main() {
         find.byType(HeatmapScreen, skipOffstage: false),
         findsOneWidget,
         reason: 'Activity must be pushed exactly once',
+      );
+    });
+
+    testWidgets('Day planner pushes exactly one route and closes the drawer',
+        (tester) async {
+      await pumpShell(tester);
+
+      await tester.tap(find.byIcon(Icons.menu).first);
+      await tester.pumpAndSettle();
+      // Day planner sits above Activity/Habits/Settings, so it can sit below
+      // the fold at the test surface height. Scroll it into view before
+      // tapping; a missed tap would leave the drawer open.
+      final plannerItem = find.descendant(
+        of: find.byType(AppDrawer),
+        matching: find.text('Day planner'),
+      );
+      await tester.ensureVisible(plannerItem);
+      await tester.pumpAndSettle();
+      await tester.tap(plannerItem);
+      await tester.pumpAndSettle();
+      // PlannerScreen loads its day query in didChangeDependencies; let the
+      // real sqflite work finish so no fake timer outlives the test.
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)));
+      await tester.pump();
+
+      expect(find.byType(Drawer), findsNothing);
+      expect(
+        find.byType(PlannerScreen, skipOffstage: false),
+        findsOneWidget,
+        reason: 'Day planner must be pushed exactly once',
       );
     });
 
