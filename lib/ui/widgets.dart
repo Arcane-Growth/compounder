@@ -26,6 +26,13 @@ class CompounderTheme {
       inputDecorationTheme: InputDecorationTheme(
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
       ),
+      // Full-width primary actions are the app's default (dialogs, forms).
+      // Size.fromHeight(48) has an *infinite* width, so a FilledButton placed
+      // in a Row (unbounded main axis) is forced to an infinite width and the
+      // row overflows — in release the overflow is clipped silently instead of
+      // throwing. Any FilledButton that must sit beside another widget has to
+      // override minimumSize with a finite width (see CoachApprovalCard in
+      // coach.dart). test/coach_approval_layout_test.dart pins this contract.
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
       ),

@@ -133,6 +133,16 @@ void main() {
     }
   }
 
+  test('the app theme keeps full-width primary buttons; a FilledButton in a '
+      'Row must override the infinite minimum width', () {
+    final style = CompounderTheme.dark().filledButtonTheme.style!;
+    final minimum = style.minimumSize!.resolve(<WidgetState>{})!;
+    expect(minimum.width, double.infinity,
+        reason: 'documented constraint in lib/ui/widgets.dart: a FilledButton '
+            'placed in a Row must override minimumSize with a finite width');
+    expect(minimum.height, 48);
+  });
+
   testWidgets('a batch offers a visible, tappable Approve all at 320dp '
       'textScale 2.0', (tester) async {
     var approved = 0;

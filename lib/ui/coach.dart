@@ -42,7 +42,14 @@ List<CoachMessage> messagesAfterTurn(
 }
 
 class CoachTab extends StatefulWidget {
-  const CoachTab({super.key});
+  /// Test seam: a pre-built agent and chat client. Production passes neither,
+  /// so the tab builds them from the store on first use. Injecting both lets a
+  /// widget test drive a real turn (and the approval card) without a network
+  /// endpoint.
+  final CoachAgent? agent;
+  final ChatClient? client;
+
+  const CoachTab({super.key, this.agent, this.client});
 
   @override
   State<CoachTab> createState() => _CoachTabState();
@@ -163,8 +170,9 @@ class _CoachTabState extends State<CoachTab> {
     });
     try {
       final userMessage = await buildUserMessage(text, sentAttachments);
-      agent ??= _buildAgent(store, notify, health);
-      final turn = await agent!.replyMessage(chatClientFor(store), userMessage);
+      final client = widget.client ?? chatClientFor(store);
+      agent ??= widget.agent ?? _buildAgent(store, notify, health);
+      final turn = await agent!.replyMessage(client, userMessage);
       if (!mounted) return;
       _applyTurn(turn);
       notify.rescheduleDaily(store);
@@ -203,7 +211,7 @@ class _CoachTabState extends State<CoachTab> {
       pending = null;
     });
     try {
-      final client = chatClientFor(store);
+      final client = widget.client ?? chatClientFor(store);
       final turn = approve ? await agent.approve(client) : await agent.decline(client);
       if (!mounted) return;
       _applyTurn(turn);

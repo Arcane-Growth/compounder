@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:compounder/coach/agent.dart';
 import 'package:compounder/coach/tools.dart';
 import 'package:compounder/data/store.dart';
+import 'package:compounder/domain/habits.dart';
 import 'package:compounder/llm/llm.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -183,9 +184,14 @@ void main() {
       expect((listed['habits'] as List), hasLength(1));
       expect((listed['habits'] as List).single['name'], 'Read');
 
+      // Log inside the *current* period: completedDays is progress in the
+      // period containing today, so a hardcoded date falls out of the week as
+      // soon as the calendar moves past it.
+      final day = habitDayKey(DateTime.now());
+
       final logged = jsonDecode(await LogHabitCompletionTool(store).run({
         'habitId': id,
-        'date': '2026-11-08',
+        'date': day,
         'done': true,
       })) as Map;
       expect(logged['ok'], isTrue);
@@ -194,7 +200,7 @@ void main() {
 
       final status = jsonDecode(await HabitStatusTool(store).run({
         'habitId': id,
-        'date': '2026-11-08',
+        'date': day,
       })) as Map;
       expect((status['habits'] as List).single['streak'], 0,
           reason: 'one day of a three-day week is not a met period');
@@ -213,7 +219,7 @@ void main() {
       // Unchecking clears the day.
       final cleared = jsonDecode(await LogHabitCompletionTool(store).run({
         'habitId': id,
-        'date': '2026-11-08',
+        'date': day,
         'done': false,
       })) as Map;
       expect(cleared['done'], isFalse);

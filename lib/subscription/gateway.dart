@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
 import 'package:http/http.dart' as http;
 
 import 'constants.dart';
@@ -80,7 +82,20 @@ class GatewayClient {
     this.deviceTokenStore,
     String? platform,
   })  : _http = httpClient ?? http.Client(),
-        platform = platform ?? (Platform.isIOS ? 'ios' : 'android');
+        platform = platform ?? _defaultPlatform();
+
+  /// The platform reported on register. The app ships on Android and iOS;
+  /// desktop and web builds report `other` rather than claiming to be Android.
+  static String _defaultPlatform() {
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        return 'android';
+      case TargetPlatform.iOS:
+        return 'ios';
+      default:
+        return 'other';
+    }
+  }
 
   /// Registers this install and returns the device token the gateway issues.
   ///
@@ -107,6 +122,13 @@ class GatewayClient {
     if (issued is! String || issued.isEmpty) {
       throw const GatewayException(
           'Compounder AI did not return a device token. Try again later.');
+    }
+    // The gateway echoes the client-minted token today. If it ever issues a
+    // different one, adopt it: the store must mark the identity the gateway
+    // actually knows as registered, otherwise the next call sends a token the
+    // gateway never saw.
+    if (issued != token) {
+      await store?.saveDeviceToken(issued);
     }
     await store?.markDeviceTokenRegistered();
     return issued;

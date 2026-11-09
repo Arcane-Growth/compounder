@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:compounder/data/store.dart';
 import 'package:compounder/subscription/gateway.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -15,6 +16,10 @@ class _Recorder {
   int status = 200;
   bool omitToken = false;
 
+  /// When set, the gateway answers with this token instead of echoing the
+  /// client's. Used to prove the client reconciles a divergent issue.
+  String? issuedOverride;
+
   MockClient client() => MockClient((request) async {
         bodies.add(jsonDecode(request.body) as Map<String, Object?>);
         if (status != 200) {
@@ -26,7 +31,8 @@ class _Recorder {
         }
         return http.Response(
             jsonEncode({
-              'device_token': omitToken ? null : bodies.last['device_token'],
+              'device_token':
+                  omitToken ? null : (issuedOverride ?? bodies.last['device_token']),
               'account_id': 'user-1',
             }),
             200);
@@ -171,6 +177,42 @@ void main() {
     await client.register();
 
     expect(recorder.bodies.single['platform'], 'ios');
+  });
+
+  test('the platform fallback reports other on a non-mobile platform',
+      () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final recorder = _Recorder();
+    final client = GatewayClient(
+      baseUrl: 'http://gateway.test',
+      deviceTokenStore: store,
+      httpClient: recorder.client(),
+    );
+
+    await client.register();
+
+    expect(recorder.bodies.single['platform'], 'other',
+        reason: 'a desktop build must not claim to be Android');
+  });
+
+  test('a gateway that issues a different token is adopted, not ignored',
+      () async {
+    final recorder = _Recorder()..issuedOverride = 'gateway-issued-token-123';
+    final client = GatewayClient(
+      baseUrl: 'http://gateway.test',
+      deviceTokenStore: store,
+      httpClient: recorder.client(),
+    );
+
+    final token = await client.register();
+
+    expect(token, 'gateway-issued-token-123');
+    expect(store.deviceToken, 'gateway-issued-token-123',
+        reason: 'the persisted identity must be the token the gateway knows');
+    expect(store.deviceTokenRegistered, isTrue);
+    expect(recorder.bodies.single['device_token'], isNot(token),
+        reason: 'the client minted a different token than the gateway issued');
   });
 
   test('a response without a device_token is still an error', () async {
