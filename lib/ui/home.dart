@@ -296,7 +296,8 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
                     label: const Text('Progress'),
                   ),
                   OutlinedButton.icon(
-                    onPressed: () => ShellNav.of(context).selectTab?.call(4),
+                    onPressed: () =>
+                        ShellNav.of(context).selectTab?.call(tabCoach),
                     icon: const Icon(Icons.support_agent, size: 18),
                     label: const Text('Coach'),
                   ),
@@ -308,7 +309,8 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
                     label: const Text('Health'),
                   ),
                   OutlinedButton.icon(
-                    onPressed: () => ShellNav.of(context).selectTab?.call(2),
+                    onPressed: () =>
+                        ShellNav.of(context).selectTab?.call(tabWealth),
                     icon: const Icon(Icons.insights, size: 18),
                     label: const Text('Wealth'),
                   ),
@@ -359,9 +361,9 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
           _startWorkout(context);
         }
       case pillarNutrition:
-        ShellNav.of(context).selectTab?.call(1);
+        ShellNav.of(context).selectTab?.call(tabMacros);
       case pillarMind:
-        ShellNav.of(context).selectTab?.call(3);
+        ShellNav.of(context).selectTab?.call(tabMind);
       case pillarHabits:
         Navigator.of(context).push(
             MaterialPageRoute(builder: (_) => const HabitsScreen()));
@@ -370,7 +372,7 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
 
   Future<void> _startWorkout(BuildContext context) async {
     final store = context.read<AppStore>();
-    final name = await _askWorkoutName(context);
+    final name = await askWorkoutName(context);
     if (name == null) return;
     final id = await store.createWorkout(name);
     if (context.mounted) _openWorkout(context, id);
@@ -474,34 +476,5 @@ class _PillarTile extends StatelessWidget {
         color: done ? scheme.primary : scheme.onSurfaceVariant,
       ),
     );
-  }
-}
-
-Future<String?> _askWorkoutName(BuildContext context) async {
-  final controller = TextEditingController(text: 'Workout');
-  try {
-    return await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('New workout'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'Name'),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () => Navigator.pop(context, controller.text),
-              child: const Text('Start')),
-        ],
-      ),
-    );
-  } finally {
-    // The dialog's TextField no longer needs the controller once the route is
-    // gone; disposing it here avoids leaking one per "new workout" prompt.
-    controller.dispose();
   }
 }

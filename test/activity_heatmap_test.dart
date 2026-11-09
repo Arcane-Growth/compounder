@@ -491,7 +491,8 @@ void main() {
       expect(find.text('1-day streak'), findsOneWidget);
 
       await tester.tap(find.text('Nutrition'));
-      expect(selected, 1, reason: 'Nutrition taps through to the Macros tab');
+      expect(selected, tabMacros,
+          reason: 'Nutrition taps through to the Macros tab');
 
       await tester.scrollUntilVisible(find.text('Last 12 weeks'), 200);
       await tester.pump();
@@ -587,10 +588,10 @@ void main() {
       await popRoute();
 
       await tapLink('Coach');
-      expect(selected, 4, reason: 'Coach selects the Coach tab');
+      expect(selected, tabCoach, reason: 'Coach selects the Coach tab');
 
       await tapLink('Wealth');
-      expect(selected, 2, reason: 'Wealth selects the Wealth tab');
+      expect(selected, tabWealth, reason: 'Wealth selects the Wealth tab');
 
       await tapLink('Health');
       expect(find.byType(HealthDataScreen, skipOffstage: false), findsOneWidget);
@@ -758,6 +759,85 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Nothing logged'), findsWidgets,
           reason: 'tapping a day row opens the same detail sheet');
+    });
+
+    testWidgets('activity screen opens on the newest week, not 52 weeks ago',
+        (tester) async {
+      final now = DateTime(2026, 11, 9, 12);
+      await tester.runAsync(() async {
+        await store.db.insert('workouts', {
+          'name': 'Today',
+          'started_at': DateTime(2026, 11, 9, 7).millisecondsSinceEpoch,
+          'ended_at': DateTime(2026, 11, 9, 8).millisecondsSinceEpoch,
+        });
+        await store.refreshAll();
+      });
+
+      await tester.pumpWidget(ChangeNotifierProvider<AppStore>.value(
+        value: store,
+        child: MaterialApp(
+          theme: CompounderTheme.light(),
+          home: HeatmapScreen(now: () => now),
+        ),
+      ));
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)));
+      await tester.pump();
+      await tester.pump();
+
+      final todayCell = find.byWidgetPredicate((w) =>
+          w is HeatmapCell && localDayKey(w.day) == '2026-11-09');
+      expect(todayCell, findsOneWidget,
+          reason: 'the grid must contain today');
+      final rect = tester.getRect(todayCell);
+      final width =
+          tester.view.physicalSize.width / tester.view.devicePixelRatio;
+      expect(rect.left, greaterThanOrEqualTo(0.0));
+      expect(rect.right, lessThanOrEqualTo(width),
+          reason: 'the newest week must be on screen when the screen opens; '
+              'without the auto-scroll it sits ~900dp to the right');
+    });
+
+    testWidgets('activity screen re-pins the newest week after a resize',
+        (tester) async {
+      final now = DateTime(2026, 11, 9, 12);
+      await tester.runAsync(() async {
+        await store.db.insert('workouts', {
+          'name': 'Today',
+          'started_at': DateTime(2026, 11, 9, 7).millisecondsSinceEpoch,
+          'ended_at': DateTime(2026, 11, 9, 8).millisecondsSinceEpoch,
+        });
+        await store.refreshAll();
+      });
+
+      await tester.pumpWidget(ChangeNotifierProvider<AppStore>.value(
+        value: store,
+        child: MaterialApp(
+          theme: CompounderTheme.light(),
+          home: HeatmapScreen(now: () => now),
+        ),
+      ));
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)));
+      await tester.pump();
+      await tester.pump();
+
+      // Rotate to a narrow portrait window: the grid's viewport shrinks, so
+      // the pinned offset must be recomputed or the newest week scrolls back
+      // out of view.
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pump();
+      await tester.pump();
+
+      final todayCell = find.byWidgetPredicate((w) =>
+          w is HeatmapCell && localDayKey(w.day) == '2026-11-09');
+      expect(todayCell, findsOneWidget);
+      final rect = tester.getRect(todayCell);
+      expect(rect.right, lessThanOrEqualTo(400.0),
+          reason: 'a resize must keep the newest week on screen');
     });
 
     testWidgets('home and legend do not overflow at 320x640/textScaler 2.0',

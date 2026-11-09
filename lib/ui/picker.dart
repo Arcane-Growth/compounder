@@ -13,7 +13,11 @@ const muscleGroups = [
 const equipmentTypes = ['BARBELL', 'DUMBBELL', 'MACHINE', 'BODYWEIGHT', 'OTHER'];
 
 class ExercisePickerScreen extends StatefulWidget {
-  const ExercisePickerScreen({super.key});
+  /// AppBar title. The workout screen adds an exercise ("Add exercise"); the
+  /// fitness hub opens the same list as a browsable library.
+  final String title;
+
+  const ExercisePickerScreen({super.key, this.title = 'Add exercise'});
 
   @override
   State<ExercisePickerScreen> createState() => _ExercisePickerScreenState();
@@ -41,7 +45,7 @@ class _ExercisePickerScreenState extends State<ExercisePickerScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Add exercise'),
+        title: Text(widget.title),
         actions: [
           IconButton(
             icon: const Icon(Icons.add),

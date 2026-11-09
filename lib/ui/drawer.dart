@@ -43,6 +43,21 @@ class ShellNav extends InheritedWidget {
       visible != oldWidget.visible;
 }
 
+/// Shell tab indices.
+///
+/// The bottom bar shows [tabHome]..[tabCoach] in that order. [tabMind] is
+/// drawer-only: it stays mounted in the shell's IndexedStack at its own index
+/// so its state survives navigation, but it has no bottom-bar destination.
+const int tabHome = 0;
+const int tabFitness = 1;
+const int tabMacros = 2;
+const int tabWealth = 3;
+const int tabCoach = 4;
+const int tabMind = 5;
+
+/// Number of tabs the shell keeps mounted.
+const int shellTabCount = 6;
+
 /// A single destination listed in the app drawer.
 class DrawerDestination {
   final IconData icon;
@@ -50,17 +65,20 @@ class DrawerDestination {
   const DrawerDestination(this.icon, this.label);
 }
 
-/// Shared navigation drawer for the five shell tabs plus Settings.
+/// Shared navigation drawer for every shell tab plus Settings.
 ///
 /// Owned by the shell's [Scaffold] so there is exactly one drawer instance.
 /// Standard [Drawer] behaviour keeps it closed until the hamburger is tapped.
 class AppDrawer extends StatelessWidget {
+  /// Drawer order matches the shell's IndexedStack indices exactly, so the
+  /// `selected` marker and the tab switch cannot drift apart.
   static const destinations = <DrawerDestination>[
+    DrawerDestination(Icons.home, 'Home'),
     DrawerDestination(Icons.fitness_center, 'Fitness'),
     DrawerDestination(Icons.restaurant, 'Macros'),
     DrawerDestination(Icons.insights, 'Wealth'),
-    DrawerDestination(Icons.psychology, 'Mind'),
     DrawerDestination(Icons.support_agent, 'Coach'),
+    DrawerDestination(Icons.psychology, 'Mind'),
   ];
 
   final int currentIndex;

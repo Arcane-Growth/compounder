@@ -251,7 +251,7 @@ void main() {
         _drawerHost(
           textScaler: 1.0,
           scaffoldKey: scaffoldKey,
-          currentIndex: 2,
+          currentIndex: tabWealth,
         ),
       );
       scaffoldKey.currentState!.openDrawer();
@@ -293,7 +293,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(AppDrawer), findsOneWidget);
 
-      // Scope to the drawer: "Mind" also labels the bottom NavigationBar.
+      // Mind is drawer-only: it has no bottom-bar destination to collide with.
       await tester.tap(find.descendant(
         of: find.byType(AppDrawer),
         matching: find.text('Mind'),
@@ -301,7 +301,7 @@ void main() {
       await tester.pumpAndSettle();
 
       final stack = tester.widget<IndexedStack>(find.byType(IndexedStack));
-      expect(stack.index, 3, reason: 'Mind is the fourth tab');
+      expect(stack.index, tabMind, reason: 'Mind is drawer-only at index 5');
       expect(find.byType(Drawer), findsNothing,
           reason: 'the drawer must close after selecting a tab');
     });
@@ -377,14 +377,25 @@ void main() {
         (tester) async {
       await pumpShell(tester);
 
-      ShellNav nav() => tester.widget<ShellNav>(find.byType(ShellNav));
+      // The shell wraps each tab in its own ShellNav so `visible` describes
+      // that tab; the first one belongs to HomeTab.
+      ShellNav nav() => tester.widget<ShellNav>(find.byType(ShellNav).first);
       final before = nav().openDrawer;
       final beforeSelect = nav().selectTab;
 
       // Switch tabs via the bottom bar, which rebuilds the shell.
-      await tester.tap(find.text('Mind').last);
+      await tester.tap(find.descendant(
+        of: find.byType(ShellBottomBar),
+        matching: find.text('Fitness'),
+      ));
       await tester.pumpAndSettle();
-      expect(tester.widget<IndexedStack>(find.byType(IndexedStack)).index, 3);
+      // FitnessTab queries the store when it becomes visible; let the real
+      // sqflite work finish so no fake timer outlives the test.
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)));
+      await tester.pump();
+      expect(tester.widget<IndexedStack>(find.byType(IndexedStack)).index,
+          tabFitness);
 
       final after = nav().openDrawer;
       // The reviewer's finding: a fresh closure per build() made

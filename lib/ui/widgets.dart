@@ -251,3 +251,36 @@ String formatDuration(int startMs, int? endMs) {
   if (m >= 60) return '${m ~/ 60}h ${m % 60}m';
   return '$m:${s.toString().padLeft(2, '0')}';
 }
+
+/// Prompts for a workout name. Returns null when the user cancels.
+///
+/// Shared by the home checklist and the fitness hub so both start a workout
+/// through the same dialog.
+Future<String?> askWorkoutName(BuildContext context) async {
+  final controller = TextEditingController(text: 'Workout');
+  try {
+    return await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('New workout'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Name'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, controller.text),
+              child: const Text('Start')),
+        ],
+      ),
+    );
+  } finally {
+    // The dialog's TextField no longer needs the controller once the route is
+    // gone; disposing it here avoids leaking one per "new workout" prompt.
+    controller.dispose();
+  }
+}

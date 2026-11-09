@@ -124,6 +124,10 @@ class ActivityHeatmap extends StatelessWidget {
   final bool showWeekdayLabels;
   final bool showLegend;
   final bool scrollable;
+
+  /// Controller for the horizontal grid. [HeatmapScreen] uses it to open on
+  /// the newest week instead of 52 weeks ago.
+  final ScrollController? controller;
   final ValueChanged<DateTime>? onDayTap;
 
   const ActivityHeatmap({
@@ -137,6 +141,7 @@ class ActivityHeatmap extends StatelessWidget {
     this.showWeekdayLabels = true,
     this.showLegend = false,
     this.scrollable = true,
+    this.controller,
     this.onDayTap,
   });
 
@@ -239,6 +244,7 @@ class ActivityHeatmap extends StatelessWidget {
 
     if (!scrollable) return content;
     return SingleChildScrollView(
+      controller: controller,
       scrollDirection: Axis.horizontal,
       child: content,
     );
@@ -418,11 +424,26 @@ class _HeatmapScreenState extends State<HeatmapScreen>
   /// dropped, so two overlapping queries cannot land out of order.
   int _generation = 0;
 
+  /// Drives the 53-week grid. The grid is far wider than the screen, and the
+  /// newest week is at the right edge: without pinning it the screen opens on
+  /// the oldest week and every visible square is empty.
+  final ScrollController _gridScroll = ScrollController();
+
+  /// Set once the grid has been pinned to the newest week, so a later rebuild
+  /// (or the grid scrolling back into view) does not fight the user's own
+  /// horizontal position.
+  bool _pinnedToNewest = false;
+
+  /// Viewport width of the grid at the last pin, used to detect a resize or
+  /// rotation that must re-pin.
+  double? _gridViewportWidth;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _scheduleMidnight();
+    _pinGridToNewest();
   }
 
   @override
@@ -443,6 +464,7 @@ class _HeatmapScreenState extends State<HeatmapScreen>
     _debounce?.cancel();
     _midnight?.cancel();
     _store?.removeListener(_scheduleReload);
+    _gridScroll.dispose();
     super.dispose();
   }
 
@@ -475,6 +497,33 @@ class _HeatmapScreenState extends State<HeatmapScreen>
   void _scheduleReload() {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 150), _load);
+  }
+
+  /// Jumps the grid to its right edge (the current week) after the next frame.
+  ///
+  /// Post-frame because the grid's extent is only known once it has been laid
+  /// out; the screen's own ListView builds it lazily, so this is also called
+  /// from the metrics listener when the grid first appears.
+  void _pinGridToNewest() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_gridScroll.hasClients) return;
+      final max = _gridScroll.position.maxScrollExtent;
+      if (max <= 0) return;
+      _pinnedToNewest = true;
+      if ((_gridScroll.offset - max).abs() < 0.5) return;
+      _gridScroll.jumpTo(max);
+    });
+  }
+
+  /// Pins the grid on its first layout and again whenever its viewport width
+  /// changes (rotation, split-screen, a desktop window resize).
+  bool _onGridMetrics(ScrollMetricsNotification notification) {
+    if (notification.depth != 0) return false;
+    final width = notification.metrics.viewportDimension;
+    final resized = _gridViewportWidth != null && _gridViewportWidth != width;
+    _gridViewportWidth = width;
+    if (!_pinnedToNewest || resized) _pinGridToNewest();
+    return false;
   }
 
   Future<void> _load() async {
@@ -563,14 +612,18 @@ class _HeatmapScreenState extends State<HeatmapScreen>
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            ActivityHeatmap(
-                              days: _days,
-                              start: from,
-                              end: _today,
-                              cellSize: 14,
-                              gap: 3,
-                              onDayTap: (day) => showDayDetail(
-                                  context, day, _days[localDayKey(day)]),
+                            NotificationListener<ScrollMetricsNotification>(
+                              onNotification: _onGridMetrics,
+                              child: ActivityHeatmap(
+                                days: _days,
+                                start: from,
+                                end: _today,
+                                cellSize: 14,
+                                gap: 3,
+                                controller: _gridScroll,
+                                onDayTap: (day) => showDayDetail(
+                                    context, day, _days[localDayKey(day)]),
+                              ),
                             ),
                             const SizedBox(height: 12),
                             const HeatmapLegend(),
