@@ -10,6 +10,7 @@ import '../domain/domain.dart';
 import '../domain/habits.dart';
 import '../subscription/constants.dart';
 import '../subscription/entitlement.dart';
+import '../subscription/gateway.dart';
 import '../subscription/secrets.dart';
 import 'models.dart';
 
@@ -61,7 +62,7 @@ class WorkoutDetail {
 }
 
 /// Single source of truth: owns the database, cached lists and settings.
-class AppStore extends ChangeNotifier {
+class AppStore extends ChangeNotifier implements DeviceTokenStore {
   late final Database db;
   final SharedPreferences prefs;
 
@@ -85,6 +86,7 @@ class AppStore extends ChangeNotifier {
   String? _gatewayApiKey;
   Entitlement? _entitlement;
   String? _deviceToken;
+  bool _deviceTokenRegistered = false;
 
   static Future<AppStore> open(SharedPreferences prefs,
       {String? path, SecretStore? secretStore}) async {
@@ -106,6 +108,8 @@ class AppStore extends ChangeNotifier {
     }
     store._entitlement = Entitlement.decodeCache(prefs.getString(prefEntitlement));
     store._deviceToken = prefs.getString(prefDeviceToken);
+    store._deviceTokenRegistered =
+        prefs.getBool(prefDeviceTokenRegistered) ?? false;
     return store;
   }
 
@@ -481,11 +485,26 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  @override
   String? get deviceToken => _deviceToken;
 
+  @override
+  bool get deviceTokenRegistered => _deviceTokenRegistered;
+
+  /// Persists a freshly minted device token. It is unconfirmed until the
+  /// gateway accepts it, so [deviceTokenRegistered] resets.
+  @override
   Future<void> saveDeviceToken(String token) async {
     _deviceToken = token;
+    _deviceTokenRegistered = false;
     await prefs.setString(prefDeviceToken, token);
+    await prefs.setBool(prefDeviceTokenRegistered, false);
+  }
+
+  @override
+  Future<void> markDeviceTokenRegistered() async {
+    _deviceTokenRegistered = true;
+    await prefs.setBool(prefDeviceTokenRegistered, true);
   }
 
   MacroGoals get goals => MacroGoals(

@@ -28,7 +28,7 @@ Future<void> main() async {
   final subscription = SubscriptionService(
     store: store,
     storeGateway: InAppPurchaseStoreGateway(),
-    gateway: GatewayClient(),
+    gateway: GatewayClient(deviceTokenStore: store),
     secrets: secrets,
   );
   // Never block startup on notification scheduling or health sync: both can

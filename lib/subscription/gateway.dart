@@ -1,11 +1,31 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:http/http.dart' as http;
 
 import 'constants.dart';
 import 'entitlement.dart';
+
+/// Persistence for the per-install device identity.
+///
+/// The gateway keys an install off the device token, so the token must survive
+/// a failed register: it is written before the network call and reused on the
+/// retry. [AppStore] implements this.
+abstract class DeviceTokenStore {
+  /// The token persisted for this install, or null if none was minted yet.
+  String? get deviceToken;
+
+  /// Whether the gateway has accepted [deviceToken].
+  bool get deviceTokenRegistered;
+
+  /// Persists [token] as this install's identity, not yet confirmed.
+  Future<void> saveDeviceToken(String token);
+
+  /// Records that the gateway accepted the persisted token.
+  Future<void> markDeviceTokenRegistered();
+}
 
 /// A gateway call failed.
 ///
@@ -46,22 +66,62 @@ class GatewayClient {
   final http.Client _http;
   final Duration timeout;
 
+  /// Where the per-install device token is persisted. Null in tests that do
+  /// not care about identity; the token is then minted per call.
+  final DeviceTokenStore? deviceTokenStore;
+
+  /// Reported to the gateway on register. Injected so tests can pin it.
+  final String platform;
+
   GatewayClient({
     this.baseUrl = gatewayBaseUrl,
     http.Client? httpClient,
     this.timeout = const Duration(seconds: 20),
-  }) : _http = httpClient ?? http.Client();
+    this.deviceTokenStore,
+    String? platform,
+  })  : _http = httpClient ?? http.Client(),
+        platform = platform ?? (Platform.isIOS ? 'ios' : 'android');
 
   /// Registers this install and returns the device token the gateway issues.
+  ///
+  /// The gateway requires the token in the body (8-512 characters). It is
+  /// minted client-side, persisted before the request, and reused afterwards,
+  /// so a failed register retries with the same identity instead of creating a
+  /// new account on every attempt.
   Future<String> register() async {
-    final json = await _post('/api/mobile/register', const {});
-    final token = json['device_token'];
-    if (token is! String || token.isEmpty) {
+    final store = deviceTokenStore;
+    final cached = store?.deviceToken;
+    final String token;
+    if (cached != null && _isValidDeviceToken(cached)) {
+      if (store != null && store.deviceTokenRegistered) return cached;
+      token = cached;
+    } else {
+      token = _newDeviceToken();
+    }
+    await store?.saveDeviceToken(token);
+    final json = await _post('/api/mobile/register', {
+      'device_token': token,
+      'platform': platform,
+    });
+    final issued = json['device_token'];
+    if (issued is! String || issued.isEmpty) {
       throw const GatewayException(
           'Compounder AI did not return a device token. Try again later.');
     }
-    return token;
+    await store?.markDeviceTokenRegistered();
+    return issued;
   }
+
+  /// 32 random bytes, base64url without padding: 43 characters, inside the
+  /// gateway's 8-512 character window.
+  static String _newDeviceToken() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(32, (_) => random.nextInt(256));
+    return base64UrlEncode(bytes).replaceAll('=', '');
+  }
+
+  static bool _isValidDeviceToken(String token) =>
+      token.length >= 8 && token.length <= 512;
 
   Future<GatewayEntitlement> verifyGoogle({
     required String productId,

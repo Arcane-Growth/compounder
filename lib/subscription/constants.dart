@@ -44,6 +44,10 @@ const String prefAiSource = 'aiSource';
 const String prefEntitlement = 'entitlement';
 const String prefDeviceToken = 'gatewayDeviceToken';
 
+/// Whether the gateway accepted [prefDeviceToken]. A token that was persisted
+/// but never confirmed must be registered again before it can authenticate.
+const String prefDeviceTokenRegistered = 'gatewayDeviceTokenRegistered';
+
 /// Value stored in [prefAiSource] for the paid gateway. Anything else (or
 /// nothing at all) means bring-your-own-endpoint, which is the pre-existing
 /// behaviour and stays free and unlimited.

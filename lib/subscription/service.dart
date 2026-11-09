@@ -235,11 +235,15 @@ class SubscriptionService extends ChangeNotifier {
 
   Future<String?> _deviceToken() async {
     final cached = store.deviceToken;
-    if (cached != null && cached.isNotEmpty) return cached;
+    if (cached != null &&
+        cached.isNotEmpty &&
+        store.deviceTokenRegistered) {
+      return cached;
+    }
     try {
-      final token = await gateway.register();
-      await store.saveDeviceToken(token);
-      return token;
+      // register() mints and persists the token before the request, so a
+      // failed attempt retries with the same identity instead of a new one.
+      return await gateway.register();
     } on GatewayException {
       // Verification still works without a device token; the gateway can key
       // the account off the purchase itself.
