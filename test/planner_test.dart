@@ -33,7 +33,8 @@ void main() {
   final day = DateTime(2026, 11, 9);
   final now = DateTime(2026, 11, 9, 12);
 
-  Widget host({double textScaler = 1.0}) => ChangeNotifierProvider<AppStore>.value(
+  Widget host({double textScaler = 1.0}) =>
+      ChangeNotifierProvider<AppStore>.value(
         value: store,
         child: MaterialApp(
           theme: CompounderTheme.light(),
@@ -167,8 +168,7 @@ void main() {
     expect(find.text('Nothing planned for this day'), findsOneWidget);
   });
 
-  testWidgets('shows the next block and a now marker on today',
-      (tester) async {
+  testWidgets('shows the next block and a now marker on today', (tester) async {
     await tester.runAsync(() async {
       await store.createPlanBlock(
           day: day, title: 'Afternoon', startMin: 13 * 60, endMin: 14 * 60);
@@ -267,8 +267,7 @@ void main() {
         reason: 'the stale day-10 query must not overwrite day 11');
   });
 
-  testWidgets('does not overflow at 320dp with 2.0 text scale',
-      (tester) async {
+  testWidgets('does not overflow at 320dp with 2.0 text scale', (tester) async {
     await tester.binding.setSurfaceSize(const Size(320, 640));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.runAsync(() async {

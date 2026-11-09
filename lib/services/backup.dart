@@ -178,8 +178,8 @@ class BackupService {
       /// schema has. `transform` rewrites device-local ids first. Returns the
       /// new row id, or null when nothing was left to insert.
       Future<int?> insertRow(String table, Map<String, Object?> source,
-          {Map<String, Object?> Function(Map<String, Object?>)? transform})
-          async {
+          {Map<String, Object?> Function(Map<String, Object?>)?
+              transform}) async {
         final columns = await columnsOf(table);
         final row = transform == null
             ? Map<String, Object?>.from(source)

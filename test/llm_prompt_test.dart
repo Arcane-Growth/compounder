@@ -56,8 +56,10 @@ void main() {
 
     test('appends a user description to the prompt', () async {
       final prompt = await _sentPrompt(note: 'two slices, extra cheese');
-      expect(prompt, contains('Analyze the nutrients of the food in this photo.'));
-      expect(prompt, contains('The user describes it as: two slices, extra cheese'));
+      expect(
+          prompt, contains('Analyze the nutrients of the food in this photo.'));
+      expect(prompt,
+          contains('The user describes it as: two slices, extra cheese'));
     });
 
     test('ignores a blank note', () async {

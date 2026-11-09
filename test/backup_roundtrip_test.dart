@@ -143,7 +143,8 @@ void main() {
     final json =
         jsonDecode(await File(file).readAsString()) as Map<String, Object?>;
     expect(json['format'], 5,
-        reason: 'plan blocks require the format bump to 5 (habits bumped it to 4)');
+        reason:
+            'plan blocks require the format bump to 5 (habits bumped it to 4)');
     expect(json['app'], 'compounder');
     expect(json['balanceSnapshots'], hasLength(1));
     expect(json['reminders'], hasLength(1));
@@ -347,8 +348,8 @@ void main() {
     expect(restored, hasLength(2),
         reason: 'two distinct custom exercises must not collapse into one');
     expect(restored.map((e) => e['name']).toList(), ['Curl', 'Curl']);
-    expect(restored.map((e) => e['equipment']).toList(),
-        ['Dumbbell', 'Barbell'],
+    expect(
+        restored.map((e) => e['equipment']).toList(), ['Dumbbell', 'Barbell'],
         reason: 'equipment metadata must survive the import');
 
     // Each workout entry must resolve to its own exercise, not both to the

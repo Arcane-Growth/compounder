@@ -234,8 +234,8 @@ void main() {
       (tester) async {
     var clock = DateTime(2026, 11, 8, 23, 59, 30);
     await tallViewport(tester);
-    await tester.pumpWidget(host(
-        ShellNav(openDrawer: () {}, child: MacrosTab(now: () => clock))));
+    await tester.pumpWidget(
+        host(ShellNav(openDrawer: () {}, child: MacrosTab(now: () => clock))));
     await tester.pumpAndSettle();
 
     expect(find.text('Sun, Nov 8, 2026'), findsOneWidget);
@@ -258,10 +258,7 @@ void main() {
       (tester) async {
     await tester.runAsync(() async {
       await store.saveGoals(const MacroGoals(
-          calories: double.nan,
-          protein: double.infinity,
-          carbs: -5,
-          fat: 0));
+          calories: double.nan, protein: double.infinity, carbs: -5, fat: 0));
     });
     await tallViewport(tester);
     await tester.pumpWidget(
@@ -283,8 +280,8 @@ void main() {
       (tester) async {
     late int mealId;
     await tester.runAsync(() async {
-      await store.addMeal(mealAt(
-          DateTime(2026, 11, 8, 12), dish: 'Manual bowl', calories: 500));
+      await store.addMeal(mealAt(DateTime(2026, 11, 8, 12),
+          dish: 'Manual bowl', calories: 500));
       mealId = store.meals.single.id;
     });
     await tester.pumpWidget(host(MealDetailScreen(mealId: mealId)));

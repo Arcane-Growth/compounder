@@ -455,9 +455,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
                 size: 14, color: scheme.onTertiaryContainer),
             const SizedBox(width: 4),
             Text(
-              value == null
-                  ? 'PR'
-                  : 'PR · $value ${unit.label} e1RM',
+              value == null ? 'PR' : 'PR · $value ${unit.label} e1RM',
               style: t.labelSmall?.copyWith(
                   color: scheme.onTertiaryContainer,
                   fontWeight: FontWeight.w700),

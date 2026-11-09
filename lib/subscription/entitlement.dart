@@ -17,7 +17,15 @@ enum AiSource { byo, compounder }
 /// and the gateway still grants access until [Entitlement.graceEndsAt]. It is
 /// not collapsed into [active] because the UI must say the payment failed and
 /// must not claim a renewal date (the stored period end is already in the past).
-enum EntitlementStatus { none, active, trialing, pastDue, pending, expired, unknown }
+enum EntitlementStatus {
+  none,
+  active,
+  trialing,
+  pastDue,
+  pending,
+  expired,
+  unknown
+}
 
 /// Daily request and monthly token allowance attached to an entitlement.
 class Quota {
@@ -135,7 +143,8 @@ class Entitlement {
         if (graceEndsAt != null)
           'grace_ends_at': graceEndsAt!.toUtc().toIso8601String(),
         if (quota != null) 'quota': quota!.toJson(),
-        if (fetchedAt != null) 'fetched_at': fetchedAt!.toUtc().toIso8601String(),
+        if (fetchedAt != null)
+          'fetched_at': fetchedAt!.toUtc().toIso8601String(),
       };
 
   /// Tolerant decode: a cache written by an older build, or a hand-edited

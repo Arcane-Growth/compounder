@@ -33,8 +33,8 @@ class _BreathingSessionState extends State<BreathingSession>
     'Nothing to fix. Nothing to solve. Just this breath.',
   ];
 
-  late final AnimationController _breath =
-      AnimationController(vsync: this, duration: const Duration(seconds: _cycleSeconds));
+  late final AnimationController _breath = AnimationController(
+      vsync: this, duration: const Duration(seconds: _cycleSeconds));
   int _elapsed = 0;
   Timer? _ticker;
   int _cueIndex = 0;
@@ -82,8 +82,12 @@ class _BreathingSessionState extends State<BreathingSession>
         content: Text(
             'You have ${formatDuration(_elapsed * 1000, null)} in. Ending early does not log the session.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Keep breathing')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('End')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Keep breathing')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('End')),
         ],
       ),
     );
@@ -98,7 +102,8 @@ class _BreathingSessionState extends State<BreathingSession>
     } else if (cycleSeconds < _phaseSeconds * 2) {
       return (label: 'Hold', scale: 1.0);
     } else if (cycleSeconds < _phaseSeconds * 3) {
-      final t = Curves.easeInOut.transform((cycleSeconds - _phaseSeconds * 2) / _phaseSeconds);
+      final t = Curves.easeInOut
+          .transform((cycleSeconds - _phaseSeconds * 2) / _phaseSeconds);
       return (label: 'Breathe out', scale: 1.0 - 0.45 * t);
     }
     return (label: 'Hold', scale: 0.55);
@@ -148,10 +153,12 @@ class _BreathingSessionState extends State<BreathingSession>
                       ),
                       Column(mainAxisSize: MainAxisSize.min, children: [
                         Text(phase.label,
-                            style: t.headlineSmall?.copyWith(color: scheme.onSurface)),
+                            style: t.headlineSmall
+                                ?.copyWith(color: scheme.onSurface)),
                         const SizedBox(height: 6),
                         Text('$remaining',
-                            style: t.headlineMedium?.copyWith(color: scheme.primary)),
+                            style: t.headlineMedium
+                                ?.copyWith(color: scheme.primary)),
                       ]),
                     ]),
                   ),

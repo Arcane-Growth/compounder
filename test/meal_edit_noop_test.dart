@@ -53,8 +53,7 @@ void main() {
         isAuto: true,
       );
 
-  testWidgets(
-      'a no-op save keeps a coach-logged 600 kcal / 0-0-0 meal intact',
+  testWidgets('a no-op save keeps a coach-logged 600 kcal / 0-0-0 meal intact',
       (tester) async {
     final stored = await seed(tester, coachMeal());
     expect(stored.calories, 600);
@@ -89,8 +88,7 @@ void main() {
     // 0/0/0 macros imply 0 kcal; the stored 600 kcal is disclosed next to it.
     expect(find.text('0 kcal'), findsOneWidget);
     expect(find.text('stored 600 kcal · 4/4/9 gives 0 kcal'), findsOneWidget);
-    expect(
-        find.text('Macros unchanged — saving keeps the stored 600 kcal.'),
+    expect(find.text('Macros unchanged — saving keeps the stored 600 kcal.'),
         findsOneWidget);
   });
 
@@ -127,8 +125,7 @@ void main() {
     expect(meal.calories, 620.4);
   });
 
-  testWidgets(
-      'editing a macro does recompute calories from the edited macros',
+  testWidgets('editing a macro does recompute calories from the edited macros',
       (tester) async {
     final stored = await seed(tester, coachMeal());
 
@@ -140,8 +137,7 @@ void main() {
     // 30*4 = 120 kcal, and the "keeps the stored" line is gone because the
     // macros were edited.
     expect(find.text('120 kcal'), findsOneWidget);
-    expect(
-        find.text('Macros unchanged — saving keeps the stored 600 kcal.'),
+    expect(find.text('Macros unchanged — saving keeps the stored 600 kcal.'),
         findsNothing);
 
     await tester.ensureVisible(find.text('Save changes'));

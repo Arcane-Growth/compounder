@@ -27,24 +27,39 @@ class ChatMessage {
   final List<Map<String, Object?>> parts;
 
   const ChatMessage(this.role,
-      {this.content, this.toolCallId, this.toolCalls = const [], this.parts = const []});
+      {this.content,
+      this.toolCallId,
+      this.toolCalls = const [],
+      this.parts = const []});
 
-  factory ChatMessage.system(String content) => ChatMessage(roleSystem, content: content);
-  factory ChatMessage.user(String content) => ChatMessage(roleUser, content: content);
-  factory ChatMessage.userWithParts(String text, List<String> imageDataUrls) => ChatMessage(
+  factory ChatMessage.system(String content) =>
+      ChatMessage(roleSystem, content: content);
+  factory ChatMessage.user(String content) =>
+      ChatMessage(roleUser, content: content);
+  factory ChatMessage.userWithParts(String text, List<String> imageDataUrls) =>
+      ChatMessage(
         roleUser,
         parts: [
           if (text.isNotEmpty) {'type': 'text', 'text': text},
-          for (final url in imageDataUrls) {'type': 'image_url', 'image_url': {'url': url}},
+          for (final url in imageDataUrls)
+            {
+              'type': 'image_url',
+              'image_url': {'url': url}
+            },
         ],
       );
-  factory ChatMessage.assistant(String? content, [List<ToolCall> calls = const []]) =>
+  factory ChatMessage.assistant(String? content,
+          [List<ToolCall> calls = const []]) =>
       ChatMessage(roleAssistant, content: content, toolCalls: calls);
-  factory ChatMessage.tool(String id, String content) => ChatMessage(roleTool, content: content, toolCallId: id);
+  factory ChatMessage.tool(String id, String content) =>
+      ChatMessage(roleTool, content: content, toolCallId: id);
 
   Map<String, Object?> toWire() => {
         'role': role,
-        if (parts.isNotEmpty) 'content': parts else if (content != null) 'content': content,
+        if (parts.isNotEmpty)
+          'content': parts
+        else if (content != null)
+          'content': content,
         if (toolCallId != null) 'tool_call_id': toolCallId,
         if (toolCalls.isNotEmpty)
           'tool_calls': toolCalls
@@ -106,7 +121,11 @@ class ToolSpec {
 
   Map<String, Object?> toWire() => {
         'type': 'function',
-        'function': {'name': name, 'description': description, 'parameters': parameters},
+        'function': {
+          'name': name,
+          'description': description,
+          'parameters': parameters
+        },
       };
 }
 
@@ -121,15 +140,20 @@ class ChatClient {
   ChatClient(this.baseUrl, this.apiKey, this.model, {http.Client? httpClient})
       : _http = httpClient ?? http.Client();
 
-  Future<ChatResult> chat(List<ChatMessage> messages, List<ToolSpec> tools) async {
+  Future<ChatResult> chat(
+      List<ChatMessage> messages, List<ToolSpec> tools) async {
     final resp = await _http
         .post(
           Uri.parse('${trimSlash(baseUrl)}/chat/completions'),
-          headers: {'Authorization': 'Bearer $apiKey', 'Content-Type': 'application/json'},
+          headers: {
+            'Authorization': 'Bearer $apiKey',
+            'Content-Type': 'application/json'
+          },
           body: jsonEncode({
             'model': model,
             'messages': messages.map((m) => m.toWire()).toList(),
-            if (tools.isNotEmpty) 'tools': tools.map((t) => t.toWire()).toList(),
+            if (tools.isNotEmpty)
+              'tools': tools.map((t) => t.toWire()).toList(),
             'tool_choice': 'auto',
           }),
         )
@@ -137,7 +161,8 @@ class ChatClient {
     if (resp.statusCode != 200) {
       throw _httpError(resp);
     }
-    final choice = (jsonDecode(resp.body)['choices'] as List?)?.first as Map<String, Object?>?;
+    final choice = (jsonDecode(resp.body)['choices'] as List?)?.first
+        as Map<String, Object?>?;
     if (choice == null) throw Exception('No choices in chat response');
     final message = choice['message'] as Map<String, Object?>;
     return ChatResult(
@@ -153,7 +178,8 @@ class ChatClient {
   }
 
   Future<String> simple(String system, String user) async {
-    final result = await chat([ChatMessage.system(system), ChatMessage.user(user)], const []);
+    final result = await chat(
+        [ChatMessage.system(system), ChatMessage.user(user)], const []);
     return result.content?.trim() ?? '';
   }
 }
@@ -167,7 +193,8 @@ class Draft {
   final String dish;
   final List<Food> foods;
   final double calories, protein, carbs, fat;
-  const Draft(this.dish, this.foods, this.calories, this.protein, this.carbs, this.fat);
+  const Draft(
+      this.dish, this.foods, this.calories, this.protein, this.carbs, this.fat);
 }
 
 /// Photo → nutrition draft using the user's vision-capable endpoint.
@@ -175,7 +202,8 @@ class Draft {
 /// [note] is an optional user description of the food ("two slices, no
 /// cheese"); when present it is appended to the vision prompt so the model can
 /// size portions instead of guessing from pixels alone.
-Future<Draft> analyzeMealPhoto(ChatClient client, List<int> imageBytes, String mime, List<Meal> recent,
+Future<Draft> analyzeMealPhoto(
+    ChatClient client, List<int> imageBytes, String mime, List<Meal> recent,
     {String? note}) async {
   final description = (note ?? '').trim();
   final prompt = description.isEmpty
@@ -184,23 +212,30 @@ Future<Draft> analyzeMealPhoto(ChatClient client, List<int> imageBytes, String m
 
   final historyText = recent
       .take(12)
-      .map((m) => "- '${m.dish}': ${m.calories.round()} kcal, P ${m.protein.round()}g, C ${m.carbs.round()}g, F ${m.fat.round()}g")
+      .map((m) =>
+          "- '${m.dish}': ${m.calories.round()} kcal, P ${m.protein.round()}g, C ${m.carbs.round()}g, F ${m.fat.round()}g")
       .join('\n');
 
   final system = StringBuffer()
-    ..write('You are a nutrition analysis assistant. Given a photo of food, respond with ONLY a valid JSON object '
+    ..write(
+        'You are a nutrition analysis assistant. Given a photo of food, respond with ONLY a valid JSON object '
         'matching this exact schema (no markdown fences, no commentary): '
         '{"dish":"short meal name","foods":[{"name":"...","grams":N,"calories":N,"protein":N,"carbs":N,"fat":N}],'
         '"total":{"calories":N,"protein":N,"carbs":N,"fat":N}}.');
   if (historyText.isNotEmpty) {
-    system.write(' These are meals the user has logged before (dish and macros) - if the photo matches one, reuse it or note the similarity:\n$historyText');
+    system.write(
+        ' These are meals the user has logged before (dish and macros) - if the photo matches one, reuse it or note the similarity:\n$historyText');
   }
-  system.write(' Protein/carbs/fat are in grams, calories in kcal. Cover every visible component with a best-estimate portion weight.');
+  system.write(
+      ' Protein/carbs/fat are in grams, calories in kcal. Cover every visible component with a best-estimate portion weight.');
 
   final resp = await client._http
       .post(
         Uri.parse('${trimSlash(client.baseUrl)}/chat/completions'),
-        headers: {'Authorization': 'Bearer ${client.apiKey}', 'Content-Type': 'application/json'},
+        headers: {
+          'Authorization': 'Bearer ${client.apiKey}',
+          'Content-Type': 'application/json'
+        },
         body: jsonEncode({
           'model': client.model,
           'messages': [
@@ -211,7 +246,9 @@ Future<Draft> analyzeMealPhoto(ChatClient client, List<int> imageBytes, String m
                 {'type': 'text', 'text': prompt},
                 {
                   'type': 'image_url',
-                  'image_url': {'url': 'data:$mime;base64,${base64Encode(imageBytes)}'}
+                  'image_url': {
+                    'url': 'data:$mime;base64,${base64Encode(imageBytes)}'
+                  }
                 },
               ]
             },
@@ -222,7 +259,9 @@ Future<Draft> analyzeMealPhoto(ChatClient client, List<int> imageBytes, String m
   if (resp.statusCode != 200) {
     throw _httpError(resp);
   }
-  final content = ((jsonDecode(resp.body)['choices'] as List?)?.first['message']['content'] as String?) ?? '';
+  final content = ((jsonDecode(resp.body)['choices'] as List?)?.first['message']
+          ['content'] as String?) ??
+      '';
   return parseDraft(content);
 }
 
@@ -230,7 +269,8 @@ Draft parseDraft(String content) {
   var cleaned = content.trim();
   if (cleaned.startsWith('```json')) cleaned = cleaned.substring(7);
   if (cleaned.startsWith('```')) cleaned = cleaned.substring(3);
-  if (cleaned.endsWith('```')) cleaned = cleaned.substring(0, cleaned.length - 3);
+  if (cleaned.endsWith('```'))
+    cleaned = cleaned.substring(0, cleaned.length - 3);
   final json = jsonDecode(cleaned.trim()) as Map<String, Object?>;
   final total = (json['total'] as Map<String, Object?>?) ?? {};
   num n(Object? v) => v is num ? v : 0;

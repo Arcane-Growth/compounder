@@ -113,8 +113,8 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
     _midnight?.cancel();
     final now = (widget.now ?? DateTime.now)();
     final nextMidnight = DateTime(now.year, now.month, now.day + 1);
-    _midnight = Timer(
-        nextMidnight.difference(now) + const Duration(seconds: 1), () {
+    _midnight =
+        Timer(nextMidnight.difference(now) + const Duration(seconds: 1), () {
       if (!mounted) return;
       _scheduleMidnight();
       if (_visible) _reload();
@@ -190,176 +190,169 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
         ]),
       ),
       body: ListView(
-              padding: const EdgeInsets.all(20),
-              children: [
-                _PlanCard(
-                  blocks: _plan,
-                  now: (widget.now ?? DateTime.now)(),
-                  onTap: () => _openPlanner(context),
+        padding: const EdgeInsets.all(20),
+        children: [
+          _PlanCard(
+            blocks: _plan,
+            now: (widget.now ?? DateTime.now)(),
+            onTap: () => _openPlanner(context),
+          ),
+          const SizedBox(height: 16),
+          _TodayHeader(
+            today: _today,
+            streak: streak,
+            loggedPillars: todayEntry?.pillarCount ?? 0,
+          ),
+          const SizedBox(height: 16),
+          if (_active != null) ...[
+            Card(
+              color: scheme.primaryContainer,
+              child: ListTile(
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                onTap: () => _openWorkout(context, _active!.id),
+                leading: Icon(Icons.play_circle_fill,
+                    color: scheme.onPrimaryContainer),
+                title: Text(_active!.name,
+                    style: t.headlineSmall
+                        ?.copyWith(color: scheme.onPrimaryContainer)),
+                subtitle: Text(
+                  'In progress since ${formatDateTime(_active!.startedAt)} · tap to resume',
+                  style: TextStyle(color: scheme.onPrimaryContainer),
                 ),
-                const SizedBox(height: 16),
-                _TodayHeader(
-                  today: _today,
-                  streak: streak,
-                  loggedPillars: todayEntry?.pillarCount ?? 0,
-                ),
-                const SizedBox(height: 16),
-                if (_active != null) ...[
-                  Card(
-                    color: scheme.primaryContainer,
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 12),
-                      onTap: () => _openWorkout(context, _active!.id),
-                      leading: Icon(Icons.play_circle_fill,
-                          color: scheme.onPrimaryContainer),
-                      title: Text(_active!.name,
-                          style: t.headlineSmall
-                              ?.copyWith(color: scheme.onPrimaryContainer)),
-                      subtitle: Text(
-                        'In progress since ${formatDateTime(_active!.startedAt)} · tap to resume',
-                        style: TextStyle(color: scheme.onPrimaryContainer),
-                      ),
-                      trailing: Icon(Icons.play_arrow,
-                          color: scheme.onPrimaryContainer),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                ],
-                const SectionHeader('Today'),
-                const SizedBox(height: 8),
-                Card(
-                  color: scheme.surfaceContainerLow,
-                  child: Column(children: [
-                    for (var i = 0; i < allPillars.length; i++) ...[
-                      if (i > 0) const Divider(height: 1),
-                      _PillarTile(
-                        pillar: allPillars[i],
-                        done: todayEntry?.hasPillar(allPillars[i]) ?? false,
-                        onTap: () => _openPillar(context, allPillars[i]),
-                      ),
-                    ],
-                  ]),
-                ),
-                const SizedBox(height: 20),
-                const SectionHeader('Activity'),
-                const SizedBox(height: 8),
-                Card(
-                  color: scheme.surfaceContainerLow,
-                  clipBehavior: Clip.antiAlias,
-                  child: InkWell(
-                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => const HeatmapScreen())),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(children: [
-                            Expanded(
-                              child: Text('Last 12 weeks',
-                                  style: t.titleMedium,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis),
-                            ),
-                            Icon(Icons.chevron_right, color: scheme.primary),
-                          ]),
-                          const SizedBox(height: 12),
-                          ActivityHeatmap(
-                            days: _days,
-                            start: DateTime(
-                                _today.year, _today.month, _today.day - 83),
-                            end: _today,
-                            cellSize: 6,
-                            gap: 2,
-                            showMonthLabels: false,
-                            showWeekdayLabels: false,
-                            scrollable: false,
-                          ),
-                          const SizedBox(height: 10),
-                          Text(
-                            streak == 0
-                                ? 'Tap to see your full year'
-                                : '$streak-day streak · tap to see your full year',
-                            style: t.bodySmall
-                                ?.copyWith(color: scheme.onSurfaceVariant),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                const SectionHeader('More'),
-                const SizedBox(height: 8),
-                Wrap(spacing: 8, runSpacing: 8, children: [
-                  OutlinedButton.icon(
-                    onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                            builder: (_) => const HistoryScreen())),
-                    icon: const Icon(Icons.history, size: 18),
-                    label: const Text('History'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                            builder: (_) => const ProgressScreen())),
-                    icon: const Icon(Icons.show_chart, size: 18),
-                    label: const Text('Progress'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () =>
-                        ShellNav.of(context).selectTab?.call(tabCoach),
-                    icon: const Icon(Icons.support_agent, size: 18),
-                    label: const Text('Coach'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                            builder: (_) => const HealthDataScreen())),
-                    icon: const Icon(Icons.health_and_safety, size: 18),
-                    label: const Text('Health'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () =>
-                        ShellNav.of(context).selectTab?.call(tabWealth),
-                    icon: const Icon(Icons.insights, size: 18),
-                    label: const Text('Wealth'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                            builder: (_) => const SettingsScreen())),
-                    icon: const Icon(Icons.settings, size: 18),
-                    label: const Text('Settings'),
-                  ),
-                ]),
-                const SizedBox(height: 20),
-                const HealthSummaryCard(),
-                const SizedBox(height: 20),
-                const SectionHeader('Recent sessions'),
-                const SizedBox(height: 8),
-                if (store.history.isEmpty)
-                  const EmptyState(
-                    title: 'No sessions yet',
-                    subtitle:
-                        'Create a workout and log your first lifts to see them here.',
-                    icon: Icons.fitness_center,
-                  )
-                else
-                  ...store.history.map((row) => CardRow(
-                        icon: Icons.fitness_center,
-                        title: row.name,
-                        subtitle:
-                            '${formatDate(row.startedAt)} · ${row.exerciseCount} exercises · ${row.setCount} sets',
-                        trailing:
-                            '${trimZero(fromKg(row.totalKg, store.unit))} ${store.unit.label}',
-                        onTap: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (_) => SummaryScreen(row.workoutId))),
-                      )),
-              ],
+                trailing:
+                    Icon(Icons.play_arrow, color: scheme.onPrimaryContainer),
+              ),
             ),
+            const SizedBox(height: 16),
+          ],
+          const SectionHeader('Today'),
+          const SizedBox(height: 8),
+          Card(
+            color: scheme.surfaceContainerLow,
+            child: Column(children: [
+              for (var i = 0; i < allPillars.length; i++) ...[
+                if (i > 0) const Divider(height: 1),
+                _PillarTile(
+                  pillar: allPillars[i],
+                  done: todayEntry?.hasPillar(allPillars[i]) ?? false,
+                  onTap: () => _openPillar(context, allPillars[i]),
+                ),
+              ],
+            ]),
+          ),
+          const SizedBox(height: 20),
+          const SectionHeader('Activity'),
+          const SizedBox(height: 8),
+          Card(
+            color: scheme.surfaceContainerLow,
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const HeatmapScreen())),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      Expanded(
+                        child: Text('Last 12 weeks',
+                            style: t.titleMedium,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis),
+                      ),
+                      Icon(Icons.chevron_right, color: scheme.primary),
+                    ]),
+                    const SizedBox(height: 12),
+                    ActivityHeatmap(
+                      days: _days,
+                      start:
+                          DateTime(_today.year, _today.month, _today.day - 83),
+                      end: _today,
+                      cellSize: 6,
+                      gap: 2,
+                      showMonthLabels: false,
+                      showWeekdayLabels: false,
+                      scrollable: false,
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      streak == 0
+                          ? 'Tap to see your full year'
+                          : '$streak-day streak · tap to see your full year',
+                      style:
+                          t.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          const SectionHeader('More'),
+          const SizedBox(height: 8),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            OutlinedButton.icon(
+              onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const HistoryScreen())),
+              icon: const Icon(Icons.history, size: 18),
+              label: const Text('History'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const ProgressScreen())),
+              icon: const Icon(Icons.show_chart, size: 18),
+              label: const Text('Progress'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => ShellNav.of(context).selectTab?.call(tabCoach),
+              icon: const Icon(Icons.support_agent, size: 18),
+              label: const Text('Coach'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const HealthDataScreen())),
+              icon: const Icon(Icons.health_and_safety, size: 18),
+              label: const Text('Health'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => ShellNav.of(context).selectTab?.call(tabWealth),
+              icon: const Icon(Icons.insights, size: 18),
+              label: const Text('Wealth'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const SettingsScreen())),
+              icon: const Icon(Icons.settings, size: 18),
+              label: const Text('Settings'),
+            ),
+          ]),
+          const SizedBox(height: 20),
+          const HealthSummaryCard(),
+          const SizedBox(height: 20),
+          const SectionHeader('Recent sessions'),
+          const SizedBox(height: 8),
+          if (store.history.isEmpty)
+            const EmptyState(
+              title: 'No sessions yet',
+              subtitle:
+                  'Create a workout and log your first lifts to see them here.',
+              icon: Icons.fitness_center,
+            )
+          else
+            ...store.history.map((row) => CardRow(
+                  icon: Icons.fitness_center,
+                  title: row.name,
+                  subtitle:
+                      '${formatDate(row.startedAt)} · ${row.exerciseCount} exercises · ${row.setCount} sets',
+                  trailing:
+                      '${trimZero(fromKg(row.totalKg, store.unit))} ${store.unit.label}',
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => SummaryScreen(row.workoutId))),
+                )),
+        ],
+      ),
     );
   }
 
@@ -377,16 +370,16 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
       case pillarMind:
         ShellNav.of(context).selectTab?.call(tabMind);
       case pillarHabits:
-        Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const HabitsScreen()));
+        Navigator.of(context)
+            .push(MaterialPageRoute(builder: (_) => const HabitsScreen()));
       case pillarPlan:
         _openPlanner(context);
     }
   }
 
   void _openPlanner(BuildContext context) {
-    Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => PlannerScreen(now: widget.now)));
+    Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => PlannerScreen(now: widget.now)));
   }
 
   Future<void> _startWorkout(BuildContext context) async {

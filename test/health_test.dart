@@ -283,7 +283,8 @@ void main() {
       expect(stats.single.sum, 8 * 60);
     });
 
-    test('a fully staged night subtracts awake time from the session total', () {
+    test('a fully staged night subtracts awake time from the session total',
+        () {
       // Regression: raising asleep to the session length whenever a session
       // record existed pinned efficiency at 100% and never subtracted awake
       // time, so a real Health Connect night lost its stage breakdown.
@@ -298,8 +299,8 @@ void main() {
 
     test('asleep plus awake never exceeds time in bed', () {
       final s = buildSleepSessions(_stagedNightWithAwake()).single;
-      expect(s.asleepMinutes + s.awakeMinutes,
-          lessThanOrEqualTo(s.inBedMinutes));
+      expect(
+          s.asleepMinutes + s.awakeMinutes, lessThanOrEqualTo(s.inBedMinutes));
       expect(s.asleepMinutes + s.awakeMinutes, 480);
     });
 

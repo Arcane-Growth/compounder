@@ -394,8 +394,14 @@ DateTime nextDayKey(DateTime day) => DateTime(day.year, day.month, day.day + 1);
 /// Calendar arithmetic, not `Duration(days: 7)`: a 168-hour subtraction lands
 /// on 23:00/01:00 across a DST boundary and would shift the "last 7 days" mood
 /// window by an hour (audit m3-dst MINOR-4).
-DateTime mindWeekStart(DateTime now) => DateTime(now.year, now.month,
-    now.day - 7, now.hour, now.minute, now.second, now.millisecond,
+DateTime mindWeekStart(DateTime now) => DateTime(
+    now.year,
+    now.month,
+    now.day - 7,
+    now.hour,
+    now.minute,
+    now.second,
+    now.millisecond,
     now.microsecond);
 
 class Mind {

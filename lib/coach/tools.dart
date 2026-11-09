@@ -17,7 +17,8 @@ import 'agent.dart';
   final today = now ?? DateTime.now();
   final startRaw = args['start'] as String?;
   final start = DateTime.tryParse(startRaw ?? '') ?? today;
-  final end = DateTime.tryParse(args['end'] as String? ?? '') ?? (startRaw == null ? today : start);
+  final end = DateTime.tryParse(args['end'] as String? ?? '') ??
+      (startRaw == null ? today : start);
   final lo = end.isBefore(start) ? end : start;
   final hi = end.isBefore(start) ? start : end;
   return (
@@ -71,8 +72,14 @@ String _text(Map<String, Object?> args, String key) =>
 final dateRangeSchema = {
   'type': 'object',
   'properties': {
-    'start': {'type': 'string', 'description': 'Start date (inclusive), YYYY-MM-DD'},
-    'end': {'type': 'string', 'description': 'End date (inclusive), YYYY-MM-DD. Defaults to start.'},
+    'start': {
+      'type': 'string',
+      'description': 'Start date (inclusive), YYYY-MM-DD'
+    },
+    'end': {
+      'type': 'string',
+      'description': 'End date (inclusive), YYYY-MM-DD. Defaults to start.'
+    },
   },
 };
 
@@ -81,14 +88,17 @@ class NutritionTool extends CoachTool {
   NutritionTool(this.store);
 
   @override
-  ToolSpec get spec => ToolSpec('getNutrition',
+  ToolSpec get spec => ToolSpec(
+      'getNutrition',
       'Get nutrition (meal) data for a date range: every logged meal (dish, calories, protein, carbs, fat) and totals. Dates YYYY-MM-DD; omitted = today.',
       dateRangeSchema);
 
   @override
   Future<String> run(Map<String, Object?> args) async {
     final r = dateRange(args);
-    final meals = store.meals.where((m) => m.timestamp >= r.from && m.timestamp < r.to).toList();
+    final meals = store.meals
+        .where((m) => m.timestamp >= r.from && m.timestamp < r.to)
+        .toList();
     return jsonEncode({
       'from': isoDate(r.from),
       'to': isoDate(r.to - 1),
@@ -118,7 +128,8 @@ class WorkoutTool extends CoachTool {
   WorkoutTool(this.store);
 
   @override
-  ToolSpec get spec => ToolSpec('getWorkouts',
+  ToolSpec get spec => ToolSpec(
+      'getWorkouts',
       'Get finished workouts for a date range: each with exercises, sets (weight kg, reps, warmup) and total volume. Dates YYYY-MM-DD; omitted = today.',
       dateRangeSchema);
 
@@ -168,26 +179,34 @@ class ExerciseProgressTool extends CoachTool {
   ExerciseProgressTool(this.store);
 
   @override
-  ToolSpec get spec => ToolSpec('getExerciseProgress',
-      "Estimated 1RM progress for one exercise across sessions. Requires 'exerciseName'. Dates YYYY-MM-DD; omitted = all history.",
-      {
-        'type': 'object',
-        'properties': {
-          'exerciseName': {'type': 'string', 'description': "Exercise name, e.g. 'Barbell Bench Press'"},
-          'start': {'type': 'string'},
-          'end': {'type': 'string'},
-        },
-        'required': ['exerciseName'],
-      });
+  ToolSpec get spec => ToolSpec(
+          'getExerciseProgress',
+          "Estimated 1RM progress for one exercise across sessions. Requires 'exerciseName'. Dates YYYY-MM-DD; omitted = all history.",
+          {
+            'type': 'object',
+            'properties': {
+              'exerciseName': {
+                'type': 'string',
+                'description': "Exercise name, e.g. 'Barbell Bench Press'"
+              },
+              'start': {'type': 'string'},
+              'end': {'type': 'string'},
+            },
+            'required': ['exerciseName'],
+          });
 
   @override
   Future<String> run(Map<String, Object?> args) async {
     final name = args['exerciseName'] as String?;
     if (name == null) return '{"error":"exerciseName is required"}';
     final lower = name.toLowerCase();
-    final exact = store.exercises.where((e) => e.name.toLowerCase() == lower).toList();
-    final matches =
-        exact.isNotEmpty ? exact : store.exercises.where((e) => e.name.toLowerCase().contains(lower)).toList();
+    final exact =
+        store.exercises.where((e) => e.name.toLowerCase() == lower).toList();
+    final matches = exact.isNotEmpty
+        ? exact
+        : store.exercises
+            .where((e) => e.name.toLowerCase().contains(lower))
+            .toList();
     final exercise = matches.firstOrNull;
     if (exercise == null) return '{"error":"No exercise named \'$name\'"}';
     final r = dateRange(args);
@@ -199,7 +218,8 @@ class ExerciseProgressTool extends CoachTool {
     return jsonEncode({
       'exercise': exercise.name,
       'sessions': [
-        for (final p in points) {'date': isoDate(p.date), 'e1rmKg': num1(p.valueKg)}
+        for (final p in points)
+          {'date': isoDate(p.date), 'e1rmKg': num1(p.valueKg)}
       ],
     });
   }
@@ -210,13 +230,15 @@ class NetWorthTool extends CoachTool {
   NetWorthTool(this.store);
 
   @override
-  ToolSpec get spec => const ToolSpec('getNetWorth',
+  ToolSpec get spec => const ToolSpec(
+      'getNetWorth',
       'All tracked accounts (name, type, balance, currency) plus total net worth, assets and liabilities. No date range needed.',
       {'type': 'object'});
 
   @override
   Future<String> run(Map<String, Object?> args) async {
-    final entries = store.accounts.map((a) => (a.balance, a.isLiability)).toList();
+    final entries =
+        store.accounts.map((a) => (a.balance, a.isLiability)).toList();
     return jsonEncode({
       'accounts': store.accounts
           .map((a) => {
@@ -239,7 +261,8 @@ class MindLogTool extends CoachTool {
   MindLogTool(this.store);
 
   @override
-  ToolSpec get spec => ToolSpec('getMindLog',
+  ToolSpec get spec => ToolSpec(
+      'getMindLog',
       'Mental wellbeing data for a date range: mood check-ins (1 rough .. 5 great) with notes, meditation minutes, and thought records. Dates YYYY-MM-DD; omitted = last 7 days.',
       dateRangeSchema);
 
@@ -249,7 +272,9 @@ class MindLogTool extends CoachTool {
     if (args['start'] == null && args['end'] == null) {
       r = mindLogWindow(DateTime.now());
     }
-    final moods = store.moods.where((m) => m.timestamp >= r.from && m.timestamp < r.to).toList();
+    final moods = store.moods
+        .where((m) => m.timestamp >= r.from && m.timestamp < r.to)
+        .toList();
     final meditations = store.meditations
         .where((m) => m.timestamp >= r.from && m.timestamp < r.to)
         .toList();
@@ -262,7 +287,8 @@ class MindLogTool extends CoachTool {
       'averageMood': Mind.averageMood(moods.map((m) => m.mood).toList()),
       'checkinCount': moods.length,
       'moods': moods
-          .map((m) => {'date': isoDate(m.timestamp), 'mood': m.mood, 'note': m.note})
+          .map((m) =>
+              {'date': isoDate(m.timestamp), 'mood': m.mood, 'note': m.note})
           .toList(),
       'meditationMinutes': meditations.fold(0, (a, m) => a + m.minutes),
       'thoughtRecords': thoughts
@@ -282,20 +308,21 @@ class LogMealTool extends CoachTool {
   LogMealTool(this.store);
 
   @override
-  ToolSpec get spec => ToolSpec('logMeal',
-      "Log a meal (calories, protein/carbs/fat grams). 'date' YYYY-MM-DD optional. Returns the logged dish and calories.",
-      {
-        'type': 'object',
-        'properties': {
-          'dish': {'type': 'string'},
-          'calories': {'type': 'number'},
-          'protein': {'type': 'number'},
-          'carbs': {'type': 'number'},
-          'fat': {'type': 'number'},
-          'date': {'type': 'string'},
-        },
-        'required': ['dish', 'calories'],
-      });
+  ToolSpec get spec => ToolSpec(
+          'logMeal',
+          "Log a meal (calories, protein/carbs/fat grams). 'date' YYYY-MM-DD optional. Returns the logged dish and calories.",
+          {
+            'type': 'object',
+            'properties': {
+              'dish': {'type': 'string'},
+              'calories': {'type': 'number'},
+              'protein': {'type': 'number'},
+              'carbs': {'type': 'number'},
+              'fat': {'type': 'number'},
+              'date': {'type': 'string'},
+            },
+            'required': ['dish', 'calories'],
+          });
 
   @override
   bool get isWrite => true;
@@ -307,7 +334,8 @@ class LogMealTool extends CoachTool {
     final date = _text(args, 'date');
     final macros = [
       if (calories != null) '${num1(calories)} kcal',
-      if (_num(args, 'protein') != null) '${num1(_num(args, 'protein')!)}g protein',
+      if (_num(args, 'protein') != null)
+        '${num1(_num(args, 'protein')!)}g protein',
       if (_num(args, 'carbs') != null) '${num1(_num(args, 'carbs')!)}g carbs',
       if (_num(args, 'fat') != null) '${num1(_num(args, 'fat')!)}g fat',
     ].join(', ');
@@ -320,7 +348,8 @@ class LogMealTool extends CoachTool {
   Future<String> run(Map<String, Object?> args) async {
     final dish = args['dish'] as String?;
     if (dish == null) return '{"error":"dish is required"}';
-    final ts = DateTime.tryParse(args['date'] as String? ?? '') ?? DateTime.now();
+    final ts =
+        DateTime.tryParse(args['date'] as String? ?? '') ?? DateTime.now();
     final calories = (args['calories'] as num?)?.toDouble();
     if (calories == null) return '{"error":"calories is required"}';
     await store.addMeal(Meal(
@@ -343,17 +372,18 @@ class LogMoodTool extends CoachTool {
   LogMoodTool(this.store);
 
   @override
-  ToolSpec get spec => ToolSpec('logMood',
-      'Log a mood check-in. mood: 1 rough, 2 low, 3 okay, 4 good, 5 great. Optional short note and date YYYY-MM-DD.',
-      {
-        'type': 'object',
-        'properties': {
-          'mood': {'type': 'integer', 'minimum': 1, 'maximum': 5},
-          'note': {'type': 'string'},
-          'date': {'type': 'string'},
-        },
-        'required': ['mood'],
-      });
+  ToolSpec get spec => ToolSpec(
+          'logMood',
+          'Log a mood check-in. mood: 1 rough, 2 low, 3 okay, 4 good, 5 great. Optional short note and date YYYY-MM-DD.',
+          {
+            'type': 'object',
+            'properties': {
+              'mood': {'type': 'integer', 'minimum': 1, 'maximum': 5},
+              'note': {'type': 'string'},
+              'date': {'type': 'string'},
+            },
+            'required': ['mood'],
+          });
 
   @override
   bool get isWrite => true;
@@ -372,8 +402,10 @@ class LogMoodTool extends CoachTool {
   Future<String> run(Map<String, Object?> args) async {
     final mood = (args['mood'] as num?)?.toInt();
     if (mood == null) return '{"error":"mood is required"}';
-    final ts = DateTime.tryParse(args['date'] as String? ?? '') ?? DateTime.now();
-    await store.logMood(mood, (args['note'] as String?) ?? '', timestamp: ts.millisecondsSinceEpoch);
+    final ts =
+        DateTime.tryParse(args['date'] as String? ?? '') ?? DateTime.now();
+    await store.logMood(mood, (args['note'] as String?) ?? '',
+        timestamp: ts.millisecondsSinceEpoch);
     return jsonEncode({'ok': true, 'mood': mood.clamp(1, 5)});
   }
 }
@@ -383,14 +415,18 @@ class StartWorkoutTool extends CoachTool {
   StartWorkoutTool(this.store);
 
   @override
-  ToolSpec get spec => ToolSpec('startWorkout',
-      'Start a new workout session and make it active. Returns the workout id for addSet.',
-      {
-        'type': 'object',
-        'properties': {
-          'name': {'type': 'string', 'description': "Workout name, e.g. 'Push Day'"},
-        },
-      });
+  ToolSpec get spec => ToolSpec(
+          'startWorkout',
+          'Start a new workout session and make it active. Returns the workout id for addSet.',
+          {
+            'type': 'object',
+            'properties': {
+              'name': {
+                'type': 'string',
+                'description': "Workout name, e.g. 'Push Day'"
+              },
+            },
+          });
 
   @override
   bool get isWrite => true;
@@ -404,7 +440,8 @@ class StartWorkoutTool extends CoachTool {
   @override
   Future<String> run(Map<String, Object?> args) async {
     final name = (args['name'] as String?)?.trim();
-    final id = await store.createWorkout(name == null || name.isEmpty ? 'Workout' : name);
+    final id = await store
+        .createWorkout(name == null || name.isEmpty ? 'Workout' : name);
     return jsonEncode({'ok': true, 'workoutId': id, 'name': name});
   }
 }
@@ -414,19 +451,20 @@ class AddSetTool extends CoachTool {
   AddSetTool(this.store);
 
   @override
-  ToolSpec get spec => ToolSpec('addSet',
-      'Add a completed working set to the active workout (started automatically if none). Exercise is added to the workout if missing. Weight in kg.',
-      {
-        'type': 'object',
-        'properties': {
-          'exerciseName': {'type': 'string'},
-          'weightKg': {'type': 'number'},
-          'reps': {'type': 'integer'},
-          'isWarmup': {'type': 'boolean'},
-          'workoutId': {'type': 'integer'},
-        },
-        'required': ['exerciseName', 'weightKg', 'reps'],
-      });
+  ToolSpec get spec => ToolSpec(
+          'addSet',
+          'Add a completed working set to the active workout (started automatically if none). Exercise is added to the workout if missing. Weight in kg.',
+          {
+            'type': 'object',
+            'properties': {
+              'exerciseName': {'type': 'string'},
+              'weightKg': {'type': 'number'},
+              'reps': {'type': 'integer'},
+              'isWarmup': {'type': 'boolean'},
+              'workoutId': {'type': 'integer'},
+            },
+            'required': ['exerciseName', 'weightKg', 'reps'],
+          });
 
   @override
   bool get isWrite => true;
@@ -482,8 +520,12 @@ class AddSetTool extends CoachTool {
     final weightKg = clampWeightKg(rawWeightKg);
     final reps = clampReps(rawReps);
     final lower = name.toLowerCase();
-    final exercise = store.exercises.where((e) => e.name.toLowerCase() == lower).firstOrNull ??
-        store.exercises.where((e) => e.name.toLowerCase().contains(lower)).firstOrNull;
+    final exercise = store.exercises
+            .where((e) => e.name.toLowerCase() == lower)
+            .firstOrNull ??
+        store.exercises
+            .where((e) => e.name.toLowerCase().contains(lower))
+            .firstOrNull;
     if (exercise == null) return '{"error":"No exercise named \'$name\'"}';
 
     var workout = await store.activeWorkout();
@@ -495,16 +537,22 @@ class AddSetTool extends CoachTool {
     if (workout == null) {
       final id = await store.createWorkout('Workout');
       final created = await store.activeWorkout();
-      workout = created ?? Workout(id: id, name: 'Workout', startedAt: DateTime.now().millisecondsSinceEpoch);
+      workout = created ??
+          Workout(
+              id: id,
+              name: 'Workout',
+              startedAt: DateTime.now().millisecondsSinceEpoch);
     }
 
     final detail = await store.workoutDetail(workout.id);
     if (detail == null) return '{"error":"workout not found"}';
-    var view = detail.exercises.where((v) => v.exercise.id == exercise.id).firstOrNull;
+    var view =
+        detail.exercises.where((v) => v.exercise.id == exercise.id).firstOrNull;
     final entryId = view != null
         ? view.entry.id
         : await store.addExerciseToWorkout(workout.id, exercise.id);
-    await store.addSet(entryId, weightKg, reps, warmup: args['isWarmup'] == true);
+    await store.addSet(entryId, weightKg, reps,
+        warmup: args['isWarmup'] == true);
     return jsonEncode({
       'ok': true,
       'workoutId': workout.id,
@@ -521,9 +569,10 @@ class NetWorthHistoryTool extends CoachTool {
   NetWorthHistoryTool(this.store);
 
   @override
-  ToolSpec get spec => const ToolSpec('getNetWorthHistory',
+  ToolSpec get spec => const ToolSpec(
+      'getNetWorthHistory',
       'Net worth over time from balance snapshots (recorded whenever an account is updated). '
-      'Returns one point per month: {month: YYYY-MM, netWorth}. No arguments needed.',
+          'Returns one point per month: {month: YYYY-MM, netWorth}. No arguments needed.',
       {'type': 'object'});
 
   @override
@@ -551,7 +600,9 @@ class NetWorthHistoryTool extends CoachTool {
     }
     final months = byMonth.keys.toList()..sort();
     return jsonEncode({
-      'points': [for (final m in months) {'month': m, 'netWorth': num1(byMonth[m]!)}],
+      'points': [
+        for (final m in months) {'month': m, 'netWorth': num1(byMonth[m]!)}
+      ],
     });
   }
 }
@@ -561,23 +612,44 @@ class ProjectUpsideTool extends CoachTool {
   ProjectUpsideTool(this.store);
 
   @override
-  ToolSpec get spec => ToolSpec('projectUpside',
-      "Financial upside math, two modes. mode='grow': future value of principal plus monthly "
-      "contributions at an annual percent (defaults to the user's current net worth as principal). "
-      "mode='payoff': months needed to pay off a principal with a fixed monthly payment. "
-      "All compounding is monthly; money is in the user's account currency.",
-      {
-        'type': 'object',
-        'properties': {
-          'mode': {'type': 'string', 'enum': ['grow', 'payoff']},
-          'principal': {'type': 'number', 'description': 'Amount to project or debt balance. For grow, omit to use current net worth.'},
-          'monthlyContribution': {'type': 'number', 'description': 'grow mode: added monthly'},
-          'monthlyPayment': {'type': 'number', 'description': 'payoff mode: fixed monthly payment'},
-          'annualPercent': {'type': 'number', 'description': 'grow: expected return (default 7). payoff: debt APR'},
-          'years': {'type': 'integer', 'description': 'grow mode horizon (default 10)'},
-        },
-        'required': ['mode'],
-      });
+  ToolSpec get spec => ToolSpec(
+          'projectUpside',
+          "Financial upside math, two modes. mode='grow': future value of principal plus monthly "
+              "contributions at an annual percent (defaults to the user's current net worth as principal). "
+              "mode='payoff': months needed to pay off a principal with a fixed monthly payment. "
+              "All compounding is monthly; money is in the user's account currency.",
+          {
+            'type': 'object',
+            'properties': {
+              'mode': {
+                'type': 'string',
+                'enum': ['grow', 'payoff']
+              },
+              'principal': {
+                'type': 'number',
+                'description':
+                    'Amount to project or debt balance. For grow, omit to use current net worth.'
+              },
+              'monthlyContribution': {
+                'type': 'number',
+                'description': 'grow mode: added monthly'
+              },
+              'monthlyPayment': {
+                'type': 'number',
+                'description': 'payoff mode: fixed monthly payment'
+              },
+              'annualPercent': {
+                'type': 'number',
+                'description':
+                    'grow: expected return (default 7). payoff: debt APR'
+              },
+              'years': {
+                'type': 'integer',
+                'description': 'grow mode horizon (default 10)'
+              },
+            },
+            'required': ['mode'],
+          });
 
   @override
   Future<String> run(Map<String, Object?> args) async {
@@ -589,7 +661,9 @@ class ProjectUpsideTool extends CoachTool {
         return '{"error":"payoff mode needs principal and monthlyPayment"}';
       }
       final months = Finance.payoffMonths(
-          principal: principal, monthlyPayment: payment, annualPercent: (args['annualPercent'] as num?)?.toDouble() ?? 0);
+          principal: principal,
+          monthlyPayment: payment,
+          annualPercent: (args['annualPercent'] as num?)?.toDouble() ?? 0);
       if (months == null) {
         return '{"error":"monthlyPayment never beats the interest"}';
       }
@@ -602,14 +676,18 @@ class ProjectUpsideTool extends CoachTool {
       });
     }
 
-    final entries = store.accounts.map((a) => (a.balance, a.isLiability)).toList();
+    final entries =
+        store.accounts.map((a) => (a.balance, a.isLiability)).toList();
     final netWorth = Wealth.netWorth(entries);
     final principal = (args['principal'] as num?)?.toDouble() ?? netWorth;
     final contribution = (args['monthlyContribution'] as num?)?.toDouble() ?? 0;
     final percent = (args['annualPercent'] as num?)?.toDouble() ?? 7;
     final years = (args['years'] as num?)?.toInt() ?? 10;
     final future = Finance.futureValue(
-        principal: principal, monthlyContribution: contribution, annualPercent: percent, years: years);
+        principal: principal,
+        monthlyContribution: contribution,
+        annualPercent: percent,
+        years: years);
     final invested = principal + contribution * years * 12;
     return jsonEncode({
       'mode': 'grow',
@@ -631,18 +709,28 @@ class SetReminderTool extends CoachTool {
   SetReminderTool(this.store, this.notify);
 
   @override
-  ToolSpec get spec => ToolSpec('setReminder',
-      'Set a reminder that fires as a device notification. Provide "text" and either "when" '
-      '(local date-time YYYY-MM-DDTHH:MM) or "inMinutes" from now. The user approves it before it is created.',
-      {
-        'type': 'object',
-        'properties': {
-          'text': {'type': 'string', 'description': 'What to remind about, e.g. "Restock protein".'},
-          'when': {'type': 'string', 'description': 'YYYY-MM-DDTHH:MM local time'},
-          'inMinutes': {'type': 'integer', 'description': 'Alternatively, minutes from now'},
-        },
-        'required': ['text'],
-      });
+  ToolSpec get spec => ToolSpec(
+          'setReminder',
+          'Set a reminder that fires as a device notification. Provide "text" and either "when" '
+              '(local date-time YYYY-MM-DDTHH:MM) or "inMinutes" from now. The user approves it before it is created.',
+          {
+            'type': 'object',
+            'properties': {
+              'text': {
+                'type': 'string',
+                'description': 'What to remind about, e.g. "Restock protein".'
+              },
+              'when': {
+                'type': 'string',
+                'description': 'YYYY-MM-DDTHH:MM local time'
+              },
+              'inMinutes': {
+                'type': 'integer',
+                'description': 'Alternatively, minutes from now'
+              },
+            },
+            'required': ['text'],
+          });
 
   @override
   bool get isWrite => true;
@@ -663,12 +751,15 @@ class SetReminderTool extends CoachTool {
   @override
   Future<String> run(Map<String, Object?> args) async {
     final text = args['text'] as String?;
-    if (text == null || text.trim().isEmpty) return '{"error":"text is required"}';
+    if (text == null || text.trim().isEmpty)
+      return '{"error":"text is required"}';
     final inMinutes = (args['inMinutes'] as num?)?.toInt();
     final when = DateTime.tryParse((args['when'] as String?) ?? '');
     int dueAt;
     if (inMinutes != null && inMinutes > 0) {
-      dueAt = DateTime.now().add(Duration(minutes: inMinutes)).millisecondsSinceEpoch;
+      dueAt = DateTime.now()
+          .add(Duration(minutes: inMinutes))
+          .millisecondsSinceEpoch;
     } else if (when != null) {
       dueAt = when.millisecondsSinceEpoch;
     } else {
@@ -679,7 +770,12 @@ class SetReminderTool extends CoachTool {
     }
     final reminder = await store.addReminder(text.trim(), dueAt);
     await notify.scheduleReminder(reminder);
-    return jsonEncode({'ok': true, 'id': reminder.id, 'text': reminder.text, 'due': isoDate(dueAt)});
+    return jsonEncode({
+      'ok': true,
+      'id': reminder.id,
+      'text': reminder.text,
+      'due': isoDate(dueAt)
+    });
   }
 }
 
@@ -688,7 +784,8 @@ class ListRemindersTool extends CoachTool {
   ListRemindersTool(this.store);
 
   @override
-  ToolSpec get spec => const ToolSpec('listReminders',
+  ToolSpec get spec => const ToolSpec(
+      'listReminders',
       'All pending reminders the app will notify about: {id, text, due}. No arguments.',
       {'type': 'object'});
 
@@ -708,15 +805,16 @@ class CancelReminderTool extends CoachTool {
   CancelReminderTool(this.store, this.notify);
 
   @override
-  ToolSpec get spec => ToolSpec('cancelReminder',
-      'Delete a pending reminder by id (use listReminders first to find it).',
-      {
-        'type': 'object',
-        'properties': {
-          'id': {'type': 'integer'},
-        },
-        'required': ['id'],
-      });
+  ToolSpec get spec => ToolSpec(
+          'cancelReminder',
+          'Delete a pending reminder by id (use listReminders first to find it).',
+          {
+            'type': 'object',
+            'properties': {
+              'id': {'type': 'integer'},
+            },
+            'required': ['id'],
+          });
 
   @override
   bool get isWrite => true;
@@ -766,8 +864,8 @@ Habit? _habitById(AppStore store, int id) =>
 List<HabitCompletion> _completionsOf(AppStore store, int habitId) =>
     store.habitCompletions.where((c) => c.habitId == habitId).toList();
 
-Map<String, Object?> _habitJson(Habit habit, List<HabitCompletion> completions,
-    DateTime today) {
+Map<String, Object?> _habitJson(
+    Habit habit, List<HabitCompletion> completions, DateTime today) {
   final progress = habitProgress(habit, completions, today: today);
   final cadence = HabitCadence.parse(habit.cadence) ?? HabitCadence.daily;
   return {
@@ -789,16 +887,16 @@ class ListHabitsTool extends CoachTool {
 
   @override
   ToolSpec get spec => const ToolSpec(
-      'list_habits',
-      'List every habit with its id, cadence, target days per period, archived '
-          'flag, progress in the current period and streak. Archived habits are '
-          'included only when includeArchived is true.',
-      {
-        'type': 'object',
-        'properties': {
-          'includeArchived': {'type': 'boolean'},
-        },
-      });
+          'list_habits',
+          'List every habit with its id, cadence, target days per period, archived '
+              'flag, progress in the current period and streak. Archived habits are '
+              'included only when includeArchived is true.',
+          {
+            'type': 'object',
+            'properties': {
+              'includeArchived': {'type': 'boolean'},
+            },
+          });
 
   @override
   Future<String> run(Map<String, Object?> args) async {
@@ -818,22 +916,22 @@ class CreateHabitTool extends CoachTool {
 
   @override
   ToolSpec get spec => const ToolSpec(
-      'create_habit',
-      'Create a habit. cadence is daily, weekly or monthly; target is the '
-          'number of days per period (e.g. 3 for three times a week). Returns '
-          'the new habit id.',
-      {
-        'type': 'object',
-        'properties': {
-          'name': {'type': 'string'},
-          'cadence': {
-            'type': 'string',
-            'enum': ['daily', 'weekly', 'monthly'],
-          },
-          'target': {'type': 'integer', 'minimum': 1},
-        },
-        'required': ['name', 'cadence'],
-      });
+          'create_habit',
+          'Create a habit. cadence is daily, weekly or monthly; target is the '
+              'number of days per period (e.g. 3 for three times a week). Returns '
+              'the new habit id.',
+          {
+            'type': 'object',
+            'properties': {
+              'name': {'type': 'string'},
+              'cadence': {
+                'type': 'string',
+                'enum': ['daily', 'weekly', 'monthly'],
+              },
+              'target': {'type': 'integer', 'minimum': 1},
+            },
+            'required': ['name', 'cadence'],
+          });
 
   @override
   bool get isWrite => true;
@@ -891,24 +989,24 @@ class UpdateHabitTool extends CoachTool {
 
   @override
   ToolSpec get spec => const ToolSpec(
-      'update_habit',
-      'Update a habit by id. Only the fields you pass change: name, cadence '
-          '(daily/weekly/monthly), target days per period, or archived '
-          '(true to archive, false to restore).',
-      {
-        'type': 'object',
-        'properties': {
-          'id': {'type': 'integer'},
-          'name': {'type': 'string'},
-          'cadence': {
-            'type': 'string',
-            'enum': ['daily', 'weekly', 'monthly'],
-          },
-          'target': {'type': 'integer', 'minimum': 1},
-          'archived': {'type': 'boolean'},
-        },
-        'required': ['id'],
-      });
+          'update_habit',
+          'Update a habit by id. Only the fields you pass change: name, cadence '
+              '(daily/weekly/monthly), target days per period, or archived '
+              '(true to archive, false to restore).',
+          {
+            'type': 'object',
+            'properties': {
+              'id': {'type': 'integer'},
+              'name': {'type': 'string'},
+              'cadence': {
+                'type': 'string',
+                'enum': ['daily', 'weekly', 'monthly'],
+              },
+              'target': {'type': 'integer', 'minimum': 1},
+              'archived': {'type': 'boolean'},
+            },
+            'required': ['id'],
+          });
 
   @override
   bool get isWrite => true;
@@ -969,14 +1067,18 @@ class UpdateHabitTool extends CoachTool {
     }
     try {
       await store.updateHabit(id,
-          name: name, cadence: cadence?.name, target: target, archived: archived);
+          name: name,
+          cadence: cadence?.name,
+          target: target,
+          archived: archived);
     } on StoreException catch (e) {
       return _jsonError(e.message);
     }
     final updated = _habitById(store, id);
     return jsonEncode({
       'ok': true,
-      if (updated != null) ..._habitJson(updated, _completionsOf(store, id), DateTime.now()),
+      if (updated != null)
+        ..._habitJson(updated, _completionsOf(store, id), DateTime.now()),
     });
   }
 }
@@ -987,16 +1089,16 @@ class DeleteHabitTool extends CoachTool {
 
   @override
   ToolSpec get spec => const ToolSpec(
-      'delete_habit',
-      'Delete a habit and its completion history by id. Use update_habit with '
-          'archived true instead when the history should be kept.',
-      {
-        'type': 'object',
-        'properties': {
-          'id': {'type': 'integer'},
-        },
-        'required': ['id'],
-      });
+          'delete_habit',
+          'Delete a habit and its completion history by id. Use update_habit with '
+              'archived true instead when the history should be kept.',
+          {
+            'type': 'object',
+            'properties': {
+              'id': {'type': 'integer'},
+            },
+            'required': ['id'],
+          });
 
   @override
   bool get isWrite => true;
@@ -1025,19 +1127,19 @@ class LogHabitCompletionTool extends CoachTool {
 
   @override
   ToolSpec get spec => const ToolSpec(
-      'log_habit_completion',
-      'Check a habit off (done true, the default) or clear it (done false) for '
-          'a local date YYYY-MM-DD. Omit date to use today. Returns the '
-          'updated progress.',
-      {
-        'type': 'object',
-        'properties': {
-          'habitId': {'type': 'integer'},
-          'date': {'type': 'string', 'description': 'YYYY-MM-DD'},
-          'done': {'type': 'boolean'},
-        },
-        'required': ['habitId'],
-      });
+          'log_habit_completion',
+          'Check a habit off (done true, the default) or clear it (done false) for '
+              'a local date YYYY-MM-DD. Omit date to use today. Returns the '
+              'updated progress.',
+          {
+            'type': 'object',
+            'properties': {
+              'habitId': {'type': 'integer'},
+              'date': {'type': 'string', 'description': 'YYYY-MM-DD'},
+              'done': {'type': 'boolean'},
+            },
+            'required': ['habitId'],
+          });
 
   @override
   bool get isWrite => true;
@@ -1094,17 +1196,17 @@ class HabitStatusTool extends CoachTool {
 
   @override
   ToolSpec get spec => const ToolSpec(
-      'habit_status',
-      'Progress and streak for one habit (habitId) or every active habit when '
-          'habitId is omitted, as of a local date YYYY-MM-DD (defaults to '
-          'today).',
-      {
-        'type': 'object',
-        'properties': {
-          'habitId': {'type': 'integer'},
-          'date': {'type': 'string', 'description': 'YYYY-MM-DD'},
-        },
-      });
+          'habit_status',
+          'Progress and streak for one habit (habitId) or every active habit when '
+              'habitId is omitted, as of a local date YYYY-MM-DD (defaults to '
+              'today).',
+          {
+            'type': 'object',
+            'properties': {
+              'habitId': {'type': 'integer'},
+              'date': {'type': 'string', 'description': 'YYYY-MM-DD'},
+            },
+          });
 
   @override
   Future<String> run(Map<String, Object?> args) async {

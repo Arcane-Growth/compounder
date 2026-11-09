@@ -34,8 +34,8 @@ class HistoryScreen extends StatelessWidget {
                         '${row.prCount > 0 ? ' · ${row.prCount} ${row.prCount == 1 ? 'PR' : 'PRs'}' : ''}',
                     trailing:
                         '${trimZero(fromKg(row.totalKg, store.unit))} ${store.unit.label}',
-                    onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => SummaryScreen(row.workoutId))),
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => SummaryScreen(row.workoutId))),
                   ),
               ],
             ),

@@ -47,8 +47,7 @@ void main() {
 
   group('block validation', () {
     test('accepts a normal block', () {
-      expect(
-          planBlockError(title: 'Deep work', startMin: 540, endMin: 600),
+      expect(planBlockError(title: 'Deep work', startMin: 540, endMin: 600),
           isNull);
     });
 
@@ -67,8 +66,7 @@ void main() {
     test('rejects out-of-range start and end minutes', () {
       expect(planBlockError(title: 't', startMin: -1, endMin: 60), isNotNull);
       expect(planBlockError(title: 't', startMin: 0, endMin: -1), isNotNull);
-      expect(
-          planBlockError(title: 't', startMin: 0, endMin: minutesPerDay + 1),
+      expect(planBlockError(title: 't', startMin: 0, endMin: minutesPerDay + 1),
           isNotNull);
       expect(
           planBlockError(title: 't', startMin: minutesPerDay + 1, endMin: 1440),
@@ -81,8 +79,7 @@ void main() {
     });
 
     test('allows a block that runs to midnight', () {
-      expect(
-          planBlockError(title: 'Wind down', startMin: 1380, endMin: 1440),
+      expect(planBlockError(title: 'Wind down', startMin: 1380, endMin: 1440),
           isNull);
     });
   });
@@ -156,8 +153,7 @@ void main() {
     });
 
     test('returns null when nothing is later today', () {
-      expect(
-          nextBlock([block(startMin: 480, endMin: 540)], now), isNull);
+      expect(nextBlock([block(startMin: 480, endMin: 540)], now), isNull);
     });
 
     test('dayHasPlan is true only for a day with a block', () {
@@ -315,15 +311,13 @@ void main() {
               day: day, title: 't', startMin: 600, endMin: 600),
           throwsA(isA<StoreException>()));
       await expectLater(
-          store.createPlanBlock(
-              day: day, title: 't', startMin: -1, endMin: 60),
+          store.createPlanBlock(day: day, title: 't', startMin: -1, endMin: 60),
           throwsA(isA<StoreException>()));
       expect(await store.planBlocksForDay(day), isEmpty);
 
       final id = await store.createPlanBlock(
           day: day, title: 'Keep', startMin: 540, endMin: 600);
-      await expectLater(
-          store.updatePlanBlock(id, endMin: 500),
+      await expectLater(store.updatePlanBlock(id, endMin: 500),
           throwsA(isA<StoreException>()));
       final blocks = await store.planBlocksForDay(day);
       expect(blocks.single.title, 'Keep');

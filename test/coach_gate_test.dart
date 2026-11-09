@@ -319,7 +319,8 @@ void main() {
             'date': '2026-01-02',
           }),
           'Log a meal: Chicken bowl — 620 kcal, 40g protein, 61g carbs, 18g fat (2026-01-02)');
-      expect(await LogMoodTool(store).summarize({'mood': 4, 'note': 'good day'}),
+      expect(
+          await LogMoodTool(store).summarize({'mood': 4, 'note': 'good day'}),
           'Log a mood check-in: 4/5 — "good day"');
       expect(await StartWorkoutTool(store).summarize({'name': 'Push Day'}),
           'Start a workout: Push Day');

@@ -168,8 +168,8 @@ class _SummaryScreenState extends State<SummaryScreen> {
                 const SectionHeader('Personal records'),
                 const SizedBox(height: 8),
                 Text('Could not load personal records for this session.',
-                    style: t.bodySmall
-                        ?.copyWith(color: scheme.onSurfaceVariant)),
+                    style:
+                        t.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
                 const SizedBox(height: 16),
               ]);
         }
@@ -182,8 +182,8 @@ class _SummaryScreenState extends State<SummaryScreen> {
             Card(
               color: scheme.tertiaryContainer,
               child: ListTile(
-                leading: Icon(Icons.emoji_events,
-                    color: scheme.onTertiaryContainer),
+                leading:
+                    Icon(Icons.emoji_events, color: scheme.onTertiaryContainer),
                 title: Text(pr.exerciseName,
                     style: t.titleMedium
                         ?.copyWith(color: scheme.onTertiaryContainer)),
@@ -253,8 +253,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
               onTap: () => _toggle(view.entry.id),
               child: ExcludeSemantics(
                 child: IconButton(
-                  icon: Icon(
-                      expanded ? Icons.expand_less : Icons.expand_more,
+                  icon: Icon(expanded ? Icons.expand_less : Icons.expand_more,
                       color: scheme.primary),
                   tooltip: expanded ? 'Collapse sets' : 'Expand sets',
                   onPressed: () => _toggle(view.entry.id),
@@ -305,12 +304,14 @@ class _SummaryScreenState extends State<SummaryScreen> {
             SizedBox(
               width: 28,
               child: Text('${set.position + 1}',
-                  style: t.bodyMedium?.copyWith(color: scheme.onSurfaceVariant)),
+                  style:
+                      t.bodyMedium?.copyWith(color: scheme.onSurfaceVariant)),
             ),
             Expanded(
               child: Text(detail,
                   style: t.bodyMedium?.copyWith(
-                      color: done ? scheme.onSurface : scheme.onSurfaceVariant)),
+                      color:
+                          done ? scheme.onSurface : scheme.onSurfaceVariant)),
             ),
             if (set.isPr) ...[
               const SizedBox(width: 6),
@@ -340,8 +341,8 @@ class _SummaryScreenState extends State<SummaryScreen> {
             ],
             const SizedBox(width: 8),
             Text(status,
-                style: t.labelSmall?.copyWith(
-                    color: done ? scheme.primary : scheme.outline)),
+                style: t.labelSmall
+                    ?.copyWith(color: done ? scheme.primary : scheme.outline)),
           ]),
         ),
       ),

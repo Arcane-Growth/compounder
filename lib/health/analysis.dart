@@ -274,8 +274,7 @@ int _mergedMinutes(List<(int, int)> intervals) {
 }
 
 /// Minutes in [intervals] that no interval in [covered] already accounts for.
-int _uncoveredMinutes(
-    List<(int, int)> intervals, List<(int, int)> covered) {
+int _uncoveredMinutes(List<(int, int)> intervals, List<(int, int)> covered) {
   final cuts = _mergeIntervals(covered);
   var total = 0;
   for (final (start, end) in intervals) {

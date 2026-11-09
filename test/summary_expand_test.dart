@@ -159,7 +159,8 @@ void main() {
     expect(tester.takeException(), isNull);
 
     // The control now reports the collapsed state.
-    expect(find.bySemanticsLabel('Collapse sets for Back squat'), findsOneWidget);
+    expect(
+        find.bySemanticsLabel('Collapse sets for Back squat'), findsOneWidget);
 
     // Collapsing hides the rows again.
     await tester.tap(find.bySemanticsLabel('Collapse sets for Back squat'));

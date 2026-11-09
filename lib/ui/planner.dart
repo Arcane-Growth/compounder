@@ -307,9 +307,8 @@ class _PlannerScreenState extends State<PlannerScreen>
                 child: Checkbox(
                   key: ValueKey('plan-done-${block.id}'),
                   value: block.done,
-                  onChanged: (value) =>
-                      _runWrite(context, () => _store!.setPlanBlockDone(
-                          block.id, value ?? false)),
+                  onChanged: (value) => _runWrite(context,
+                      () => _store!.setPlanBlockDone(block.id, value ?? false)),
                 ),
               ),
             ),
@@ -320,7 +319,8 @@ class _PlannerScreenState extends State<PlannerScreen>
                   Text(
                     block.title,
                     style: t.titleMedium?.copyWith(
-                      decoration: block.done ? TextDecoration.lineThrough : null,
+                      decoration:
+                          block.done ? TextDecoration.lineThrough : null,
                     ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
@@ -408,8 +408,7 @@ class _PlannerScreenState extends State<PlannerScreen>
     if (store == null) return;
     await showDialog<void>(
       context: context,
-      builder: (_) =>
-          _BlockEditorDialog(block: block, day: _day, store: store),
+      builder: (_) => _BlockEditorDialog(block: block, day: _day, store: store),
     );
     if (mounted) await _load();
   }
@@ -528,8 +527,7 @@ class _BlockEditorDialogState extends State<_BlockEditorDialog> {
           if (_error != null) ...[
             const SizedBox(height: 12),
             Text(_error!,
-                style:
-                    TextStyle(color: Theme.of(context).colorScheme.error)),
+                style: TextStyle(color: Theme.of(context).colorScheme.error)),
           ],
         ]),
       ),

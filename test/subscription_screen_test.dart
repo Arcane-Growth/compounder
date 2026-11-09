@@ -215,7 +215,8 @@ void main() {
 
     expect(storeGateway.bought, ['compounder_ai_monthly']);
     expect(find.text('Compounder AI is active'), findsOneWidget);
-    expect(find.textContaining('Requests left today: 17 of 20'), findsOneWidget);
+    expect(
+        find.textContaining('Requests left today: 17 of 20'), findsOneWidget);
     expect(find.text('Manage subscription'), findsOneWidget);
     expect(store.aiSource, AiSource.compounder);
     expect(store.gatewayApiKey, 'gw-key-123');
@@ -246,7 +247,8 @@ void main() {
     // Start from the cached trial, not the plans screen: this is the state a
     // user is in when the trial converts.
     expect(
-        find.text('Trial — ends ${formatDate(trialEnd.millisecondsSinceEpoch)}'),
+        find.text(
+            'Trial — ends ${formatDate(trialEnd.millisecondsSinceEpoch)}'),
         findsOneWidget);
     expect(find.text('Compounder AI is active'), findsNothing);
 
@@ -342,8 +344,8 @@ void main() {
     expect(find.text('Compounder AI is active'), findsNothing);
     expect(find.textContaining('Renews:'), findsNothing,
         reason: 'the stored period end is already in the past');
-    expect(find.textContaining('Requests left today: 17 of 20'),
-        findsOneWidget);
+    expect(
+        find.textContaining('Requests left today: 17 of 20'), findsOneWidget);
   });
 
   testWidgets('a pending purchase shows the waiting state', (tester) async {
@@ -363,7 +365,8 @@ void main() {
     expect(find.text('Waiting for the store'), findsOneWidget);
   });
 
-  testWidgets('a failed verification shows an actionable error', (tester) async {
+  testWidgets('a failed verification shows an actionable error',
+      (tester) async {
     storeGateway.products = const [_monthly];
     storeGateway.purchaseEvent = const PurchaseEvent(
       outcome: PurchaseOutcome.purchased,

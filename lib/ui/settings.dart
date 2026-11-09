@@ -143,7 +143,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   RadioListTile<AiSource>(
                     value: AiSource.compounder,
                     title: const Text('Compounder AI (subscription)'),
-                    subtitle: Text(entitlementSummary(entitlement, DateTime.now())),
+                    subtitle:
+                        Text(entitlementSummary(entitlement, DateTime.now())),
                   ),
                   RadioListTile<AiSource>(
                     value: AiSource.byo,

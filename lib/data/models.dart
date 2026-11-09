@@ -152,7 +152,8 @@ class Food {
   final double carbs;
   final double fat;
 
-  const Food(this.name, this.grams, this.calories, this.protein, this.carbs, this.fat);
+  const Food(
+      this.name, this.grams, this.calories, this.protein, this.carbs, this.fat);
 
   Map<String, Object?> toJson() => {
         'name': name,
@@ -284,7 +285,16 @@ class Account {
 
   bool get isLiability => type == 'Debt';
 
-  static const types = ['Cash', 'Bank', 'Brokerage', 'Retirement', 'Crypto', 'Property', 'Debt', 'Other'];
+  static const types = [
+    'Cash',
+    'Bank',
+    'Brokerage',
+    'Retirement',
+    'Crypto',
+    'Property',
+    'Debt',
+    'Other'
+  ];
 
   factory Account.fromMap(Map<String, Object?> m) => Account(
         id: m['id'] as int,
@@ -311,7 +321,11 @@ class MoodEntry {
   final int mood;
   final String note;
 
-  const MoodEntry({required this.id, required this.timestamp, required this.mood, this.note = ''});
+  const MoodEntry(
+      {required this.id,
+      required this.timestamp,
+      required this.mood,
+      this.note = ''});
 
   factory MoodEntry.fromMap(Map<String, Object?> m) => MoodEntry(
         id: m['id'] as int,

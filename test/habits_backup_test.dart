@@ -61,7 +61,8 @@ void main() {
     final json =
         jsonDecode(await File(file).readAsString()) as Map<String, Object?>;
     expect(json['format'], 5,
-        reason: 'plan blocks require the format bump to 5 (habits bumped it to 4)');
+        reason:
+            'plan blocks require the format bump to 5 (habits bumped it to 4)');
     expect(json['habits'], hasLength(2));
     expect(json['habitCompletions'], hasLength(3));
 

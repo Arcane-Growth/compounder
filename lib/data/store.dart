@@ -132,7 +132,8 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
     } catch (_) {
       store._gatewayApiKey = null;
     }
-    store._entitlement = Entitlement.decodeCache(prefs.getString(prefEntitlement));
+    store._entitlement =
+        Entitlement.decodeCache(prefs.getString(prefEntitlement));
     store._deviceToken = prefs.getString(prefDeviceToken);
     store._deviceTokenRegistered =
         prefs.getBool(prefDeviceTokenRegistered) ?? false;
@@ -492,10 +493,10 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
     habits = (await db.query('habits', orderBy: 'name, id'))
         .map(Habit.fromMap)
         .toList();
-    habitCompletions = (await db.query('habit_completions',
-            orderBy: 'habit_id, day'))
-        .map(HabitCompletion.fromMap)
-        .toList();
+    habitCompletions =
+        (await db.query('habit_completions', orderBy: 'habit_id, day'))
+            .map(HabitCompletion.fromMap)
+            .toList();
     final usageRows = await db.rawQuery('''
         SELECT we.exercise_id eid, COUNT(*) c FROM workout_exercises we
         JOIN workout_sets s ON s.workout_exercise_id = we.id GROUP BY eid ORDER BY c DESC''');
@@ -557,10 +558,9 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
   /// Which AI source the coach and vision calls use. Defaults to
   /// [AiSource.byo], so every existing install keeps working with no
   /// migration.
-  AiSource get aiSource =>
-      prefs.getString(prefAiSource) == aiSourceCompounder
-          ? AiSource.compounder
-          : AiSource.byo;
+  AiSource get aiSource => prefs.getString(prefAiSource) == aiSourceCompounder
+      ? AiSource.compounder
+      : AiSource.byo;
 
   Future<void> setAiSource(AiSource source) async {
     await prefs.setString(prefAiSource,
@@ -1413,8 +1413,8 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
   /// edit against the merged values; the planner screen always has the block it
   /// is editing, so this exists for the tool surface.
   Future<PlanBlock?> planBlockById(int id) async {
-    final rows = await db
-        .query('plan_blocks', where: 'id = ?', whereArgs: [id], limit: 1);
+    final rows = await db.query('plan_blocks',
+        where: 'id = ?', whereArgs: [id], limit: 1);
     return rows.isEmpty ? null : PlanBlock.fromMap(rows.single);
   }
 
@@ -1461,15 +1461,15 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
   /// "move and check off" call cannot half-apply (review Nit 4).
   Future<void> updatePlanBlock(int id,
       {String? title, int? startMin, int? endMin, bool? done}) async {
-    final rows =
-        await db.query('plan_blocks', where: 'id = ?', whereArgs: [id], limit: 1);
+    final rows = await db.query('plan_blocks',
+        where: 'id = ?', whereArgs: [id], limit: 1);
     if (rows.isEmpty) return;
     final current = PlanBlock.fromMap(rows.single);
     final nextTitle = title ?? current.title;
     final nextStart = startMin ?? current.startMin;
     final nextEnd = endMin ?? current.endMin;
-    final error = planBlockError(
-        title: nextTitle, startMin: nextStart, endMin: nextEnd);
+    final error =
+        planBlockError(title: nextTitle, startMin: nextStart, endMin: nextEnd);
     if (error != null) throw StoreException(error);
     await db.update(
         'plan_blocks',

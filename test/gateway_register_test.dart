@@ -31,8 +31,9 @@ class _Recorder {
         }
         return http.Response(
             jsonEncode({
-              'device_token':
-                  omitToken ? null : (issuedOverride ?? bodies.last['device_token']),
+              'device_token': omitToken
+                  ? null
+                  : (issuedOverride ?? bodies.last['device_token']),
               'account_id': 'user-1',
             }),
             200);

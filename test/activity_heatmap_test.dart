@@ -108,8 +108,7 @@ class _CountingStore extends ChangeNotifier implements AppStore {
   WeightUnit get unit => WeightUnit.kg;
 
   @override
-  dynamic noSuchMethod(Invocation invocation) =>
-      super.noSuchMethod(invocation);
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 /// Activity heatmap + gamified home: intensity mapping, streak and perfect-day
@@ -144,8 +143,7 @@ void main() {
       expect(day('2026-11-09', workout: 1, nutrition: 1).intensity, 2);
       expect(day('2026-11-09', workout: 1, nutrition: 1, mind: 1).intensity, 3);
       expect(
-          day('2026-11-09',
-                  workout: 1, nutrition: 1, mind: 1, habits: 1)
+          day('2026-11-09', workout: 1, nutrition: 1, mind: 1, habits: 1)
               .intensity,
           4);
       expect(
@@ -166,8 +164,7 @@ void main() {
       expect(day('2026-11-09', workout: 1, nutrition: 1, mind: 1).perfect,
           isFalse);
       expect(
-          day('2026-11-09',
-                  workout: 1, nutrition: 1, mind: 1, habits: 1)
+          day('2026-11-09', workout: 1, nutrition: 1, mind: 1, habits: 1)
               .perfect,
           isFalse,
           reason: 'four of five pillars is not a perfect day');
@@ -235,7 +232,6 @@ void main() {
       expect(longestStreak(days), 4);
       expect(currentStreak(days, today), 1);
     });
-
   });
 
   group('perfect-day counting', () {
@@ -721,7 +717,8 @@ void main() {
       expect(selected, tabWealth, reason: 'Wealth selects the Wealth tab');
 
       await tapLink('Health');
-      expect(find.byType(HealthDataScreen, skipOffstage: false), findsOneWidget);
+      expect(
+          find.byType(HealthDataScreen, skipOffstage: false), findsOneWidget);
       await popRoute();
 
       await tapLink('Settings');
@@ -793,7 +790,8 @@ void main() {
       await tester.runAsync(
           () => Future<void>.delayed(const Duration(milliseconds: 100)));
       await tester.pump();
-      expect(find.text(formatDate(DateTime(2026, 11, 9).millisecondsSinceEpoch)),
+      expect(
+          find.text(formatDate(DateTime(2026, 11, 9).millisecondsSinceEpoch)),
           findsOneWidget);
 
       // The app was backgrounded across midnight; resuming must follow the
@@ -803,7 +801,8 @@ void main() {
       await tester.runAsync(
           () => Future<void>.delayed(const Duration(milliseconds: 100)));
       await tester.pump();
-      expect(find.text(formatDate(DateTime(2026, 11, 10).millisecondsSinceEpoch)),
+      expect(
+          find.text(formatDate(DateTime(2026, 11, 10).millisecondsSinceEpoch)),
           findsOneWidget,
           reason: 'a resumed app must not keep showing yesterday');
     });
@@ -912,10 +911,9 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      final todayCell = find.byWidgetPredicate((w) =>
-          w is HeatmapCell && localDayKey(w.day) == '2026-11-09');
-      expect(todayCell, findsOneWidget,
-          reason: 'the grid must contain today');
+      final todayCell = find.byWidgetPredicate(
+          (w) => w is HeatmapCell && localDayKey(w.day) == '2026-11-09');
+      expect(todayCell, findsOneWidget, reason: 'the grid must contain today');
       final rect = tester.getRect(todayCell);
       // Bound by the grid's own viewport, not the screen: the card padding
       // sits between the two, so a screen-width bound would still pass with
@@ -953,8 +951,8 @@ void main() {
         await tester.pump();
       }
 
-      final todayCell = find.byWidgetPredicate((w) =>
-          w is HeatmapCell && localDayKey(w.day) == '2026-11-09');
+      final todayCell = find.byWidgetPredicate(
+          (w) => w is HeatmapCell && localDayKey(w.day) == '2026-11-09');
       expect(todayCell, findsOneWidget,
           reason: 'the retry must rebuild the grid');
       final rect = tester.getRect(todayCell);
@@ -998,8 +996,8 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      final todayCell = find.byWidgetPredicate((w) =>
-          w is HeatmapCell && localDayKey(w.day) == '2026-11-09');
+      final todayCell = find.byWidgetPredicate(
+          (w) => w is HeatmapCell && localDayKey(w.day) == '2026-11-09');
       expect(todayCell, findsOneWidget);
       final rect = tester.getRect(todayCell);
       expect(rect.right, lessThanOrEqualTo(400.0),

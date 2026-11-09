@@ -67,8 +67,8 @@ void main() {
       // Deterministic: the same point maps to the same uuid, so a re-sync
       // replaces the row instead of duplicating it.
       final again = _stagedNightPoints()
-          .map((p) => healthRecordFromPoint(p, syncedAt.add(
-              const Duration(hours: 1))))
+          .map((p) =>
+              healthRecordFromPoint(p, syncedAt.add(const Duration(hours: 1))))
           .map((r) => r.uuid);
       expect(again.toList(), uuids);
       // The parent uuid is still recoverable from the composite key.
@@ -145,8 +145,8 @@ void main() {
           .toList();
       await repo.upsertRecords(first);
       final second = _stagedNightPoints()
-          .map((p) => healthRecordFromPoint(
-              p, syncedAt.add(const Duration(hours: 2))))
+          .map((p) =>
+              healthRecordFromPoint(p, syncedAt.add(const Duration(hours: 2))))
           .toList();
       await repo.upsertRecords(second);
       final stored = await repo.records(
@@ -246,11 +246,11 @@ void main() {
       await store.db.close();
 
       store = await AppStore.open(prefs, path: path);
-      final sleepRows = await store.db
-          .query('health_records', where: "type LIKE 'SLEEP%'");
+      final sleepRows =
+          await store.db.query('health_records', where: "type LIKE 'SLEEP%'");
       expect(sleepRows, isEmpty, reason: 'stale sleep rows must be purged');
-      final heartRows = await store.db
-          .query('health_records', where: "type = 'HEART_RATE'");
+      final heartRows =
+          await store.db.query('health_records', where: "type = 'HEART_RATE'");
       expect(heartRows, hasLength(1), reason: 'other metrics must survive');
       final sleepState = await store.db
           .query('health_sync_state', where: "metric LIKE 'SLEEP%'");
@@ -327,8 +327,8 @@ void main() {
       store = await AppStore.open(prefs, path: path);
       expect(await store.db.getVersion(), 13);
 
-      final allRows = await store.db.query('health_sync_state',
-          where: "metric = '__all__'");
+      final allRows = await store.db
+          .query('health_sync_state', where: "metric = '__all__'");
       expect(allRows, isEmpty,
           reason: 'the aggregate stamp must clear so lastSync() returns null');
       expect(await HealthRepository(store.db).lastSync(), isNull,
@@ -351,12 +351,12 @@ void main() {
       }
 
       // The 5->7 steps are additive: they must not purge anything.
-      final sleepRows = await store.db
-          .query('health_records', where: "type LIKE 'SLEEP%'");
+      final sleepRows =
+          await store.db.query('health_records', where: "type LIKE 'SLEEP%'");
       expect(sleepRows, hasLength(5),
           reason: 'the surviving sleep night must not be purged again');
-      final otherRows = await store.db.query('health_records',
-          where: "type IN ('HEART_RATE', 'STEPS')");
+      final otherRows = await store.db
+          .query('health_records', where: "type IN ('HEART_RATE', 'STEPS')");
       expect(otherRows, hasLength(2),
           reason: 'non-sleep health rows must survive');
 
@@ -422,17 +422,15 @@ void main() {
           await store.db
               .query('health_sync_state', where: "metric LIKE 'SLEEP%'"),
           isEmpty);
-      final heartState = await store.db.query('health_sync_state',
-          where: "metric = 'HEART_RATE'");
+      final heartState = await store.db
+          .query('health_sync_state', where: "metric = 'HEART_RATE'");
       expect(heartState, hasLength(1));
       expect(heartState.single['last_success_at'], stamp);
       expect(
-          await store.db
-              .query('health_records', where: "type LIKE 'SLEEP%'"),
+          await store.db.query('health_records', where: "type LIKE 'SLEEP%'"),
           hasLength(5));
       expect(
-          await store.db
-              .query('health_records', where: "type = 'HEART_RATE'"),
+          await store.db.query('health_records', where: "type = 'HEART_RATE'"),
           hasLength(1));
 
       await store.db.close();

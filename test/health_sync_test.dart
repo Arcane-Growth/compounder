@@ -93,7 +93,8 @@ void main() {
   final now = DateTime(2026, 11, 6, 12);
 
   group('chunked health sync', () {
-    test('a 30-day lookback is walked in 30 one-day fetches, not one', () async {
+    test('a 30-day lookback is walked in 30 one-day fetches, not one',
+        () async {
       final source = _RecordingSource();
       final stamps = <String, int>{};
       final result = await runChunkedSync(
@@ -243,8 +244,8 @@ void main() {
       // on the last completed chunk to catch records that landed late.
       expect(source.calls, hasLength(21));
       expect(result.records, 21);
-      expect(source.calls.first.start,
-          resumeAt.subtract(const Duration(days: 1)));
+      expect(
+          source.calls.first.start, resumeAt.subtract(const Duration(days: 1)));
       expect(source.calls.last.end, now);
     });
 
@@ -262,7 +263,8 @@ void main() {
         stamp: (metric, chunkEndMs, error) async => stamps.add(chunkEndMs),
       );
       expect(stamps, hasLength(3));
-      expect(stamps, orderedEquals(source.calls.map((c) => c.end.millisecondsSinceEpoch)));
+      expect(stamps,
+          orderedEquals(source.calls.map((c) => c.end.millisecondsSinceEpoch)));
     });
   });
 }

@@ -113,15 +113,16 @@ void main() {
     test('create_habit defaults the target to 1 only when it is absent',
         () async {
       final tool = CreateHabitTool(store);
-      final created = jsonDecode(
-          await tool.run({'name': 'Read', 'cadence': 'daily'})) as Map;
+      final created =
+          jsonDecode(await tool.run({'name': 'Read', 'cadence': 'daily'}))
+              as Map;
       expect(created['target'], 1);
       expect(store.habits.single.target, 1);
       // The approval preview must not claim the default when the argument is
       // present but mistyped.
       expect(
-          await tool.summarize(
-              {'name': 'Read', 'cadence': 'daily', 'target': '3'}),
+          await tool
+              .summarize({'name': 'Read', 'cadence': 'daily', 'target': '3'}),
           contains('?×'));
     });
 

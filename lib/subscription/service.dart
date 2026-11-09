@@ -79,8 +79,7 @@ class SubscriptionService extends ChangeNotifier {
       products = const [];
     }
     _lastProducts = products;
-    _set(reduceSubscriptionState(
-        _state, ProductsLoaded(products), now: now()));
+    _set(reduceSubscriptionState(_state, ProductsLoaded(products), now: now()));
   }
 
   /// Re-reads the entitlement from the gateway. Offline, the cached copy stays
@@ -104,7 +103,8 @@ class SubscriptionService extends ChangeNotifier {
         await store.setAiSource(AiSource.byo);
       }
       _set(reduceSubscriptionState(
-          _state, EntitlementRefreshed(result.entitlement), now: now()));
+          _state, EntitlementRefreshed(result.entitlement),
+          now: now()));
     } on GatewayException {
       // Keep whatever is cached; the UI already says "can't reach".
     }
@@ -123,8 +123,8 @@ class SubscriptionService extends ChangeNotifier {
       _set(const SubscriptionError('That plan is not available right now.'));
       return;
     }
-    _set(reduceSubscriptionState(
-        _state, PurchaseStarted(productId), now: now()));
+    _set(reduceSubscriptionState(_state, PurchaseStarted(productId),
+        now: now()));
     try {
       await storeGateway.buy(product);
     } catch (_) {
@@ -144,8 +144,8 @@ class SubscriptionService extends ChangeNotifier {
     } catch (_) {
       // Fall through to the gateway restore below.
     }
-    final restored = await wait.future
-        .timeout(restoreTimeout, onTimeout: () => false);
+    final restored =
+        await wait.future.timeout(restoreTimeout, onTimeout: () => false);
     if (restored) return;
     try {
       final deviceToken = await _deviceToken();
@@ -158,7 +158,8 @@ class SubscriptionService extends ChangeNotifier {
       if (result.entitlement.isActiveAt(now())) {
         await store.setAiSource(AiSource.compounder);
         _set(reduceSubscriptionState(
-            _state, EntitlementRefreshed(result.entitlement), now: now()));
+            _state, EntitlementRefreshed(result.entitlement),
+            now: now()));
       } else {
         _set(const SubscriptionError(
             'No previous Compounder AI purchase was found for this device.'));
@@ -180,8 +181,8 @@ class SubscriptionService extends ChangeNotifier {
       case PurchaseOutcome.restored:
         unawaited(_verify(event));
       case PurchaseOutcome.pending:
-        _set(reduceSubscriptionState(
-            _state, PurchasePending(event.productId), now: now()));
+        _set(reduceSubscriptionState(_state, PurchasePending(event.productId),
+            now: now()));
       case PurchaseOutcome.canceled:
         // The user backed out of the store sheet: not an error. While the
         // sheet is up the state is Pending, so fall back to the plans we
@@ -194,8 +195,7 @@ class SubscriptionService extends ChangeNotifier {
             : SubscriptionAvailable(products));
       case PurchaseOutcome.error:
         _set(reduceSubscriptionState(
-            _state,
-            PurchaseFailed(event.error ?? 'The purchase failed.'),
+            _state, PurchaseFailed(event.error ?? 'The purchase failed.'),
             now: now()));
     }
   }
@@ -228,12 +228,12 @@ class SubscriptionService extends ChangeNotifier {
       // unacknowledged Play purchase is refunded after three days, so a failed
       // verification is retried on the next launch instead of being lost.
       await storeGateway.complete(event);
-      _set(reduceSubscriptionState(
-          _state, PurchaseVerified(result.entitlement), now: now()));
+      _set(reduceSubscriptionState(_state, PurchaseVerified(result.entitlement),
+          now: now()));
       _completeRestoreWait(true);
     } on GatewayException catch (e) {
-      _set(reduceSubscriptionState(
-          _state, PurchaseFailed(e.message), now: now()));
+      _set(reduceSubscriptionState(_state, PurchaseFailed(e.message),
+          now: now()));
       _completeRestoreWait(false);
     }
   }
@@ -246,9 +246,7 @@ class SubscriptionService extends ChangeNotifier {
 
   Future<String?> _deviceToken() async {
     final cached = store.deviceToken;
-    if (cached != null &&
-        cached.isNotEmpty &&
-        store.deviceTokenRegistered) {
+    if (cached != null && cached.isNotEmpty && store.deviceTokenRegistered) {
       return cached;
     }
     try {

@@ -86,8 +86,7 @@ class HeatmapLegend extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
     final scheme = Theme.of(context).colorScheme;
-    final labelStyle =
-        t.labelSmall?.copyWith(color: scheme.onSurfaceVariant);
+    final labelStyle = t.labelSmall?.copyWith(color: scheme.onSurfaceVariant);
     // Wrap, not Row: five swatches plus "Less"/"More" overflowed by 24px at
     // 320dp/2.0. Wrapping keeps every swatch visible at accessibility scales.
     return Wrap(
@@ -361,37 +360,37 @@ class _DayDetailSheet extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-            Text(formatDate(day.millisecondsSinceEpoch), style: t.titleLarge),
-            const SizedBox(height: 4),
-            Text(
-              entry == null
-                  ? 'Nothing logged'
-                  : '${entry.pillarCount} of 5 pillars logged',
-              style: t.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 12),
-            for (final pillar in allPillars)
-              ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(
-                  entry != null && entry.hasPillar(pillar)
-                      ? Icons.check_circle
-                      : Icons.radio_button_unchecked,
-                  color: entry != null && entry.hasPillar(pillar)
-                      ? scheme.primary
-                      : scheme.onSurfaceVariant,
-                ),
-                title: Text(pillarLabel(pillar)),
-                trailing: Text(
-                  '${entry?.countFor(pillar) ?? 0}',
-                  style: t.labelLarge?.copyWith(
+              Text(formatDate(day.millisecondsSinceEpoch), style: t.titleLarge),
+              const SizedBox(height: 4),
+              Text(
+                entry == null
+                    ? 'Nothing logged'
+                    : '${entry.pillarCount} of 5 pillars logged',
+                style: t.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+              const SizedBox(height: 12),
+              for (final pillar in allPillars)
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                    entry != null && entry.hasPillar(pillar)
+                        ? Icons.check_circle
+                        : Icons.radio_button_unchecked,
                     color: entry != null && entry.hasPillar(pillar)
                         ? scheme.primary
                         : scheme.onSurfaceVariant,
                   ),
+                  title: Text(pillarLabel(pillar)),
+                  trailing: Text(
+                    '${entry?.countFor(pillar) ?? 0}',
+                    style: t.labelLarge?.copyWith(
+                      color: entry != null && entry.hasPillar(pillar)
+                          ? scheme.primary
+                          : scheme.onSurfaceVariant,
+                    ),
+                  ),
                 ),
-              ),
             ],
           ),
         ),
@@ -498,8 +497,8 @@ class _HeatmapScreenState extends State<HeatmapScreen>
     _midnight?.cancel();
     final now = (widget.now ?? DateTime.now)();
     final nextMidnight = DateTime(now.year, now.month, now.day + 1);
-    _midnight = Timer(
-        nextMidnight.difference(now) + const Duration(seconds: 1), () {
+    _midnight =
+        Timer(nextMidnight.difference(now) + const Duration(seconds: 1), () {
       if (!mounted) return;
       _scheduleMidnight();
       _load();
@@ -571,8 +570,8 @@ class _HeatmapScreenState extends State<HeatmapScreen>
       if (!mounted || generation != _generation) return;
       // Keep the raw error for the log; the user gets a human message.
       debugPrint('HeatmapScreen: activity load failed: $e');
-      setState(() => _error =
-          'Your activity could not be loaded. Try again in a moment.');
+      setState(() =>
+          _error = 'Your activity could not be loaded. Try again in a moment.');
     }
   }
 
@@ -596,89 +595,89 @@ class _HeatmapScreenState extends State<HeatmapScreen>
               ),
             ])
           : ListView(
-                  padding: const EdgeInsets.all(20),
-                  children: [
-                    Card(
-                      color: scheme.surfaceContainerLow,
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Row(children: [
-                          Expanded(
-                            child: _SummaryStat(
-                              value: '${currentStreak(_days, _today)}',
-                              label: 'Current streak',
-                            ),
-                          ),
-                          Expanded(
-                            child: _SummaryStat(
-                              value: '${longestStreak(_days)}',
-                              label: 'Longest streak',
-                            ),
-                          ),
-                          Expanded(
-                            child: _SummaryStat(
-                              value:
-                                  '${perfectDaysInMonth(_days, _today.year, _today.month)}',
-                              label: 'Perfect days this month',
-                            ),
-                          ),
-                        ]),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    const SectionHeader('Last 52 weeks'),
-                    const SizedBox(height: 12),
-                    Card(
-                      color: scheme.surfaceContainerLow,
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            NotificationListener<ScrollMetricsNotification>(
-                              onNotification: _onGridMetrics,
-                              child: ActivityHeatmap(
-                                days: _days,
-                                start: from,
-                                end: _today,
-                                cellSize: 14,
-                                gap: 3,
-                                controller: _gridScroll,
-                                onDayTap: (day) => showDayDetail(
-                                    context, day, _days[localDayKey(day)]),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            const HeatmapLegend(),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Tap a square for that day\'s detail.',
-                              style: t.bodySmall
-                                  ?.copyWith(color: scheme.onSurfaceVariant),
-                            ),
-                          ],
+              padding: const EdgeInsets.all(20),
+              children: [
+                Card(
+                  color: scheme.surfaceContainerLow,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(children: [
+                      Expanded(
+                        child: _SummaryStat(
+                          value: '${currentStreak(_days, _today)}',
+                          label: 'Current streak',
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 20),
-                    const SectionHeader('Recent days'),
-                    const SizedBox(height: 8),
-                    Card(
-                      color: scheme.surfaceContainerLow,
-                      child: Column(children: [
-                        for (var i = 0; i < 7; i++) ...[
-                          if (i > 0) const Divider(height: 1),
-                          _DayRow(
-                            day: DateTime(
-                                _today.year, _today.month, _today.day - i),
-                            data: _days[localDayKey(DateTime(
-                                _today.year, _today.month, _today.day - i))],
-                          ),
-                        ],
-                      ]),
-                    ),
-                  ],
+                      Expanded(
+                        child: _SummaryStat(
+                          value: '${longestStreak(_days)}',
+                          label: 'Longest streak',
+                        ),
+                      ),
+                      Expanded(
+                        child: _SummaryStat(
+                          value:
+                              '${perfectDaysInMonth(_days, _today.year, _today.month)}',
+                          label: 'Perfect days this month',
+                        ),
+                      ),
+                    ]),
+                  ),
                 ),
+                const SizedBox(height: 20),
+                const SectionHeader('Last 52 weeks'),
+                const SizedBox(height: 12),
+                Card(
+                  color: scheme.surfaceContainerLow,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        NotificationListener<ScrollMetricsNotification>(
+                          onNotification: _onGridMetrics,
+                          child: ActivityHeatmap(
+                            days: _days,
+                            start: from,
+                            end: _today,
+                            cellSize: 14,
+                            gap: 3,
+                            controller: _gridScroll,
+                            onDayTap: (day) => showDayDetail(
+                                context, day, _days[localDayKey(day)]),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        const HeatmapLegend(),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Tap a square for that day\'s detail.',
+                          style: t.bodySmall
+                              ?.copyWith(color: scheme.onSurfaceVariant),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const SectionHeader('Recent days'),
+                const SizedBox(height: 8),
+                Card(
+                  color: scheme.surfaceContainerLow,
+                  child: Column(children: [
+                    for (var i = 0; i < 7; i++) ...[
+                      if (i > 0) const Divider(height: 1),
+                      _DayRow(
+                        day:
+                            DateTime(_today.year, _today.month, _today.day - i),
+                        data: _days[localDayKey(DateTime(
+                            _today.year, _today.month, _today.day - i))],
+                      ),
+                    ],
+                  ]),
+                ),
+              ],
+            ),
     );
   }
 }

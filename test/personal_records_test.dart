@@ -65,8 +65,7 @@ class _FailingPrStore extends ChangeNotifier implements AppStore {
   WeightUnit get unit => WeightUnit.kg;
 
   @override
-  dynamic noSuchMethod(Invocation invocation) =>
-      super.noSuchMethod(invocation);
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 void main() {
@@ -271,8 +270,8 @@ void main() {
     }
 
     Future<WorkoutSet> setById(int id) async {
-      final rows =
-          await store.db.query('workout_sets', where: 'id = ?', whereArgs: [id]);
+      final rows = await store.db
+          .query('workout_sets', where: 'id = ?', whereArgs: [id]);
       return WorkoutSet.fromMap(rows.single);
     }
 
@@ -280,7 +279,8 @@ void main() {
         () async {
       final exerciseId = await seedExercise();
       final active = await seedActive(exerciseId);
-      final setId = await store.addSet(active.entryId, 100, 5, completed: false);
+      final setId =
+          await store.addSet(active.entryId, 100, 5, completed: false);
       expect((await setById(setId)).isPr, isFalse,
           reason: 'an incomplete set is not a performed set');
 
@@ -323,8 +323,7 @@ void main() {
           reason: 'a set below the session best is not a PR');
     });
 
-    test('an untouched heavier set does not suppress a completed PR',
-        () async {
+    test('an untouched heavier set does not suppress a completed PR', () async {
       final exerciseId = await seedExercise(priorWeightKg: 90);
       final active = await seedActive(exerciseId);
       // A planned 120 kg set that is never performed must not block the PR for
@@ -362,8 +361,7 @@ void main() {
     test('warm-up sets never flag', () async {
       final exerciseId = await seedExercise();
       final active = await seedActive(exerciseId);
-      final setId =
-          await store.addSet(active.entryId, 200, 5, warmup: true);
+      final setId = await store.addSet(active.entryId, 200, 5, warmup: true);
       expect((await setById(setId)).isPr, isFalse);
     });
 
@@ -498,8 +496,8 @@ void main() {
       await store.addSet(active.entryId, 105, 5);
       await store.finishWorkout(active.workoutId);
 
-      final row = store.history.firstWhere(
-          (r) => r.workoutId == active.workoutId);
+      final row =
+          store.history.firstWhere((r) => r.workoutId == active.workoutId);
       expect(row.prCount, 2);
     });
 
@@ -511,8 +509,7 @@ void main() {
 
       // Rewind to a genuine v11 shape: no PR columns at all.
       await store.db.execute('ALTER TABLE workout_sets DROP COLUMN is_pr');
-      await store.db
-          .execute('ALTER TABLE workout_sets DROP COLUMN pr_e1rm_kg');
+      await store.db.execute('ALTER TABLE workout_sets DROP COLUMN pr_e1rm_kg');
       await store.db.setVersion(11);
       await store.db.close();
 
@@ -528,8 +525,7 @@ void main() {
         expect(set['pr_e1rm_kg'], isNull);
       }
       // The values themselves are untouched.
-      final activeSet =
-          sets.firstWhere((s) => s['weight_kg'] == 120.0);
+      final activeSet = sets.firstWhere((s) => s['weight_kg'] == 120.0);
       expect(activeSet['reps'], 5);
       expect(activeSet['completed_at'], isNotNull);
     });
@@ -570,8 +566,8 @@ void main() {
       });
       await BackupService.import(target, file);
 
-      final restored = await target.db.query('workout_sets',
-          where: 'is_pr = 1');
+      final restored =
+          await target.db.query('workout_sets', where: 'is_pr = 1');
       expect(restored, hasLength(1),
           reason: 'the PR flag must survive the round-trip');
       expect(restored.single['pr_e1rm_kg'], _e1rm(110, 5));
@@ -662,7 +658,9 @@ void main() {
 
       expect(sounds.played, contains(WorkoutCue.personalRecord),
           reason: 'completing a PR set must play the celebration tone');
-      expect(find.text('PR · ${trimZero(fromKg(_e1rm(100, 5), WeightUnit.kg))} kg e1RM'),
+      expect(
+          find.text(
+              'PR · ${trimZero(fromKg(_e1rm(100, 5), WeightUnit.kg))} kg e1RM'),
           findsOneWidget,
           reason: 'the badge must show the e1RM snapshot in the user unit');
     });
@@ -675,8 +673,7 @@ void main() {
 
       await completeFirstSet(tester);
 
-      expect(sounds.played, isEmpty,
-          reason: 'muted means no PR tone either');
+      expect(sounds.played, isEmpty, reason: 'muted means no PR tone either');
       expect(find.textContaining('PR ·'), findsOneWidget,
           reason: 'the badge is visual and still shown when muted');
     });
@@ -684,7 +681,8 @@ void main() {
     testWidgets('a non-PR set plays no celebration tone', (tester) async {
       // A prior finished session at the same weight makes this set a match,
       // not a PR.
-      final exerciseId = (await store.db.query('exercises')).single['id'] as int;
+      final exerciseId =
+          (await store.db.query('exercises')).single['id'] as int;
       final priorWorkout = await store.db.insert('workouts', {
         'name': 'Prior leg day',
         'started_at': 1000,
@@ -799,8 +797,8 @@ void main() {
       expect(find.text('PERSONAL RECORDS'), findsOneWidget);
       final previous = trimZero(fromKg(_e1rm(90, 5), WeightUnit.kg));
       final newBest = trimZero(fromKg(_e1rm(110, 5), WeightUnit.kg));
-      final delta = trimZero(
-          fromKg(_e1rm(110, 5) - _e1rm(90, 5), WeightUnit.kg));
+      final delta =
+          trimZero(fromKg(_e1rm(110, 5) - _e1rm(90, 5), WeightUnit.kg));
       expect(
           find.text('Previous best $previous kg → new best $newBest kg '
               '(+$delta kg)'),
@@ -808,8 +806,7 @@ void main() {
     });
 
     testWidgets('a baseline PR reads as a first PR', (tester) async {
-      await seedSession(
-          priorWeightKg: 0, newWeightKg: 60, withPrior: false);
+      await seedSession(priorWeightKg: 0, newWeightKg: 60, withPrior: false);
       await pumpSummary(tester);
 
       expect(find.text('PERSONAL RECORDS'), findsOneWidget);
@@ -835,8 +832,8 @@ void main() {
 
       final previous = trimZero(fromKg(_e1rm(90, 5), WeightUnit.lb));
       final newBest = trimZero(fromKg(_e1rm(110, 5), WeightUnit.lb));
-      final delta = trimZero(
-          fromKg(_e1rm(110, 5) - _e1rm(90, 5), WeightUnit.lb));
+      final delta =
+          trimZero(fromKg(_e1rm(110, 5) - _e1rm(90, 5), WeightUnit.lb));
       expect(
           find.text('Previous best $previous lb → new best $newBest lb '
               '(+$delta lb)'),

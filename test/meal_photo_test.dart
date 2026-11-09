@@ -5,7 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Widget _host(Widget child) => MaterialApp(
-      home: Scaffold(body: Center(child: SizedBox(width: 120, height: 120, child: child))),
+      home: Scaffold(
+          body: Center(child: SizedBox(width: 120, height: 120, child: child))),
     );
 
 void main() {
@@ -22,7 +23,8 @@ void main() {
 
     testWidgets('a path that no longer exists on disk renders the placeholder',
         (tester) async {
-      final missing = '${Directory.systemTemp.path}/compounder-nonexistent-meal.jpg';
+      final missing =
+          '${Directory.systemTemp.path}/compounder-nonexistent-meal.jpg';
       expect(File(missing).existsSync(), isFalse);
       await tester.pumpWidget(_host(MealPhoto(missing)));
       expect(tester.takeException(), isNull);

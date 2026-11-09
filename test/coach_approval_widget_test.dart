@@ -50,7 +50,8 @@ void main() {
   sqfliteFfiInit();
   databaseFactory = databaseFactoryFfiNoIsolate;
 
-  const notifications = MethodChannel('dexterous.com/flutter/local_notifications');
+  const notifications =
+      MethodChannel('dexterous.com/flutter/local_notifications');
   const timezone = MethodChannel('flutter_timezone');
 
   late AppStore store;
@@ -61,9 +62,10 @@ void main() {
     store = await AppStore.open(await SharedPreferences.getInstance(),
         path: inMemoryDatabasePath);
     // The coach refuses to send unless the selected source is configured.
-    await store.saveAi(
-        const AiSettings(baseUrl: 'http://localhost', apiKey: 'key', model: 'model'));
-    health = HealthService(store: store, repository: HealthRepository(store.db));
+    await store.saveAi(const AiSettings(
+        baseUrl: 'http://localhost', apiKey: 'key', model: 'model'));
+    health =
+        HealthService(store: store, repository: HealthRepository(store.db));
 
     // Every turn reschedules the daily digest (unawaited). Register the Android
     // implementation and stub the plugin channels so that does not throw

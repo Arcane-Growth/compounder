@@ -81,8 +81,8 @@ class _MacrosTabState extends State<MacrosTab> {
     _rollover?.cancel();
     final now = widget.now();
     final nextMidnight = DateTime(now.year, now.month, now.day + 1);
-    _rollover = Timer(nextMidnight.difference(now) + const Duration(seconds: 1),
-        () {
+    _rollover =
+        Timer(nextMidnight.difference(now) + const Duration(seconds: 1), () {
       if (!mounted) return;
       setState(() {
         // Only follow the clock when the user was looking at "today"; a day
@@ -201,8 +201,8 @@ class _MacrosTabState extends State<MacrosTab> {
               child: Column(children: [
                 _goalRow(context, 'Calories', day.totals.calories,
                     goals.calories, 'kcal'),
-                _goalRow(context, 'Protein', day.totals.protein, goals.protein,
-                    'g'),
+                _goalRow(
+                    context, 'Protein', day.totals.protein, goals.protein, 'g'),
                 _goalRow(context, 'Carbs', day.totals.carbs, goals.carbs, 'g'),
                 _goalRow(context, 'Fat', day.totals.fat, goals.fat, 'g'),
               ]),
@@ -211,7 +211,8 @@ class _MacrosTabState extends State<MacrosTab> {
           const SizedBox(height: 20),
           _weeklyCard(context, week, nutritionGoals),
           const SizedBox(height: 20),
-          SectionHeader(_isToday ? 'Today' : formatDate(_day.millisecondsSinceEpoch)),
+          SectionHeader(
+              _isToday ? 'Today' : formatDate(_day.millisecondsSinceEpoch)),
           const SizedBox(height: 8),
           if (dayMeals.isEmpty)
             EmptyState(
@@ -288,7 +289,8 @@ class _MacrosTabState extends State<MacrosTab> {
     );
   }
 
-  Widget _goalRow(BuildContext context, String label, double value, double goal, String unit) {
+  Widget _goalRow(BuildContext context, String label, double value, double goal,
+      String unit) {
     final scheme = Theme.of(context).colorScheme;
     final safeValue = _finiteValue(value);
     final fraction = goal <= 0 ? 0.0 : (safeValue / goal).clamp(0.0, 1.0);
@@ -296,7 +298,9 @@ class _MacrosTabState extends State<MacrosTab> {
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Expanded(child: Text(label, style: Theme.of(context).textTheme.titleSmall)),
+          Expanded(
+              child:
+                  Text(label, style: Theme.of(context).textTheme.titleSmall)),
           Text('${trimZero(safeValue)} / ${trimZero(goal)} $unit',
               style: Theme.of(context).textTheme.labelLarge),
         ]),
@@ -548,7 +552,8 @@ class _MacrosTabState extends State<MacrosTab> {
           ListTile(
             leading: const Icon(Icons.edit_note),
             title: const Text('Enter manually'),
-            subtitle: const Text('Type the macros yourself — no photo or AI needed'),
+            subtitle:
+                const Text('Type the macros yourself — no photo or AI needed'),
             onTap: () => Navigator.of(sheetContext).pop(_MealSource.manual),
           ),
         ]),
@@ -560,8 +565,8 @@ class _MacrosTabState extends State<MacrosTab> {
       // Pre-fill the day being viewed so a meal logged from a past date lands
       // on that date instead of silently vanishing into today.
       await Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => ManualMealScreen(
-              initialDate: _isToday ? null : _day)));
+          builder: (_) =>
+              ManualMealScreen(initialDate: _isToday ? null : _day)));
       return;
     }
 
@@ -600,8 +605,8 @@ class _MacrosTabState extends State<MacrosTab> {
       final dir = await getApplicationDocumentsDirectory();
       final mealsDir = Directory(p.join(dir.path, 'meals'));
       await mealsDir.create(recursive: true);
-      final file =
-          File(p.join(mealsDir.path, 'meal-${DateTime.now().millisecondsSinceEpoch}.jpg'));
+      final file = File(p.join(
+          mealsDir.path, 'meal-${DateTime.now().millisecondsSinceEpoch}.jpg'));
       await file.writeAsBytes(bytes);
 
       final draft = await analyzeMealPhoto(
@@ -611,9 +616,7 @@ class _MacrosTabState extends State<MacrosTab> {
       Navigator.of(context).pop();
       Navigator.of(context).push(MaterialPageRoute(
           builder: (_) => ReviewScreen(
-              draft: draft,
-              imagePath: file.path,
-              description: description)));
+              draft: draft, imagePath: file.path, description: description)));
     } catch (e) {
       if (!context.mounted) return;
       Navigator.of(context).pop();
@@ -639,7 +642,6 @@ const _weekdayLongNames = [
 
 String _weekdayShort(DateTime day) => _weekdayShortNames[day.weekday - 1];
 String _weekdayLong(DateTime day) => _weekdayLongNames[day.weekday - 1];
-
 
 class _AnalyzingSheet extends StatelessWidget {
   const _AnalyzingSheet();
@@ -779,7 +781,8 @@ class ReviewScreen extends StatefulWidget {
 }
 
 class _ReviewScreenState extends State<ReviewScreen> {
-  late final TextEditingController dish = TextEditingController(text: widget.draft.dish);
+  late final TextEditingController dish =
+      TextEditingController(text: widget.draft.dish);
   late final TextEditingController description =
       TextEditingController(text: widget.description);
   // Pre-filled with the stored value at display precision, not `.round()`:
@@ -884,7 +887,9 @@ class _ReviewScreenState extends State<ReviewScreen> {
           ],
           SectionHeader(_isEdit ? 'Edit the details' : 'Confirm before saving'),
           const SizedBox(height: 8),
-          TextField(controller: dish, decoration: const InputDecoration(labelText: 'Dish')),
+          TextField(
+              controller: dish,
+              decoration: const InputDecoration(labelText: 'Dish')),
           const SizedBox(height: 12),
           TextField(
             controller: description,
@@ -943,10 +948,8 @@ class _ReviewScreenState extends State<ReviewScreen> {
             const SizedBox(height: 12),
             Text(
               'Saving updates the meal you already logged — it does not create a second one.',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant),
               textAlign: TextAlign.center,
             ),
           ],
@@ -983,8 +986,7 @@ class MealPhoto extends StatefulWidget {
 class _MealPhotoState extends State<MealPhoto> {
   late bool _exists = _check();
 
-  bool _check() =>
-      widget.path.isNotEmpty && File(widget.path).existsSync();
+  bool _check() => widget.path.isNotEmpty && File(widget.path).existsSync();
 
   @override
   void didUpdateWidget(MealPhoto oldWidget) {

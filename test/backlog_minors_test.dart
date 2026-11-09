@@ -132,8 +132,7 @@ void main() {
       expect(health.lastError, isNotNull,
           reason: 'the UI must not claim a clean disconnect');
       expect(health.lastError, contains('did not revoke'));
-      expect(health.enabled, isFalse,
-          reason: 'local state still disconnects');
+      expect(health.enabled, isFalse, reason: 'local state still disconnects');
     });
 
     test('a revoke that succeeds on retry leaves lastError null', () async {
@@ -165,8 +164,7 @@ void main() {
     test('a valid exercise id still inserts', () async {
       final workoutId = await store.createWorkout('Push');
       await store.createExercise('Curl', 'Arms', 'Barbell');
-      final exerciseId =
-          store.exercises.firstWhere((e) => e.name == 'Curl').id;
+      final exerciseId = store.exercises.firstWhere((e) => e.name == 'Curl').id;
       final entryId = await store.addExerciseToWorkout(workoutId, exerciseId);
       expect(entryId, greaterThan(0));
     });
@@ -183,11 +181,23 @@ void main() {
         'carbs': 40.0,
         'fat': 10.0,
         'foods_json': jsonEncode([
-          {'name': 'Rice', 'grams': 150, 'calories': 200, 'protein': 4,
-            'carbs': 44, 'fat': 1},
+          {
+            'name': 'Rice',
+            'grams': 150,
+            'calories': 200,
+            'protein': 4,
+            'carbs': 44,
+            'fat': 1
+          },
           // `name` is not a String, so Food.fromJson throws for this entry.
-          {'name': 42, 'grams': 100, 'calories': 300, 'protein': 16,
-            'carbs': 0, 'fat': 9},
+          {
+            'name': 42,
+            'grams': 100,
+            'calories': 300,
+            'protein': 16,
+            'carbs': 0,
+            'fat': 9
+          },
         ]),
         'is_auto': 0,
       });
@@ -211,10 +221,22 @@ void main() {
         'carbs': 40.0,
         'fat': 10.0,
         'foods_json': jsonEncode([
-          {'name': 'Rice', 'grams': 150, 'calories': 200, 'protein': 4,
-            'carbs': 44, 'fat': 1},
-          {'name': 'Chicken', 'grams': 120, 'calories': 300, 'protein': 16,
-            'carbs': 0, 'fat': 9},
+          {
+            'name': 'Rice',
+            'grams': 150,
+            'calories': 200,
+            'protein': 4,
+            'carbs': 44,
+            'fat': 1
+          },
+          {
+            'name': 'Chicken',
+            'grams': 120,
+            'calories': 300,
+            'protein': 16,
+            'carbs': 0,
+            'fat': 9
+          },
         ]),
         'is_auto': 0,
       });

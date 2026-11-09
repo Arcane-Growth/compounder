@@ -85,8 +85,8 @@ void main() {
                 .copyWith(textScaler: const TextScaler.linear(2.0)),
             child: child!,
           ),
-          home: WorkoutScreen(
-              workoutId: workoutId, sounds: _FakeWorkoutSounds()),
+          home:
+              WorkoutScreen(workoutId: workoutId, sounds: _FakeWorkoutSounds()),
         ),
       ));
       await tester.runAsync(
@@ -96,7 +96,8 @@ void main() {
 
       expect(find.text('Back squat'), findsOneWidget);
       expect(tester.takeException(), isNull,
-          reason: 'the workout AppBar must not overflow at 320dp/textScale 2.0');
+          reason:
+              'the workout AppBar must not overflow at 320dp/textScale 2.0');
 
       final timer = find.textContaining('Elapsed');
       expect(timer, findsOneWidget,

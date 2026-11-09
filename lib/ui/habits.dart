@@ -157,8 +157,8 @@ class _HabitsScreenState extends State<HabitsScreen>
               case 'edit':
                 await _editHabit(context, store, habit);
               case 'archive':
-                await _runWrite(context,
-                    () => store.updateHabit(habit.id, archived: true));
+                await _runWrite(
+                    context, () => store.updateHabit(habit.id, archived: true));
               case 'delete':
                 await _deleteHabit(context, store, habit);
             }
@@ -216,8 +216,7 @@ Future<void> _runWrite(
     message = 'Could not save that change.';
   }
   if (message == null || !context.mounted) return;
-  ScaffoldMessenger.of(context)
-      .showSnackBar(SnackBar(content: Text(message)));
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
 }
 
 /// Add ([habit] null) or edit a habit. Validation lives here so the dialog can

@@ -13,25 +13,44 @@ class Attachment {
 
   const Attachment(this.name, this.bytes);
 
-  String get extension => name.contains('.') ? name.split('.').last.toLowerCase() : '';
+  String get extension =>
+      name.contains('.') ? name.split('.').last.toLowerCase() : '';
 
-  bool get isImage => const {'png', 'jpg', 'jpeg', 'webp', 'gif'}.contains(extension);
+  bool get isImage =>
+      const {'png', 'jpg', 'jpeg', 'webp', 'gif'}.contains(extension);
   bool get isPdf => extension == 'pdf';
-  bool get isText => const {'csv', 'txt', 'md', 'json', 'log', 'tsv'}
-      .contains(extension);
+  bool get isText =>
+      const {'csv', 'txt', 'md', 'json', 'log', 'tsv'}.contains(extension);
 
-  String get imageMime =>
-      extension == 'png' ? 'image/png' : extension == 'webp' ? 'image/webp' : extension == 'gif' ? 'image/gif' : 'image/jpeg';
+  String get imageMime => extension == 'png'
+      ? 'image/png'
+      : extension == 'webp'
+          ? 'image/webp'
+          : extension == 'gif'
+              ? 'image/gif'
+              : 'image/jpeg';
 
   static const supportedExtensions = [
-    'png', 'jpg', 'jpeg', 'webp', 'gif', 'csv', 'txt', 'md', 'json', 'log', 'tsv', 'pdf',
+    'png',
+    'jpg',
+    'jpeg',
+    'webp',
+    'gif',
+    'csv',
+    'txt',
+    'md',
+    'json',
+    'log',
+    'tsv',
+    'pdf',
   ];
 }
 
 /// Turns a user message plus attachments into a multimodal chat message:
 /// images and rendered PDF pages travel as data URLs, text-like files are
 /// inlined. Everything goes only to the user's configured endpoint.
-Future<ChatMessage> buildUserMessage(String text, List<Attachment> attachments) async {
+Future<ChatMessage> buildUserMessage(
+    String text, List<Attachment> attachments) async {
   final textBlocks = <String>[if (text.trim().isNotEmpty) text.trim()];
   final images = <String>[];
 
@@ -42,10 +61,12 @@ Future<ChatMessage> buildUserMessage(String text, List<Attachment> attachments) 
       try {
         final pages = await renderPdfPages(a.bytes);
         images.addAll(pages);
-        textBlocks.add('[The user attached PDF "${a.name}" — ${pages.length} page(s) '
+        textBlocks.add(
+            '[The user attached PDF "${a.name}" — ${pages.length} page(s) '
             'are included as images. Read them carefully before answering.]');
       } catch (e) {
-        textBlocks.add('[The user attached PDF "${a.name}" but it could not be read: $e]');
+        textBlocks.add(
+            '[The user attached PDF "${a.name}" but it could not be read: $e]');
       }
     } else if (a.isText) {
       const maxChars = 12000;

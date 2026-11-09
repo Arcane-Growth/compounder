@@ -172,7 +172,8 @@ class GatewayClient {
   }
 
   /// Server-side restore, used when the store has nothing to replay.
-  Future<GatewayEntitlement> restore({String? apiKey, String? deviceToken}) async {
+  Future<GatewayEntitlement> restore(
+      {String? apiKey, String? deviceToken}) async {
     final json = await _post('/api/mobile/restore', const {},
         apiKey: apiKey, deviceToken: deviceToken);
     return _entitlement(json);

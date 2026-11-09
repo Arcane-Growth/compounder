@@ -208,7 +208,8 @@ void main() {
       final paragraph =
           tester.renderObject<RenderParagraph>(find.text('Compounder'));
       expect(paragraph.didExceedMaxLines, isTrue,
-          reason: 'the label should be ellipsized at 2.0, not silently clipped');
+          reason:
+              'the label should be ellipsized at 2.0, not silently clipped');
     });
 
     // Font-independent: overflow/maxLines are widget properties, not metrics.
@@ -241,8 +242,8 @@ void main() {
 
       expect(tester.takeException(), isNull);
       // At 1.0 the whole word fits, so nothing is clipped.
-      final paragraph = tester.renderObject<RenderParagraph>(
-          find.text('Compounder'));
+      final paragraph =
+          tester.renderObject<RenderParagraph>(find.text('Compounder'));
       expect(paragraph.didExceedMaxLines, isFalse);
     });
 
@@ -443,7 +444,8 @@ void main() {
           reason: 'ShellNav must not notify dependents on every rebuild');
       expect(nav().selectTab == beforeSelect, isTrue,
           reason: 'the tab-switch callback must be stable too');
-      expect(nav().updateShouldNotify(ShellNav(
+      expect(
+          nav().updateShouldNotify(ShellNav(
             openDrawer: before,
             selectTab: beforeSelect,
             // The shell now also carries the active-tab visibility flag; a

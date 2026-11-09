@@ -45,7 +45,8 @@ void main() {
       expect(viaCalendar.hour, 0);
     });
 
-    test('previousDayKey returns a calendar day key, not a shifted instant', () {
+    test('previousDayKey returns a calendar day key, not a shifted instant',
+        () {
       // Production helper, exercised on the exact boundary dates. The input is
       // a TZDateTime, so it carries its own zone: this discriminates the
       // calendar implementation from Duration stepping in ANY ambient zone,

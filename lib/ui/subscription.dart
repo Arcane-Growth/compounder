@@ -101,8 +101,8 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                     'Compounder AI runs on our gateway, so the coach and meal '
                     'photo analysis work without your own API key. Requests '
                     'are sent only to the gateway.',
-                    style: t.bodyMedium
-                        ?.copyWith(color: scheme.onSurfaceVariant),
+                    style:
+                        t.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
                   ),
                 ),
               ),
@@ -112,7 +112,8 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
               Center(
                 child: Text(
                   'Prices are set by the store and may vary by region.',
-                  style: t.labelMedium?.copyWith(color: scheme.onSurfaceVariant),
+                  style:
+                      t.labelMedium?.copyWith(color: scheme.onSurfaceVariant),
                 ),
               ),
             ],
@@ -122,8 +123,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     );
   }
 
-  List<Widget> _body(
-      SubscriptionState state, ColorScheme scheme, TextTheme t) {
+  List<Widget> _body(SubscriptionState state, ColorScheme scheme, TextTheme t) {
     switch (state) {
       case SubscriptionLoading():
         return [
@@ -290,7 +290,8 @@ class _PurchasedCard extends StatelessWidget {
             Text('Renews: ${formatDate(end.millisecondsSinceEpoch)}',
                 style: t.bodyMedium),
           if (quota != null)
-            Text('Requests left today: ${quota.dailyRemaining} of ${quota.dailyLimit}',
+            Text(
+                'Requests left today: ${quota.dailyRemaining} of ${quota.dailyLimit}',
                 style: t.bodyMedium),
           const SizedBox(height: 12),
           Wrap(spacing: 8, runSpacing: 8, children: [

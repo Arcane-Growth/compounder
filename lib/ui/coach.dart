@@ -37,7 +37,8 @@ List<CoachMessage> messagesAfterTurn(
     ...messages,
     if (note != null && note.isNotEmpty)
       CoachMessage(ChatMessage.roleAssistant, note),
-    if (turn.reply != null) CoachMessage(ChatMessage.roleAssistant, turn.reply!),
+    if (turn.reply != null)
+      CoachMessage(ChatMessage.roleAssistant, turn.reply!),
   ];
 }
 
@@ -216,7 +217,8 @@ class _CoachTabState extends State<CoachTab> {
     });
     try {
       final client = widget.client ?? chatClientFor(store);
-      final turn = approve ? await agent.approve(client) : await agent.decline(client);
+      final turn =
+          approve ? await agent.approve(client) : await agent.decline(client);
       if (!mounted) return;
       _applyTurn(turn);
       notify.rescheduleDaily(store);
@@ -388,8 +390,8 @@ class _CoachTabState extends State<CoachTab> {
                         ? 'Compounder AI'
                         : 'Compounder AI · ${quota.dailyRemaining} of '
                             '${quota.dailyLimit} requests left today',
-                    style: t.labelMedium
-                        ?.copyWith(color: scheme.onSurfaceVariant),
+                    style:
+                        t.labelMedium?.copyWith(color: scheme.onSurfaceVariant),
                   ),
                 ),
               ]),
@@ -505,7 +507,9 @@ class CoachApprovalCard extends StatelessWidget {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('• ', style: t.bodyMedium?.copyWith(color: scheme.onSurface)),
+                      Text('• ',
+                          style:
+                              t.bodyMedium?.copyWith(color: scheme.onSurface)),
                       Expanded(
                         child: Text(summary,
                             style: t.bodyMedium
@@ -516,8 +520,7 @@ class CoachApprovalCard extends StatelessWidget {
                 ),
               const SizedBox(height: 4),
               Text('Nothing is saved until you approve.',
-                  style: t.bodySmall
-                      ?.copyWith(color: scheme.onSurfaceVariant)),
+                  style: t.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
               const SizedBox(height: 8),
               // The app theme sets filledButtonTheme.minimumSize to
               // Size.fromHeight(48), whose width is *infinite*. Inside a Row
@@ -537,8 +540,8 @@ class CoachApprovalCard extends StatelessWidget {
                     child: const Text('Cancel'),
                   ),
                   FilledButton(
-                    style: FilledButton.styleFrom(
-                        minimumSize: const Size(64, 48)),
+                    style:
+                        FilledButton.styleFrom(minimumSize: const Size(64, 48)),
                     onPressed: onApprove,
                     child: Text(many ? 'Approve all' : 'Approve'),
                   ),

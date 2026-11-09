@@ -123,7 +123,8 @@ class InAppPurchaseStoreGateway implements StoreGateway {
       throw StateError('Product ${product.id} was not loaded from the store');
     }
     // Subscriptions are non-consumable: they are acknowledged, never consumed.
-    await _iap.buyNonConsumable(purchaseParam: PurchaseParam(productDetails: details));
+    await _iap.buyNonConsumable(
+        purchaseParam: PurchaseParam(productDetails: details));
   }
 
   @override

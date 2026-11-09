@@ -167,7 +167,8 @@ void main() {
     if (storeOpen) await store.db.close();
   });
 
-  Future<void> pumpWorkout(WidgetTester tester, _FakeWorkoutSounds sounds) async {
+  Future<void> pumpWorkout(
+      WidgetTester tester, _FakeWorkoutSounds sounds) async {
     await tester.pumpWidget(ChangeNotifierProvider<AppStore>.value(
       value: store,
       child: MaterialApp(

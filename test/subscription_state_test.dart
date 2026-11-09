@@ -113,7 +113,8 @@ class FakeGateway extends GatewayClient {
   }
 
   @override
-  Future<GatewayEntitlement> restore({String? apiKey, String? deviceToken}) async {
+  Future<GatewayEntitlement> restore(
+      {String? apiKey, String? deviceToken}) async {
     if (restoreError != null) throw restoreError!;
     return restoreResult!;
   }
@@ -183,7 +184,8 @@ void main() {
     test('a verified but inactive entitlement stays pending', () {
       final state = reduceSubscriptionState(
           const SubscriptionPending('compounder_ai_monthly'),
-          PurchaseVerified(const Entitlement(status: EntitlementStatus.pending)),
+          PurchaseVerified(
+              const Entitlement(status: EntitlementStatus.pending)),
           now: now);
       expect(state, isA<SubscriptionPending>());
     });
@@ -239,8 +241,8 @@ void main() {
           reason: 'the gateway treats a free entitlement as entitled');
       expect(parseEntitlementStatus('pending'), EntitlementStatus.pending);
       expect(parseEntitlementStatus('expired'), EntitlementStatus.none);
-      expect(parseEntitlementStatus('something-new'),
-          EntitlementStatus.unknown);
+      expect(
+          parseEntitlementStatus('something-new'), EntitlementStatus.unknown);
       expect(parseEntitlementStatus(null), EntitlementStatus.unknown);
     });
 
@@ -270,8 +272,7 @@ void main() {
       );
       expect(ended.isActiveAt(now), isFalse);
       final state = reduceSubscriptionState(
-          const SubscriptionAvailable([_monthly]),
-          EntitlementRefreshed(ended),
+          const SubscriptionAvailable([_monthly]), EntitlementRefreshed(ended),
           now: now);
       expect(state, isA<SubscriptionAvailable>());
     });
@@ -363,8 +364,8 @@ void main() {
           now: now);
       expect(refreshed, isA<SubscriptionAvailable>(),
           reason: 'once the grace window closes the user must see the plans');
-      expect((refreshed as SubscriptionAvailable).products.single.id,
-          _monthly.id);
+      expect(
+          (refreshed as SubscriptionAvailable).products.single.id, _monthly.id);
 
       // A purchase verified after the grace window closed must not claim
       // access either: it stays pending rather than purchased.
@@ -373,7 +374,8 @@ void main() {
           PurchaseVerified(expired),
           now: now);
       expect(verified, isA<SubscriptionPending>(),
-          reason: 'a verified-but-inactive entitlement must not look purchased');
+          reason:
+              'a verified-but-inactive entitlement must not look purchased');
     });
 
     test('a non-past-due entitlement omits grace_ends_at from the cache', () {
@@ -449,8 +451,8 @@ void main() {
     });
 
     test('a purchase is verified, keyed, cached and acknowledged', () async {
-      gateway.verifyResult = GatewayEntitlement(
-          apiKey: 'gw-key-123', entitlement: _active());
+      gateway.verifyResult =
+          GatewayEntitlement(apiKey: 'gw-key-123', entitlement: _active());
       storeGateway.purchaseEvent = const PurchaseEvent(
         outcome: PurchaseOutcome.purchased,
         productId: 'compounder_ai_monthly',
@@ -490,8 +492,8 @@ void main() {
     });
 
     test('restore replays a store purchase', () async {
-      gateway.verifyResult = GatewayEntitlement(
-          apiKey: 'gw-key-123', entitlement: _active());
+      gateway.verifyResult =
+          GatewayEntitlement(apiKey: 'gw-key-123', entitlement: _active());
       storeGateway.restoreEvent = const PurchaseEvent(
         outcome: PurchaseOutcome.restored,
         productId: 'compounder_ai_monthly',
@@ -505,7 +507,8 @@ void main() {
       expect(store.gatewayApiKey, 'gw-key-123');
     });
 
-    test('restore falls back to the gateway when the store is silent', () async {
+    test('restore falls back to the gateway when the store is silent',
+        () async {
       gateway.restoreResult =
           GatewayEntitlement(apiKey: 'gw-key-456', entitlement: _active());
       await service.restore();
@@ -528,8 +531,8 @@ void main() {
     });
 
     test('an offline entitlement refresh keeps the cached plan', () async {
-      gateway.verifyResult = GatewayEntitlement(
-          apiKey: 'gw-key-123', entitlement: _active());
+      gateway.verifyResult =
+          GatewayEntitlement(apiKey: 'gw-key-123', entitlement: _active());
       storeGateway.purchaseEvent = const PurchaseEvent(
         outcome: PurchaseOutcome.purchased,
         productId: 'compounder_ai_monthly',
@@ -572,8 +575,8 @@ void main() {
 
     test('an expired grace window drops the coach back to the own endpoint',
         () async {
-      gateway.verifyResult = GatewayEntitlement(
-          apiKey: 'gw-key-123', entitlement: _active());
+      gateway.verifyResult =
+          GatewayEntitlement(apiKey: 'gw-key-123', entitlement: _active());
       storeGateway.purchaseEvent = const PurchaseEvent(
         outcome: PurchaseOutcome.purchased,
         productId: 'compounder_ai_monthly',
@@ -600,8 +603,8 @@ void main() {
     });
 
     test('an unknown gateway status does not switch the source', () async {
-      gateway.verifyResult = GatewayEntitlement(
-          apiKey: 'gw-key-123', entitlement: _active());
+      gateway.verifyResult =
+          GatewayEntitlement(apiKey: 'gw-key-123', entitlement: _active());
       storeGateway.purchaseEvent = const PurchaseEvent(
         outcome: PurchaseOutcome.purchased,
         productId: 'compounder_ai_monthly',

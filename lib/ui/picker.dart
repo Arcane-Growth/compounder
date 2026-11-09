@@ -6,11 +6,28 @@ import '../data/store.dart';
 import 'widgets.dart';
 
 const muscleGroups = [
-  'Chest', 'Back', 'Shoulders', 'Quads', 'Hamstrings', 'Glutes',
-  'Calves', 'Biceps', 'Triceps', 'Forearms', 'Core', 'Full Body', 'Other',
+  'Chest',
+  'Back',
+  'Shoulders',
+  'Quads',
+  'Hamstrings',
+  'Glutes',
+  'Calves',
+  'Biceps',
+  'Triceps',
+  'Forearms',
+  'Core',
+  'Full Body',
+  'Other',
 ];
 
-const equipmentTypes = ['BARBELL', 'DUMBBELL', 'MACHINE', 'BODYWEIGHT', 'OTHER'];
+const equipmentTypes = [
+  'BARBELL',
+  'DUMBBELL',
+  'MACHINE',
+  'BODYWEIGHT',
+  'OTHER'
+];
 
 class ExercisePickerScreen extends StatefulWidget {
   /// AppBar title. The workout screen adds an exercise ("Add exercise"); the
@@ -81,7 +98,8 @@ class _ExercisePickerScreenState extends State<ExercisePickerScreen> {
                 if (results.isEmpty)
                   const EmptyState(
                     title: 'Nothing found',
-                    subtitle: 'Try another name, or create a custom exercise with the + button.',
+                    subtitle:
+                        'Try another name, or create a custom exercise with the + button.',
                   ),
               ],
             ),
@@ -116,19 +134,28 @@ class _ExercisePickerScreenState extends State<ExercisePickerScreen> {
             DropdownButtonFormField<String>(
               initialValue: muscle,
               decoration: const InputDecoration(labelText: 'Muscle group'),
-              items: [for (final m in muscleGroups) DropdownMenuItem(value: m, child: Text(m))],
+              items: [
+                for (final m in muscleGroups)
+                  DropdownMenuItem(value: m, child: Text(m))
+              ],
               onChanged: (v) => setDialogState(() => muscle = v ?? muscle),
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               initialValue: equipment,
               decoration: const InputDecoration(labelText: 'Equipment'),
-              items: [for (final m in equipmentTypes) DropdownMenuItem(value: m, child: Text(m))],
-              onChanged: (v) => setDialogState(() => equipment = v ?? equipment),
+              items: [
+                for (final m in equipmentTypes)
+                  DropdownMenuItem(value: m, child: Text(m))
+              ],
+              onChanged: (v) =>
+                  setDialogState(() => equipment = v ?? equipment),
             ),
           ]),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel')),
             FilledButton(
               onPressed: () async {
                 if (name.text.trim().isEmpty) return;

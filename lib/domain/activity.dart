@@ -154,9 +154,7 @@ int longestStreak(Map<String, PillarDay> days) {
 int perfectDaysInMonth(Map<String, PillarDay> days, int year, int month) {
   final prefix = '${year.toString().padLeft(4, '0')}-'
       '${month.toString().padLeft(2, '0')}-';
-  return days.values
-      .where((d) => d.day.startsWith(prefix) && d.perfect)
-      .length;
+  return days.values.where((d) => d.day.startsWith(prefix) && d.perfect).length;
 }
 
 /// The pillars logged on [day], as a stable list of bit values.

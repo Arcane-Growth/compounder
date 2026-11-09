@@ -238,7 +238,8 @@ class _HealthDataScreenState extends State<HealthDataScreen> {
               const Text('No sleep data in this range.')
             else
               Wrap(spacing: 16, runSpacing: 8, children: [
-                _stat('Last night', '${_count(last['asleepMinutes'] as num?)} min'),
+                _stat('Last night',
+                    '${_count(last['asleepMinutes'] as num?)} min'),
                 _stat('Bedtime', '${last['bedtime'] ?? '—'}'),
                 _stat('Wake', '${last['wake'] ?? '—'}'),
                 _stat('Efficiency',
@@ -301,7 +302,8 @@ class _HealthDataScreenState extends State<HealthDataScreen> {
                   restingLatest == null
                       ? '—'
                       : '${_count(restingLatest['value'] as num?)} bpm'),
-              _stat('Latest HR', heart.isEmpty ? '—' : '${_count(heart.last.avg)} bpm'),
+              _stat('Latest HR',
+                  heart.isEmpty ? '—' : '${_count(heart.last.avg)} bpm'),
               _stat(
                   'HR range',
                   heart.isEmpty
@@ -358,9 +360,11 @@ class _HealthDataScreenState extends State<HealthDataScreen> {
             const SizedBox(height: 8),
             Wrap(spacing: 16, runSpacing: 8, children: [
               _stat('Steps', _count(activity?['stepsTotal'] as num?)),
-              _stat('Distance', '${_count(activity?['distanceMeters'] as num?)} m'),
+              _stat('Distance',
+                  '${_count(activity?['distanceMeters'] as num?)} m'),
               _stat('Active kcal', _count(activity?['activeCalories'] as num?)),
-              _stat('Workouts', _count((activity?['workoutCount'] as num?) ?? 0)),
+              _stat(
+                  'Workouts', _count((activity?['workoutCount'] as num?) ?? 0)),
             ]),
             const SizedBox(height: 16),
             if (steps.isNotEmpty)
@@ -551,8 +555,10 @@ class HealthSummaryCard extends StatelessWidget {
             leading: Icon(Icons.health_and_safety, color: scheme.primary),
             title: Text('Fitness today', style: t.titleMedium),
             subtitle: Text([
-              if (last != null) 'Sleep ${_count(last['asleepMinutes'] as num?)} min',
-              if (resting != null) 'Resting HR ${_count(resting['value'] as num?)} bpm',
+              if (last != null)
+                'Sleep ${_count(last['asleepMinutes'] as num?)} min',
+              if (resting != null)
+                'Resting HR ${_count(resting['value'] as num?)} bpm',
               if (steps is Map) 'Steps ${_count(steps['value'] as num?)}',
               if (last == null && resting == null && steps == null) 'Syncing…',
             ].join(' · ')),

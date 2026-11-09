@@ -42,7 +42,8 @@ void main() {
   });
 
   group('quota rejection', () {
-    test('a 429 is recognised as a quota rejection, other statuses are not', () {
+    test('a 429 is recognised as a quota rejection, other statuses are not',
+        () {
       expect(_quotaError().quotaExceeded, isTrue);
       expect(const ChatHttpException(500).quotaExceeded, isFalse);
       expect(const ChatHttpException(401).quotaExceeded, isFalse);
@@ -84,8 +85,8 @@ void main() {
     });
 
     test('a rejected gateway key tells the user to restore the purchase', () {
-      final message = friendlyAiError(
-          const ChatHttpException(401), AiSource.compounder);
+      final message =
+          friendlyAiError(const ChatHttpException(401), AiSource.compounder);
       expect(message, contains('Restore your purchase'));
     });
 
@@ -118,7 +119,8 @@ void main() {
       expect(aiConfigured(store), isTrue);
     });
 
-    test('a paid source without a key is not configured and says why', () async {
+    test('a paid source without a key is not configured and says why',
+        () async {
       await store.setAiSource(AiSource.compounder);
       expect(aiConfigured(store), isFalse);
       expect(aiNotConfiguredMessage(store.aiSource),
