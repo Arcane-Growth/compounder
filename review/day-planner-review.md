@@ -170,3 +170,84 @@ in a single-user app (the id tie-break keeps the order deterministic), but worth
 
 - Real-device rendering (no adb transport; Pixel 10 CE-locked / off Wi-Fi).
 - iOS build (no hardware).
+
+---
+
+# Round 2 — fix batch `06bb2d5`
+
+- Reviewed commit: `06bb2d5` (fix(planner): stale-day load guard, DST test, sheet scroll test, dead-code cleanup)
+- Base: `5fc702d`; prior gate `1c883e0`
+- Pinned worktree: `/home/barry/.cache/review-wt/planner-r2` (detached at `06bb2d5`), clean before and after
+- Date: 2026-11-09
+
+## Verdict: APPROVE WITH FIXES
+
+MAJOR-1 is genuinely fixed and the guard is non-vacuous. MINOR-1, MINOR-2, MINOR-3 and MINOR-5
+are closed with non-vacuous guards. **MINOR-6 is not closed** despite the commit message claiming
+"drawer/home: Day planner route + tile tests" — no such tests were added. One new Minor
+(MINOR-7) was introduced by the NIT-3 timer gate. No Blocker, no data-loss path.
+
+## Round-2 findings
+
+### MINOR-6 (still open) — Drawer "Day planner" and Home "Day plan" tile are still untested
+`06bb2d5` touched only `test/activity_heatmap_test.dart`, `test/backlog_minors_test.dart`,
+`test/plan_test.dart` and `test/planner_test.dart`. `test/drawer_a11y_test.dart` was last changed
+at `5fc702d` (a comment only) and has no tap on `Day planner`:
+
+```
+$ grep -n "tap(" test/drawer_a11y_test.dart   # taps: menu, Mind, Settings, Habits, Activity, Fitness
+$ grep -rn "tap(find.text('Day plan'))" test/   # no match
+```
+
+`lib/ui/drawer.dart:187` (`Day planner` → `_openPlanner`) and `lib/ui/home.dart:383`
+(`case pillarPlan: _openPlanner(context)`) remain unexercised. The Home test at
+`test/activity_heatmap_test.dart:543` only asserts the `Day plan` label exists; it taps
+`Nutrition` and the plan card, never the tile. Fix: add a drawer test mirroring the Habits one
+(`expect(find.byType(PlannerScreen, skipOffstage: false), findsOneWidget)`) and a Home test that
+taps `Day plan` and expects `PlannerScreen`. The commit message should not claim tests it did not add.
+
+### MINOR-7 (new) — Midnight rollover leaves a stale "Now" marker on yesterday's plan
+`lib/ui/planner.dart:63-67` gates the minute tick on `planDayKey(_day) == planDayKey(_now())`.
+When the screen is open on today across midnight, the 00:00 tick now returns early, so the last
+frame keeps `isToday == true` and paints a stale `Now 23:59` marker on yesterday's date. Probe
+(planner open on 2026-11-09 23:59, clock advanced to 2026-11-10 00:01, one tick):
+
+```
+fixed code:   before midnight: Now marker=1   after midnight: Now marker=1
+pre-fix code: before midnight: Now marker=1   after midnight: Now marker=0
+```
+
+Pre-fix the marker was dropped at midnight; the NIT-3 gate regressed that. Suggested minimal fix:
+rebuild once when the day rolls over, e.g. track `bool _showedToday` and `setState` when
+`planDayKey(_day) == planDayKey(now)` flips to false, then skip subsequent ticks.
+
+## Round-2 closures verified (revert → quoted failure)
+
+| Item | Status | Revert proof |
+|---|---|---|
+| MAJOR-1 generation guard | CLOSED | removed `++_generation` + both `generation != _generation` checks → `Expected: exactly one matching candidate / Actual: Found 0 widgets with text "Block for day 11"` |
+| MINOR-1 DST test crosses boundary | CLOSED | probe: first `2026-11-01 01:30 -0400` epoch `1793511000000`, second `2026-11-01 01:30 -0500` epoch `1793514600000`, distinct; both `planDayKey` = `2026-11-01`. Reverting to the old constructor → `Expected: Duration:<-5:00:00.000000> / Actual: Duration:<-4:00:00.000000>` |
+| MINOR-2 sheet scroll test | CLOSED | removed `SingleChildScrollView` in `_DayDetailSheet` → `Expected: null / Actual: FlutterError:<A RenderFlex overflowed by 404 pixels on the bottom.>` |
+| MINOR-3 dead code | CLOSED | `hasPlanForDay` has zero refs in `lib/`+`test/`; `dayHasPlan` wired at `lib/ui/home.dart:527` and covered — forcing `dayHasPlan` to `false` → `Found 0 widgets with text "Next: Deep work"` |
+| MINOR-5 import copy guard | CLOSED | dropped `day plans` from `importConfirmText` → `Expected: contains 'day plans' / Actual: 'Importing replaces all workouts, meals, accounts, net-worth history, reminders and mind data on this device.'` |
+| MINOR-6 drawer/home tile tests | **OPEN** | see above |
+
+NIT-1 (`_save` generic catch), NIT-2 (`MergeSemantics` + block-title label), NIT-3 (timer gate,
+see MINOR-7), NIT-4 (position comment) are all addressed. NIT-2 has no semantics assertion in
+`test/planner_test.dart`; acceptable for a nit.
+
+## Round-2 gates run in the pinned worktree
+
+- `flutter analyze` → `No issues found! (ran in 1.9s)`
+- `TMPDIR=/home/barry/.cache/flutter-tmp flutter test` → `+507: All tests passed!` (505 at `5fc702d`; +2 = stale-day guard + sheet scroll)
+- `JAVA_HOME=/home/barry/Android/jdk21 flutter build apk --debug` → `✓ Built build/app/outputs/flutter-apk/app-debug.apk` (27.5s)
+- Stale-day race: the new test drives two rapid day shifts with a 400 ms day-10 query and a 20 ms
+  day-11 query; header `Wed, Nov 11, 2026` and `Block for day 11` agree, `Block for day 10` absent.
+  Without the guard the day-10 result lands last and the day-11 block disappears (quoted above).
+
+## Round-2 not verified
+
+- Real-device rendering (no adb transport).
+- iOS build (no hardware).
+- Coach still has no plan tool (`lib/coach/agent.dart` tool list); prose now names planning as a
+  pillar, so the coach claims a pillar it cannot read. Already queued as backlog (coach planner tool).
