@@ -220,9 +220,20 @@ class _CoachTabState extends State<CoachTab> {
     _scrollToBottom();
   }
 
+  /// Reveals the newest turn. The approval card is tall and is added in the
+  /// same frame as this call, so the list's scroll extent can still be growing
+  /// when the first jump lands (and a keyboard inset change moves the fold).
+  /// Re-anchor once the layout has settled, otherwise the card's action row is
+  /// left partly below the fold.
   void _scrollToBottom() {
+    void jump() {
+      if (!mounted || !scroll.hasClients) return;
+      scroll.jumpTo(scroll.position.maxScrollExtent);
+    }
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (scroll.hasClients) scroll.jumpTo(scroll.position.maxScrollExtent);
+      jump();
+      WidgetsBinding.instance.addPostFrameCallback((_) => jump());
     });
   }
 
@@ -496,15 +507,26 @@ class CoachApprovalCard extends StatelessWidget {
                   style: t.bodySmall
                       ?.copyWith(color: scheme.onSurfaceVariant)),
               const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+              // The app theme sets filledButtonTheme.minimumSize to
+              // Size.fromHeight(48), whose width is *infinite*. Inside a Row
+              // (unbounded main axis) that forces the button to an infinite
+              // width: the row overflowed and, in a release build, the Approve
+              // button was clipped off the right edge of the screen — only
+              // Cancel stayed visible. Give the button a finite minimum and let
+              // the pair wrap onto separate lines when the card is narrow or
+              // the text is scaled up, so both actions are always reachable.
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 8,
+                runSpacing: 8,
                 children: [
                   TextButton(
                     onPressed: onCancel,
                     child: const Text('Cancel'),
                   ),
-                  const SizedBox(width: 8),
                   FilledButton(
+                    style: FilledButton.styleFrom(
+                        minimumSize: const Size(64, 48)),
                     onPressed: onApprove,
                     child: Text(many ? 'Approve all' : 'Approve'),
                   ),
