@@ -105,6 +105,10 @@ class _CoachTabState extends State<CoachTab> {
           DeleteHabitTool(store),
           LogHabitCompletionTool(store),
           HabitStatusTool(store),
+          GetPlanTool(store),
+          CreatePlanBlockTool(store),
+          UpdatePlanBlockTool(store),
+          DeletePlanBlockTool(store),
         ],
         onToolRun: (name) => setState(() => activeTool = name),
       );

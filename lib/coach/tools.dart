@@ -5,6 +5,7 @@ import '../services/notify.dart';
 import '../data/store.dart';
 import '../domain/domain.dart';
 import '../domain/habits.dart';
+import '../domain/plan.dart';
 import '../llm/llm.dart';
 import 'agent.dart';
 
@@ -1131,3 +1132,287 @@ class HabitStatusTool extends CoachTool {
   }
 }
 
+// ---------------------------------------------------------------- planner
+
+/// Parses a coach-supplied local time into minutes from midnight.
+///
+/// Accepts `HH:MM` / `H:MM` (24-hour) and a bare integer minute offset. Returns
+/// null for anything else, including values outside the day, so the tool
+/// answers with a JSON error instead of writing a block the planner would
+/// reject.
+int? _parsePlanTime(Object? raw) {
+  if (raw is num) {
+    final minutes = raw.toInt();
+    if (minutes != raw) return null;
+    return minutes >= 0 && minutes <= minutesPerDay ? minutes : null;
+  }
+  if (raw is! String) return null;
+  final match = RegExp(r'^(\d{1,2}):(\d{2})$').firstMatch(raw.trim());
+  if (match == null) return null;
+  final hour = int.parse(match.group(1)!);
+  final minute = int.parse(match.group(2)!);
+  if (hour > 24 || minute > 59) return null;
+  final minutes = hour * 60 + minute;
+  return minutes <= minutesPerDay ? minutes : null;
+}
+
+/// Renders a coach-supplied time for an approval summary without throwing.
+String _timeWord(Object? raw) {
+  final minutes = _parsePlanTime(raw);
+  return minutes == null ? '?' : formatPlanTime(minutes);
+}
+
+Map<String, Object?> _planBlockJson(PlanBlock block) => {
+      'id': block.id,
+      'title': block.title,
+      'start': formatPlanTime(block.startMin),
+      'end': formatPlanTime(block.endMin),
+      'durationMinutes': block.durationMinutes,
+      'done': block.done,
+    };
+
+/// Reads one day's plan. The coach needs this to answer "what's on my plate
+/// today" and to find block ids before moving or deleting one.
+class GetPlanTool extends CoachTool {
+  final AppStore store;
+
+  /// Injectable clock, like [dateRange]'s `now`: the current/next block
+  /// reporting must be testable without depending on the wall clock.
+  final DateTime Function()? now;
+
+  GetPlanTool(this.store, {this.now});
+
+  @override
+  ToolSpec get spec => const ToolSpec(
+          'get_plan',
+          'The timed blocks planned for a local date YYYY-MM-DD (defaults to '
+              'today): id, title, start/end HH:MM, duration and done flag, in '
+              'chronological order. For today it also reports the block happening '
+              'now and the next block.',
+          {
+            'type': 'object',
+            'properties': {
+              'date': {'type': 'string', 'description': 'YYYY-MM-DD'},
+            },
+          });
+
+  @override
+  Future<String> run(Map<String, Object?> args) async {
+    var day = DateTime.now();
+    if (args['date'] != null) {
+      final parsed = parseHabitDay(args['date']);
+      if (parsed == null) return _jsonError('date must be YYYY-MM-DD');
+      day = parsed;
+    }
+    final blocks = await store.planBlocksForDay(day);
+    final clock = now?.call() ?? DateTime.now();
+    final isToday = planDayKey(day) == planDayKey(clock);
+    final current = isToday ? currentBlock(blocks, clock) : null;
+    final next = isToday ? nextBlock(blocks, clock) : null;
+    return jsonEncode({
+      'date': planDayKey(day),
+      'blockCount': blocks.length,
+      'doneCount': blocks.where((b) => b.done).length,
+      'blocks': [for (final b in blocks) _planBlockJson(b)],
+      if (current != null) 'current': _planBlockJson(current),
+      if (next != null) 'next': _planBlockJson(next),
+    });
+  }
+}
+
+class CreatePlanBlockTool extends CoachTool {
+  final AppStore store;
+
+  CreatePlanBlockTool(this.store);
+
+  @override
+  ToolSpec get spec => const ToolSpec(
+          'create_plan_block',
+          'Add a timed block to a day plan. date is YYYY-MM-DD (defaults to '
+              'today); start and end are local times HH:MM (24-hour). Returns the '
+              'new block id.',
+          {
+            'type': 'object',
+            'properties': {
+              'date': {'type': 'string', 'description': 'YYYY-MM-DD'},
+              'title': {'type': 'string'},
+              'start': {'type': 'string', 'description': 'HH:MM'},
+              'end': {'type': 'string', 'description': 'HH:MM'},
+            },
+            'required': ['title', 'start', 'end'],
+          });
+
+  @override
+  bool get isWrite => true;
+
+  @override
+  String summarize(Map<String, Object?> args) {
+    final title = _safeText(args, 'title');
+    final date = parseHabitDay(args['date']);
+    return 'Add a plan block: "${title.isEmpty ? 'block' : title}" '
+        '${_timeWord(args['start'])}–${_timeWord(args['end'])}'
+        '${date == null ? '' : ' on ${planDayKey(date)}'}';
+  }
+
+  @override
+  Future<String> run(Map<String, Object?> args) async {
+    final title = _safeText(args, 'title');
+    if (title.isEmpty) return _jsonError('title is required');
+    final start = _parsePlanTime(args['start']);
+    if (start == null) return _jsonError('start must be HH:MM');
+    final end = _parsePlanTime(args['end']);
+    if (end == null) return _jsonError('end must be HH:MM');
+    var day = DateTime.now();
+    if (args['date'] != null) {
+      final parsed = parseHabitDay(args['date']);
+      if (parsed == null) return _jsonError('date must be YYYY-MM-DD');
+      day = parsed;
+    }
+    try {
+      final id = await store.createPlanBlock(
+          day: day, title: title, startMin: start, endMin: end);
+      final created = await store.planBlockById(id);
+      return jsonEncode({
+        'ok': true,
+        'id': id,
+        'date': planDayKey(day),
+        if (created != null) ..._planBlockJson(created),
+      });
+    } on StoreException catch (e) {
+      return _jsonError(e.message);
+    }
+  }
+}
+
+class UpdatePlanBlockTool extends CoachTool {
+  final AppStore store;
+
+  UpdatePlanBlockTool(this.store);
+
+  @override
+  ToolSpec get spec => const ToolSpec(
+          'update_plan_block',
+          'Update a plan block by id. Only the fields you pass change: title, '
+              'start/end (local HH:MM, 24-hour) to move it, or done (true to check '
+              'it off, false to clear). Use get_plan to find block ids.',
+          {
+            'type': 'object',
+            'properties': {
+              'id': {'type': 'integer'},
+              'title': {'type': 'string'},
+              'start': {'type': 'string', 'description': 'HH:MM'},
+              'end': {'type': 'string', 'description': 'HH:MM'},
+              'done': {'type': 'boolean'},
+            },
+            'required': ['id'],
+          });
+
+  @override
+  bool get isWrite => true;
+
+  @override
+  String summarize(Map<String, Object?> args) {
+    final id = _int(args, 'id');
+    final changes = <String>[
+      if (args['title'] != null) 'title "${_safeText(args, 'title')}"',
+      if (args['start'] != null) 'start ${_timeWord(args['start'])}',
+      if (args['end'] != null) 'end ${_timeWord(args['end'])}',
+      if (args['done'] == true)
+        'mark done'
+      else if (args['done'] == false)
+        'clear done',
+    ];
+    return 'Update plan block ${id == null ? '?' : '#$id'}'
+        '${changes.isEmpty ? '' : ': ${changes.join(', ')}'}';
+  }
+
+  @override
+  Future<String> run(Map<String, Object?> args) async {
+    final id = _int(args, 'id');
+    if (id == null) return _jsonError('id is required');
+    final block = await store.planBlockById(id);
+    if (block == null) return _jsonError('no plan block with id $id');
+
+    String? title;
+    if (args['title'] != null) {
+      title = _safeText(args, 'title');
+      if (title.isEmpty) return _jsonError('title cannot be empty');
+    }
+    int? start;
+    if (args['start'] != null) {
+      start = _parsePlanTime(args['start']);
+      if (start == null) return _jsonError('start must be HH:MM');
+    }
+    int? end;
+    if (args['end'] != null) {
+      end = _parsePlanTime(args['end']);
+      if (end == null) return _jsonError('end must be HH:MM');
+    }
+    bool? done;
+    if (args['done'] != null) {
+      final raw = args['done'];
+      if (raw is! bool) return _jsonError('done must be true or false');
+      done = raw;
+    }
+    if (title == null && start == null && end == null && done == null) {
+      return _jsonError('provide at least one of title, start, end or done');
+    }
+    // Validate the merged row before writing anything, so a move that would
+    // invert the block is rejected without a partial write.
+    final error = planBlockError(
+        title: title ?? block.title,
+        startMin: start ?? block.startMin,
+        endMin: end ?? block.endMin);
+    if (error != null) return _jsonError(error);
+    try {
+      if (title != null || start != null || end != null) {
+        await store.updatePlanBlock(id,
+            title: title, startMin: start, endMin: end);
+      }
+      if (done != null) await store.setPlanBlockDone(id, done);
+    } on StoreException catch (e) {
+      return _jsonError(e.message);
+    }
+    final updated = await store.planBlockById(id);
+    return jsonEncode({
+      'ok': true,
+      'id': id,
+      if (updated != null) ..._planBlockJson(updated),
+    });
+  }
+}
+
+class DeletePlanBlockTool extends CoachTool {
+  final AppStore store;
+
+  DeletePlanBlockTool(this.store);
+
+  @override
+  ToolSpec get spec => const ToolSpec('delete_plan_block',
+          'Delete a plan block by id. Use get_plan to find block ids.', {
+        'type': 'object',
+        'properties': {
+          'id': {'type': 'integer'},
+        },
+        'required': ['id'],
+      });
+
+  @override
+  bool get isWrite => true;
+
+  @override
+  String summarize(Map<String, Object?> args) {
+    final id = _int(args, 'id');
+    return 'Delete plan block ${id == null ? '?' : '#$id'}';
+  }
+
+  @override
+  Future<String> run(Map<String, Object?> args) async {
+    final id = _int(args, 'id');
+    if (id == null) return _jsonError('id is required');
+    final block = await store.planBlockById(id);
+    if (block == null) return _jsonError('no plan block with id $id');
+    await store.deletePlanBlock(id);
+    return jsonEncode({'ok': true, 'deleted': id, 'title': block.title});
+  }
+}

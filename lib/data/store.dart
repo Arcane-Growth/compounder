@@ -1407,6 +1407,17 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
     return rows.map(PlanBlock.fromMap).toList();
   }
 
+  /// The block with [id], or null when it was deleted.
+  ///
+  /// The coach's update/delete tools need the stored row to validate a partial
+  /// edit against the merged values; the planner screen always has the block it
+  /// is editing, so this exists for the tool surface.
+  Future<PlanBlock?> planBlockById(int id) async {
+    final rows = await db
+        .query('plan_blocks', where: 'id = ?', whereArgs: [id], limit: 1);
+    return rows.isEmpty ? null : PlanBlock.fromMap(rows.single);
+  }
+
   /// Creates a block on [day]'s plan. Throws [StoreException] when the title is
   /// blank or too long, or the times are out of range or not increasing, so the
   /// planner dialog and any future coach tool share one validation boundary.
