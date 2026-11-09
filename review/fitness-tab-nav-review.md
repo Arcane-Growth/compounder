@@ -140,3 +140,91 @@ would remove the drift risk.
   rotation was not exercised.
 - Minor 1 only manifests after a transient DB failure; the normal open path is
   correct.
+
+---
+
+# Round 2 — re-review at `d4dd638` (2026-11-09)
+
+**Verdict: APPROVE** — all three Minor items are closed with non-vacuous guards,
+no new Minor-or-worse findings. One Nit on the new overflow test's width
+assertion (opinion, not a defect).
+
+- Reviewed commit: `d4dd638` ("Close fitness-nav gate minors: re-pin heatmap
+  after retry, pin bottom-bar order, 320dp bar overflow test"), parent
+  `a2d6c14` (round-1 verdict commit); code parent `7debe8b`.
+- Pinned worktree: `/home/barry/.cache/review-wt/fitness-nav-gate2` (detached at
+  `d4dd638`), `TMPDIR=/home/barry/.cache/flutter-tmp`. Shared checkout
+  untouched.
+- Device verification still not re-run here (phone in use); the dev's device
+  evidence stands.
+
+## Minor 1 — closed: heatmap re-pins after a failed load + retry
+
+`lib/ui/heatmap.dart:444` adds `_pinnedPosition`; `:531-538` resets
+`_pinnedToNewest` when the controller's attached `ScrollPosition` identity
+changes. Correct: a rebuilt `Scrollable` gets a new `ScrollPosition`, so the
+retry path re-pins instead of trusting a flag that describes a destroyed
+position. The identity check is sound — `ScrollPosition` does not override `==`,
+and a detached position is disposed, so the object cannot be reused.
+
+Test `test/activity_heatmap_test.dart:803-838` drives fail → error branch →
+"Try again" → asserts the today cell is inside the grid viewport.
+
+**Non-vacuity (revert, quote the failure):** removed the new block from
+`_onGridMetrics` → `Expected: a value less than or equal to <760.0> / Actual:
+<975.5>` (today cell off the grid viewport = oldest week). Restored → green.
+5/5 repeat runs green, so the guard is not flaky.
+
+## Minor 2 — closed: bottom-bar order pinned
+
+`test/fitness_nav_test.dart:165-193` pins the exact label sequence and then taps
+each destination asserting the resulting `IndexedStack.index`.
+
+**Non-vacuity:** swapped `Macros`/`Wealth` in `ShellBottomBar.destinations` →
+`Expected: ['Home', 'Fitness', 'Macros', 'Wealth', 'Coach'] / Actual: ['Home',
+'Fitness', 'Wealth', 'Macros', 'Coach'] / Which: at location [2] is 'Wealth'
+instead of 'Macros'`. Separately inverted `onSelect(i)` →
+`Expected: <0> / Actual: <4>` ("tapping Home must select tab 0"), so the
+tap-mapping half is independently pinned too, not just the label list.
+
+## Minor 3 — closed: 320dp/textScale 2.0 overflow guard
+
+`test/fitness_nav_test.dart:198-231` pins `ShellBottomBar` at 320x640 /
+textScaler 2.0 and asserts no exception.
+
+**Non-vacuity:** removed the `Expanded` wrappers around the destinations →
+`Expected: null / Actual: FlutterError:<A RenderFlex overflowed by 366 pixels on
+the right.>`.
+
+## Nit 4 (new) — the width assertion cannot detect loss of ellipsis
+
+`test/fitness_nav_test.dart:225-230`. Removing `maxLines`/`softWrap`/`overflow`
+from `_BarDestination`'s `Text` leaves the test green: `RenderParagraph` clamps
+its size to the incoming `maxWidth`, so `getSize(...).width <= barWidth/5` holds
+even when the label is silently clipped. The `takeException` check still catches
+structural overflow, so the guard as a whole is non-vacuous. If you want the
+ellipsis itself pinned, assert
+`tester.widget<Text>(barText(label)).overflow == TextOverflow.ellipsis`.
+Opinion, not a defect — no action required for this gate.
+
+## Regression check (all run by me at `d4dd638` in the pinned worktree)
+
+- `flutter analyze` → `No issues found! (ran in 1.7s)`.
+- `TMPDIR=/home/barry/.cache/flutter-tmp flutter test` → `00:13 +419: All tests
+  passed!` (exit 0). Round 1 was 416; the delta is exactly the three new tests.
+  No assertion was removed except the round-1 Nit 1 tightening
+  (`activity_heatmap_test.dart:790-800` now bounds by the grid rect, which is
+  stricter, not weaker).
+- Previously-verified paths re-run green: heatmap open/resize pins, FitnessTab
+  visibility gate, drawer↔`IndexedStack` mapping, bottom-bar semantics.
+- Formatting: `heatmap.dart` and `activity_heatmap_test.dart` remain dirty under
+  the current `dart format` tall style, but the dirty regions are pre-existing
+  (round 1 verified the same at `df0c5c7`); the new heatmap hunk is
+  format-clean and `fitness_nav_test.dart` is clean. Not a finding.
+
+## Residual risk
+
+- The retry path is widget-test-only; a real DB failure + retry on device is
+  still unexercised. Device smoke test owed when the phone is free.
+- `_pinnedPosition` holds a reference to a disposed `ScrollPosition` until the
+  next metrics notification. Harmless — no listener is registered on it.
