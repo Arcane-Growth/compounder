@@ -1,0 +1,77 @@
+name: Bug report
+description: Something in Compounder is broken or behaves unexpectedly.
+title: "[bug] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Security problems do not belong here** — use
+        [private vulnerability reporting](https://github.com/arcane-growth/compounder/security/advisories/new)
+        instead (see SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: Shown in Settings → About, or the `v*` tag you installed.
+      placeholder: "0.4.0 (build 10)"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Android
+        - iOS
+        - Both
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS version
+      placeholder: "Android 15 / iOS 18.2"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps, starting from a fresh launch if possible.
+      placeholder: |
+        1. Open the Fitness tab
+        2. Start a workout
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: Include the exact error text or a screenshot if you have one.
+    validations:
+      required: true
+  - type: dropdown
+    id: ai
+    attributes:
+      label: Does it involve the AI coach?
+      options:
+        - "No"
+        - "Yes — with my own endpoint"
+        - "Yes — with Compounder AI (subscription)"
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Logs, device model, whether it reproduces after a restart.
+    validations:
+      required: false

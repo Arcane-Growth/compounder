@@ -1,0 +1,20 @@
+# Review ownership. GitHub requests a review from these owners automatically and
+# branch protection requires their approval where listed.
+#
+# Keep this file in sync with who actually holds the release keys and the
+# repository settings.
+
+# Default owner for everything in the repository.
+*                                   @barrydeen
+
+# Pipeline, signing and release process: a mistake here ships a broken or
+# wrongly-signed artifact, so it needs the infrastructure owner's review.
+/.github/                           @barrydeen
+/docs/                              @barrydeen
+/SECURITY.md                        @barrydeen
+/CONTRIBUTING.md                    @barrydeen
+/CHANGELOG.md                       @barrydeen
+/android/app/build.gradle.kts       @barrydeen
+/android/gradle.properties          @barrydeen
+/pubspec.yaml                       @barrydeen
+/pubspec.lock                       @barrydeen

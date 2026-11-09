@@ -1,0 +1,42 @@
+# Line-ending and diff normalisation.
+#
+# The repository stores LF. Checkout converts nothing (eol=lf) so a Windows
+# contributor and a Linux CI runner see byte-identical sources.
+* text=auto eol=lf
+
+# Windows-only scripts must keep CRLF or cmd.exe misparses them.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets: never diff, never convert.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.ttf binary
+*.otf binary
+*.wav binary
+*.mp3 binary
+*.zip binary
+*.jar binary
+*.jks binary
+*.keystore binary
+*.aab binary
+*.apk binary
+
+# Generated files: excluded from diffs and language statistics.
+pubspec.lock linguist-generated
+android/build/** linguist-generated
+build/** linguist-generated
+.dart_tool/** linguist-generated
+*.g.dart linguist-generated
+*.freezed.dart linguist-generated
+ios/Flutter/Generated.xcconfig linguist-generated
+ios/Flutter/flutter_export_environment.sh linguist-generated
+
+# Vendored plugin copies (third_party/health, third_party/pdfx): upstream code
+# we do not own, kept out of language statistics so the repo's own code is what
+# shows.
+third_party/** linguist-vendored

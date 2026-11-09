@@ -1,24 +1,94 @@
 name: CI
 
+# Runs on every PR and on pushes to main. Nothing here needs write access to
+# the repository, so the workflow is read-only by default; individual jobs
+# cannot escalate beyond this block.
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned so CI and local builds agree. Bump deliberately, in its own PR.
+  FLUTTER_VERSION: "3.47.4"
+
 jobs:
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install gitleaks (checksum-verified)
+        # The gitleaks-action wrapper requires a licence for organisation-owned
+        # repos, so we run the upstream binary directly instead.
+        run: |
+          set -euo pipefail
+          VERSION=8.30.0
+          SHA256=79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e
+          curl -sSfL -o "$RUNNER_TEMP/gitleaks.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz"
+          echo "${SHA256}  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" version
+
+      - name: Scan every commit on every ref
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/gitleaks" git --log-opts="--all" --redact --verbose --no-banner
+
+  format:
+    name: Format check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        # Required before formatting: dart format picks its style from the
+        # package's declared language version in .dart_tool/package_config.json.
+        run: flutter pub get
+
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed lib test tool
+
   analyze-and-test:
     name: Analyze and test
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
 
@@ -46,4 +116,90 @@ jobs:
         env:
           TZ: UTC
         run: |
-          flutter test $(ls test/*_test.dart | grep -v -e dst_day_windows_test.dart -e digest_dst_test.dart -e nutrition_dst_test.dart -e activity_heatmap_dst_test.dart)
+          set -euo pipefail
+          files=()
+          for f in test/*_test.dart; do
+            case "$f" in
+              *dst_day_windows_test.dart|*digest_dst_test.dart|*nutrition_dst_test.dart|*activity_heatmap_dst_test.dart)
+                continue
+                ;;
+            esac
+            files+=("$f")
+          done
+          flutter test "${files[@]}"
+
+  build-release:
+    name: Release build (ephemeral CI key)
+    # Catches Gradle/AGP/R8 breakage on PRs instead of at tag time.
+    # android/app/build.gradle.kts fails loudly when android/key.properties is
+    # missing (no silent debug fallback), so CI generates a throwaway keystore
+    # rather than depending on repository secrets. This exercises the real
+    # release signing path; release.yml uses the actual upload key.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [analyze-and-test]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Create ephemeral CI keystore
+        run: |
+          set -euo pipefail
+          keytool -genkeypair -v \
+            -keystore android/ci-keystore.jks \
+            -storetype PKCS12 \
+            -storepass ci-only-password \
+            -keypass ci-only-password \
+            -alias ci-only \
+            -keyalg RSA -keysize 2048 -validity 1 \
+            -dname "CN=CI, OU=CI, O=Compounder, L=CI, ST=CI, C=US"
+          cat > android/key.properties <<EOF
+          storeFile=ci-keystore.jks
+          storePassword=ci-only-password
+          keyAlias=ci-only
+          keyPassword=ci-only-password
+          EOF
+
+      - name: Build release APK
+        run: flutter build apk --release --obfuscate --split-debug-info=build/symbols
+
+      - name: Build release app bundle
+        run: flutter build appbundle --release --obfuscate --split-debug-info=build/symbols
+
+      - name: Verify artifacts exist
+        run: |
+          set -euo pipefail
+          test -f build/app/outputs/flutter-apk/app-release.apk
+          test -f build/app/outputs/bundle/release/app-release.aab
+          ls -l build/app/outputs/flutter-apk/app-release.apk \
+                build/app/outputs/bundle/release/app-release.aab
+          ls -l build/symbols
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-build-${{ github.sha }}
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/bundle/release/app-release.aab
+            build/symbols/
+          retention-days: 14
+          if-no-files-found: error

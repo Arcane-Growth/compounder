@@ -49,3 +49,19 @@ app.*.map.json
 
 # local release signing
 android/key.properties
+
+# --- Secrets and signing material: never commit ---
+*.jks
+*.keystore
+*.p8
+*.p12
+*.pem
+.env
+.env.*
+!.env.example
+android/local.properties
+
+# --- Build output and reports ---
+/android/build/
+*.aab
+*.apk

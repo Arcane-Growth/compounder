@@ -1,0 +1,186 @@
+name: Release
+
+# Publishing is tag-driven: pushing a v* tag builds the signed artifacts and
+# attaches them to a GitHub Release. See docs/release-process.md.
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   KEYSTORE_BASE64    base64 of the upload keystore (.jks), single line
+#   KEYSTORE_PASSWORD  keystore password
+#   KEY_ALIAS          key alias inside the keystore
+#   KEY_PASSWORD       key password
+# The job fails loudly and early if any of them is missing.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # required to create the GitHub Release
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FLUTTER_VERSION: "3.47.4"
+
+jobs:
+  release:
+    name: Build and publish signed release
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate signing secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "${KEYSTORE_BASE64:-}" ] || missing="$missing KEYSTORE_BASE64"
+          [ -n "${KEYSTORE_PASSWORD:-}" ] || missing="$missing KEYSTORE_PASSWORD"
+          [ -n "${KEY_ALIAS:-}" ] || missing="$missing KEY_ALIAS"
+          [ -n "${KEY_PASSWORD:-}" ] || missing="$missing KEY_PASSWORD"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing"
+            echo "Add them under Settings -> Secrets and variables -> Actions."
+            echo "See docs/release-process.md for how to produce each value."
+            exit 1
+          fi
+
+      - name: Verify tag matches pubspec version
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          pubspec_version=$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -1)
+          base_version="${pubspec_version%%+*}"
+          if [ -z "$base_version" ]; then
+            echo "::error::Could not read version: from pubspec.yaml"
+            exit 1
+          fi
+          if [ "$tag" != "$base_version" ]; then
+            echo "::error::Tag v${tag} does not match pubspec version ${base_version}. Bump pubspec.yaml and re-tag."
+            exit 1
+          fi
+          echo "Tag v${tag} matches pubspec version ${base_version} (build ${pubspec_version#*+})."
+
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Materialise keystore and key.properties
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > android/upload-keystore.jks
+          # storeFile is resolved relative to the android/ project directory.
+          cat > android/key.properties <<EOF
+          storeFile=upload-keystore.jks
+          storePassword=${KEYSTORE_PASSWORD}
+          keyAlias=${KEY_ALIAS}
+          keyPassword=${KEY_PASSWORD}
+          EOF
+          test -s android/upload-keystore.jks
+          test -s android/key.properties
+
+      - name: Build signed app bundle
+        run: flutter build appbundle --release --obfuscate --split-debug-info=build/symbols
+
+      - name: Build signed APK
+        run: flutter build apk --release --obfuscate --split-debug-info=build/symbols
+
+      - name: Prove the artifacts are signed with the upload key
+        # Guards against a silent fallback to the debug signing config: compare
+        # the certificate digest in the keystore with the one in the APK.
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-release.apk
+          test -f "$apk"
+          test -f build/app/outputs/bundle/release/app-release.aab
+
+          sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          if [ -z "$sdk_root" ]; then
+            echo "::error::ANDROID_HOME/ANDROID_SDK_ROOT is not set; cannot locate apksigner."
+            exit 1
+          fi
+          apksigner=$(find "$sdk_root/build-tools" -maxdepth 2 -type f -name apksigner 2>/dev/null | sort -V | tail -1)
+          if [ -z "$apksigner" ]; then
+            echo "::error::apksigner not found under $sdk_root/build-tools."
+            exit 1
+          fi
+
+          keystore_sha=$(keytool -list -v -keystore android/upload-keystore.jks \
+            -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" \
+            | sed -n 's/.*SHA-256: //p' | head -1 | tr -d ':' | tr 'A-F' 'a-f')
+          apk_sha=$("$apksigner" verify --print-certs "$apk" \
+            | sed -n 's/.*SHA-256 digest: //p' | head -1 | tr -d ':' | tr 'A-F' 'a-f')
+
+          echo "keystore cert sha256: ${keystore_sha}"
+          echo "apk signer cert sha256: ${apk_sha}"
+          if [ -z "$keystore_sha" ] || [ "$keystore_sha" != "$apk_sha" ]; then
+            echo "::error::APK is not signed with the upload key (debug fallback?)."
+            exit 1
+          fi
+          "$apksigner" verify --verbose "$apk" | head -5
+
+      - name: Stage artifacts and checksums
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk "dist/compounder-${GITHUB_REF_NAME}.apk"
+          cp build/app/outputs/bundle/release/app-release.aab "dist/compounder-${GITHUB_REF_NAME}.aab"
+          # Obfuscated builds need the symbol files to symbolicate crash traces.
+          (cd build/symbols && zip -qr "../../dist/compounder-${GITHUB_REF_NAME}-symbols.zip" .)
+          cd dist
+          sha256sum "compounder-${GITHUB_REF_NAME}.apk" \
+                    "compounder-${GITHUB_REF_NAME}.aab" \
+                    "compounder-${GITHUB_REF_NAME}-symbols.zip" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload artifacts (workflow retention)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ github.ref_name }}
+          path: dist/*
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
+        with:
+          files: |
+            dist/compounder-${{ github.ref_name }}.apk
+            dist/compounder-${{ github.ref_name }}.aab
+            dist/compounder-${{ github.ref_name }}-symbols.zip
+            dist/SHA256SUMS.txt
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          # Tags with a suffix (v1.0.0-rc1) publish as pre-releases.
+          prerelease: ${{ contains(github.ref_name, '-') }}

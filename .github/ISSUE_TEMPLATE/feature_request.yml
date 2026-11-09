@@ -1,0 +1,64 @@
+name: Feature request
+description: Suggest a capability or an improvement to Compounder.
+title: "[feature] "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Compounder is deliberately small: health, wealth and mind in one app, with
+        a coach that asks before it writes. Please say which domain your idea
+        belongs to and why it earns its place.
+  - type: dropdown
+    id: domain
+    attributes:
+      label: Domain
+      options:
+        - Health / Fitness
+        - Nutrition / Macros
+        - Wealth
+        - Mind
+        - Coach / AI
+        - App-wide (navigation, settings, backup, notifications)
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that the app makes hard or impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should happen, from the user's point of view?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other apps, workarounds, or a smaller version of the idea.
+    validations:
+      required: false
+  - type: dropdown
+    id: privacy
+    attributes:
+      label: Does this need network access or a server?
+      description: Compounder is local-first; anything that leaves the device needs a strong reason.
+      options:
+        - "No — works entirely on-device"
+        - "Yes — needs the AI endpoint"
+        - "Yes — needs a new service"
+        - "Not sure"
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Mockups, references, related issues.
+    validations:
+      required: false
