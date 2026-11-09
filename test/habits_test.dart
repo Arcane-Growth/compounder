@@ -359,7 +359,7 @@ void main() {
         () async {
       final prefs = await SharedPreferences.getInstance();
       final store = await AppStore.open(prefs, path: path);
-      expect(await store.db.getVersion(), 11);
+      expect(await store.db.getVersion(), 12);
       expect(await tables(store), containsAll(['habits', 'habit_completions']));
       await store.db.close();
     });
@@ -387,7 +387,7 @@ void main() {
       });
 
       // Rewind to a genuine v9 shape: the habit tables did not exist and
-      // user_version was 9. This drives the production 9 -> 11 path.
+      // user_version was 9. This drives the production 9 -> 12 path.
       await store.db.execute('DROP TABLE IF EXISTS habit_completions');
       await store.db.execute('DROP TABLE IF EXISTS habits');
       await store.db.setVersion(9);
@@ -396,7 +396,7 @@ void main() {
       await store.db.close();
 
       store = await AppStore.open(prefs, path: path);
-      expect(await store.db.getVersion(), 11);
+      expect(await store.db.getVersion(), 12);
       expect(await tables(store), containsAll(['habits', 'habit_completions']));
 
       // No data loss in the pre-existing tables.
@@ -424,7 +424,7 @@ void main() {
       await store.db.close();
 
       store = await AppStore.open(prefs, path: path);
-      expect(await store.db.getVersion(), 11);
+      expect(await store.db.getVersion(), 12);
       expect(store.habits, hasLength(1));
       expect(store.habitCompletions, hasLength(1),
           reason: 'IF NOT EXISTS must not drop the existing rows');

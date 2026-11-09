@@ -30,7 +30,8 @@ class HistoryScreen extends StatelessWidget {
                     icon: Icons.fitness_center,
                     title: row.name,
                     subtitle:
-                        '${formatDate(row.startedAt)} · ${formatDuration(row.startedAt, row.endedAt)}',
+                        '${formatDate(row.startedAt)} · ${formatDuration(row.startedAt, row.endedAt)}'
+                        '${row.prCount > 0 ? ' · ${row.prCount} ${row.prCount == 1 ? 'PR' : 'PRs'}' : ''}',
                     trailing:
                         '${trimZero(fromKg(row.totalKg, store.unit))} ${store.unit.label}',
                     onTap: () => Navigator.of(context).push(

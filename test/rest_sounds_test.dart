@@ -59,20 +59,24 @@ class _StubHealthSource implements HealthSource {
   Future<void> revokePermissions() async {}
 }
 
-/// Rest-timer audio cues (owner request):
+/// Workout audio cues (owner request):
 ///  * one quiet tick when 5 seconds of rest remain;
 ///  * a distinct "go" tone when the countdown reaches zero;
-///  * a Settings mute switch that suppresses both;
+///  * a Settings mute switch that suppresses every workout cue;
 ///  * no cue after an early cancel, a restart or disposal.
+///
+/// The seeded history deliberately matches the logged sets, so no set here is
+/// a personal record: these tests pin the rest cues without a PR fanfare
+/// landing in the middle of the assertion.
 ///
 /// Playback is injected, so these tests assert cue calls without touching
 /// audio hardware.
-class _FakeRestSounds implements RestSounds {
-  final List<RestCue> played = [];
+class _FakeWorkoutSounds implements WorkoutSounds {
+  final List<WorkoutCue> played = [];
   bool disposed = false;
 
   @override
-  Future<void> play(RestCue cue) async {
+  Future<void> play(WorkoutCue cue) async {
     played.add(cue);
   }
 
@@ -107,6 +111,26 @@ void main() {
       'equipment': 'Barbell',
       'is_custom': 0,
     });
+    // A finished session at the same weight, so completing either seeded set
+    // matches the prior best instead of setting a PR.
+    final priorWorkout = await store.db.insert('workouts', {
+      'name': 'Prior leg day',
+      'started_at': DateTime.now().millisecondsSinceEpoch - 86400000,
+      'ended_at': DateTime.now().millisecondsSinceEpoch - 86000000,
+    });
+    final priorEntry = await store.db.insert('workout_exercises', {
+      'workout_id': priorWorkout,
+      'exercise_id': exerciseId,
+      'position': 0,
+    });
+    await store.db.insert('workout_sets', {
+      'workout_exercise_id': priorEntry,
+      'position': 0,
+      'weight_kg': 100.0,
+      'reps': 5,
+      'completed_at': DateTime.now().millisecondsSinceEpoch - 86000000,
+      'is_warmup': 0,
+    });
     workoutId = await store.db.insert('workouts', {
       'name': 'Leg day',
       'started_at': DateTime.now().millisecondsSinceEpoch,
@@ -140,7 +164,7 @@ void main() {
     await store.db.close();
   });
 
-  Future<void> pumpWorkout(WidgetTester tester, _FakeRestSounds sounds) async {
+  Future<void> pumpWorkout(WidgetTester tester, _FakeWorkoutSounds sounds) async {
     await tester.pumpWidget(ChangeNotifierProvider<AppStore>.value(
       value: store,
       child: MaterialApp(
@@ -175,7 +199,7 @@ void main() {
   testWidgets('plays one tick at 5s left and one go tone at zero',
       (tester) async {
     await seed();
-    final sounds = _FakeRestSounds();
+    final sounds = _FakeWorkoutSounds();
     await pumpWorkout(tester, sounds);
 
     await completeSet(tester);
@@ -187,7 +211,7 @@ void main() {
     expect(sounds.played, isEmpty);
     // 6 -> 5: the warning tick.
     await tester.pump(const Duration(seconds: 1));
-    expect(sounds.played, [RestCue.fiveSeconds],
+    expect(sounds.played, [WorkoutCue.fiveSeconds],
         reason: 'exactly one tick at five seconds left');
     expect(find.text('0:05'), findsOneWidget);
 
@@ -195,24 +219,24 @@ void main() {
     for (var i = 0; i < 4; i++) {
       await tester.pump(const Duration(seconds: 1));
     }
-    expect(sounds.played, [RestCue.fiveSeconds],
+    expect(sounds.played, [WorkoutCue.fiveSeconds],
         reason: 'the tick must fire once, not on every tick below five');
 
     // 1 -> 0: the go tone.
     await tester.pump(const Duration(seconds: 1));
-    expect(sounds.played, [RestCue.fiveSeconds, RestCue.go],
+    expect(sounds.played, [WorkoutCue.fiveSeconds, WorkoutCue.go],
         reason: 'one go tone when the countdown reaches zero');
     expect(find.text('0:00'), findsNothing,
         reason: 'the rest chip disappears at zero');
 
     // Nothing more after the timer stopped.
     await tester.pump(const Duration(seconds: 5));
-    expect(sounds.played, [RestCue.fiveSeconds, RestCue.go]);
+    expect(sounds.played, [WorkoutCue.fiveSeconds, WorkoutCue.go]);
   });
 
   testWidgets('the mute setting suppresses both cues', (tester) async {
     await seed(soundsEnabled: false);
-    final sounds = _FakeRestSounds();
+    final sounds = _FakeWorkoutSounds();
     await pumpWorkout(tester, sounds);
 
     await completeSet(tester);
@@ -228,13 +252,13 @@ void main() {
 
   testWidgets('cancelling the rest early produces no go tone', (tester) async {
     await seed();
-    final sounds = _FakeRestSounds();
+    final sounds = _FakeWorkoutSounds();
     await pumpWorkout(tester, sounds);
 
     await completeSet(tester);
     await tester.pump(const Duration(seconds: 1));
     await tester.pump(const Duration(seconds: 1));
-    expect(sounds.played, [RestCue.fiveSeconds]);
+    expect(sounds.played, [WorkoutCue.fiveSeconds]);
 
     // Tap the rest chip to cancel.
     await tester.tap(find.byType(ActionChip));
@@ -243,14 +267,14 @@ void main() {
         reason: 'the chip disappears when the rest is cancelled');
 
     await tester.pump(const Duration(seconds: 10));
-    expect(sounds.played, [RestCue.fiveSeconds],
+    expect(sounds.played, [WorkoutCue.fiveSeconds],
         reason: 'a cancelled rest must never fire the go tone');
   });
 
   testWidgets('restarting the rest timer does not leak a stale cue',
       (tester) async {
     await seed();
-    final sounds = _FakeRestSounds();
+    final sounds = _FakeWorkoutSounds();
     await pumpWorkout(tester, sounds);
 
     await completeSet(tester);
@@ -264,14 +288,14 @@ void main() {
     for (var i = 0; i < 7; i++) {
       await tester.pump(const Duration(seconds: 1));
     }
-    expect(sounds.played, [RestCue.fiveSeconds, RestCue.go],
+    expect(sounds.played, [WorkoutCue.fiveSeconds, WorkoutCue.go],
         reason: 'the abandoned timer must not fire its own cues');
   });
 
   testWidgets('disposing the screen mid-rest fires no cue and disposes audio',
       (tester) async {
     await seed();
-    final sounds = _FakeRestSounds();
+    final sounds = _FakeWorkoutSounds();
     await pumpWorkout(tester, sounds);
 
     await completeSet(tester);
@@ -334,7 +358,7 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      final tile = find.widgetWithText(SwitchListTile, 'Rest timer sounds');
+      final tile = find.widgetWithText(SwitchListTile, 'Workout sounds');
       await tester.ensureVisible(tile);
       await tester.pump();
       expect(tester.widget<SwitchListTile>(tile).value, isTrue,

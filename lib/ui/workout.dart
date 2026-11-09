@@ -16,7 +16,7 @@ class WorkoutScreen extends StatefulWidget {
 
   /// Injectable cue player; tests pass a fake. Defaults to the real
   /// audioplayers-backed implementation.
-  final RestSounds? sounds;
+  final WorkoutSounds? sounds;
 
   const WorkoutScreen({super.key, required this.workoutId, this.sounds});
 
@@ -44,13 +44,13 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
   int _restGeneration = 0;
   bool _restTickPlayed = false;
 
-  late final RestSounds _sounds;
+  late final WorkoutSounds _sounds;
 
   @override
   void initState() {
     super.initState();
     _store = context.read<AppStore>();
-    _sounds = widget.sounds ?? AudioRestSounds();
+    _sounds = widget.sounds ?? AudioWorkoutSounds();
     _loadDetail();
   }
 
@@ -215,11 +215,11 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
       _restLeft.value = next < 0 ? 0 : next;
       if (next > 0 && next <= 5 && !_restTickPlayed) {
         _restTickPlayed = true;
-        _playRestCue(RestCue.fiveSeconds);
+        _playCue(WorkoutCue.fiveSeconds);
       }
       if (next <= 0) {
         timer.cancel();
-        _playRestCue(RestCue.go);
+        _playCue(WorkoutCue.go);
       }
     });
   }
@@ -232,7 +232,9 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
     _restLeft.value = 0;
   }
 
-  void _playRestCue(RestCue cue) {
+  /// Plays a workout cue unless the user muted workout sounds. The mute
+  /// switch covers the rest cues and the PR celebration alike.
+  void _playCue(WorkoutCue cue) {
     if (!mounted) return;
     if (!(_store?.restSoundsEnabled ?? false)) return;
     unawaited(_sounds.play(cue));
@@ -253,8 +255,14 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
     await _saveSetValues(set.id, reload: false);
     await _store!
         .updateSet(set.id, completedAt: DateTime.now().millisecondsSinceEpoch);
-    _startRest();
     await _reloadDetail();
+    // The store recomputes the session's PR flags on every set change, so the
+    // reloaded row is the authoritative verdict. Celebrate only when this set
+    // is now a PR; the mute switch is honoured inside _playCue.
+    if (_setsById[set.id]?.isPr ?? false) {
+      _playCue(WorkoutCue.personalRecord);
+    }
+    _startRest();
   }
 
   Future<void> _addSet(ExerciseView view) async {
@@ -337,68 +345,118 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
     final done = set.completedAt != null;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(children: [
-        SizedBox(
-          width: 20,
-          child: Text('${index + 1}',
-              style: t.bodyMedium?.copyWith(color: scheme.onSurfaceVariant)),
-        ),
-        SizedBox(
-          width: 70,
-          child: TextField(
-            controller: weightController,
-            focusNode: weightNode,
-            onSubmitted: (_) => _saveSetValues(set.id),
-            onTapOutside: (_) => FocusScope.of(context).unfocus(),
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            textAlign: TextAlign.center,
-            decoration: const InputDecoration(
-              isDense: true,
-              border: OutlineInputBorder(),
-              contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          SizedBox(
+            width: 20,
+            child: Text('${index + 1}',
+                style: t.bodyMedium?.copyWith(color: scheme.onSurfaceVariant)),
+          ),
+          SizedBox(
+            width: 70,
+            child: TextField(
+              controller: weightController,
+              focusNode: weightNode,
+              onSubmitted: (_) => _saveSetValues(set.id),
+              onTapOutside: (_) => FocusScope.of(context).unfocus(),
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              textAlign: TextAlign.center,
+              decoration: const InputDecoration(
+                isDense: true,
+                border: OutlineInputBorder(),
+                contentPadding:
+                    EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+              ),
             ),
           ),
-        ),
-        const SizedBox(width: 4),
-        SizedBox(
-          width: 40,
-          child: TextField(
-            controller: repsController,
-            focusNode: repsNode,
-            onSubmitted: (_) => _saveSetValues(set.id),
-            onTapOutside: (_) => FocusScope.of(context).unfocus(),
-            keyboardType: TextInputType.number,
-            textAlign: TextAlign.center,
-            decoration: const InputDecoration(
-              isDense: true,
-              hintText: '0',
-              border: OutlineInputBorder(),
-              contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+          const SizedBox(width: 4),
+          SizedBox(
+            width: 40,
+            child: TextField(
+              controller: repsController,
+              focusNode: repsNode,
+              onSubmitted: (_) => _saveSetValues(set.id),
+              onTapOutside: (_) => FocusScope.of(context).unfocus(),
+              keyboardType: TextInputType.number,
+              textAlign: TextAlign.center,
+              decoration: const InputDecoration(
+                isDense: true,
+                hintText: '0',
+                border: OutlineInputBorder(),
+                contentPadding:
+                    EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+              ),
             ),
           ),
-        ),
-        const SizedBox(width: 4),
-        SizedBox(
-          width: 48,
-          child: Tooltip(
-            message: 'Warm-up set',
-            child: Checkbox(
-              value: set.isWarmup,
-              onChanged: (value) => _toggleWarmup(set, value ?? false),
+          const SizedBox(width: 4),
+          SizedBox(
+            width: 48,
+            child: Tooltip(
+              message: 'Warm-up set',
+              child: Checkbox(
+                value: set.isWarmup,
+                onChanged: (value) => _toggleWarmup(set, value ?? false),
+              ),
             ),
           ),
-        ),
-        SizedBox(
-          width: 48,
-          child: Tooltip(
-            message: done ? 'Mark set incomplete' : 'Mark set complete',
-            child: Checkbox(
-              value: done,
-              onChanged: (_) => _toggleComplete(set),
+          SizedBox(
+            width: 48,
+            child: Tooltip(
+              message: done ? 'Mark set incomplete' : 'Mark set complete',
+              child: Checkbox(
+                value: done,
+                onChanged: (_) => _toggleComplete(set),
+              ),
             ),
           ),
-        ),
+        ]),
+        // The badge sits on its own line: the set row already fills a 320dp
+        // screen, so an inline chip would overflow at accessibility text
+        // scales.
+        if (set.isPr)
+          Padding(
+            padding: const EdgeInsets.only(left: 20, top: 4),
+            child: _prBadge(scheme, t, set),
+          ),
       ]),
+    );
+  }
+
+  /// The personal-record badge shown under a qualifying set. The e1RM snapshot
+  /// is rendered in the unit the user selected in Settings.
+  Widget _prBadge(ColorScheme scheme, TextTheme t, WorkoutSet set) {
+    final unit = _store!.unit;
+    final snapshot = set.prE1rmKg;
+    final value = snapshot == null ? null : trimZero(fromKg(snapshot, unit));
+    final label = value == null
+        ? 'Personal record'
+        : 'Personal record: $value ${unit.label} estimated 1RM';
+    return Semantics(
+      container: true,
+      label: label,
+      child: ExcludeSemantics(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: scheme.tertiaryContainer,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.emoji_events,
+                size: 14, color: scheme.onTertiaryContainer),
+            const SizedBox(width: 4),
+            Text(
+              value == null
+                  ? 'PR'
+                  : 'PR · $value ${unit.label} e1RM',
+              style: t.labelSmall?.copyWith(
+                  color: scheme.onTertiaryContainer,
+                  fontWeight: FontWeight.w700),
+            ),
+          ]),
+        ),
+      ),
     );
   }
 

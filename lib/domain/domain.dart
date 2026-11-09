@@ -75,6 +75,62 @@ double deltaKg(List<E1RmPoint> points) {
   return points.last.valueKg - points.first.valueKg;
 }
 
+/// The outcome of comparing one set against the user's history.
+class PrAssessment {
+  /// True when the set beats every prior finished session and every earlier
+  /// set logged in the same session.
+  final bool isPr;
+
+  /// The e1RM snapshot to persist with the set when [isPr] is true, otherwise
+  /// null.
+  final double? e1rmKg;
+
+  /// The best e1RM for this exercise across prior finished sessions, or 0 when
+  /// the exercise has no history.
+  final double previousBestKg;
+
+  const PrAssessment(
+      {required this.isPr, this.e1rmKg, required this.previousBestKg});
+}
+
+/// Decides whether a set is a personal record.
+///
+/// [priorBestKg] is the best e1RM for the exercise across every *finished*
+/// session before this one (0 when the exercise has no history).
+/// [earlierSets] are the sets already logged earlier in the same session.
+///
+/// Rules (owner-specified):
+///  * a set qualifies only when its e1RM is strictly greater than both the
+///    prior-session best and every earlier set in this session;
+///  * the first-ever set for an exercise establishes the baseline and counts
+///    as a PR;
+///  * zero-rep sets never qualify (audit B4), and neither do warm-up sets;
+///  * negative weights carry no e1RM signal.
+///
+/// The e1RM is [formatE1rm]ed before comparison so the stored snapshot and the
+/// displayed value agree, and so two sets that round to the same half-kilo
+/// cannot both claim a PR. A set whose e1RM is 0 (0 kg logged) carries no
+/// signal and never flags, matching [e1rmMaxOf]'s treatment of empty input.
+PrAssessment assessPr({
+  required double weightKg,
+  required int reps,
+  required bool isWarmup,
+  required double priorBestKg,
+  required List<(double weightKg, int reps)> earlierSets,
+}) {
+  final prior = formatE1rm(priorBestKg);
+  if (isWarmup || reps < 1 || weightKg < 0) {
+    return PrAssessment(isPr: false, previousBestKg: prior);
+  }
+  final value = formatE1rm(epley(weightKg, reps));
+  final sessionBest = formatE1rm(e1rmMaxOf(earlierSets));
+  final beatsPrior = prior <= 0 || value > prior;
+  if (!beatsPrior || value <= sessionBest) {
+    return PrAssessment(isPr: false, previousBestKg: prior);
+  }
+  return PrAssessment(isPr: true, e1rmKg: value, previousBestKg: prior);
+}
+
 class Volume {
   final double totalKg;
   final int sets;

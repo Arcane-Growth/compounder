@@ -342,9 +342,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 SwitchListTile(
                   dense: true,
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Rest timer sounds'),
+                  title: const Text('Workout sounds'),
                   subtitle: const Text(
-                      'A quiet tick at 5 seconds left and a "go" tone when rest ends.'),
+                      'A quiet tick at 5 seconds left, a "go" tone when rest '
+                      'ends, and a short fanfare when you set a personal '
+                      'record.'),
                   value: store.restSoundsEnabled,
                   onChanged: (v) => store.setRestSoundsEnabled(v),
                 ),

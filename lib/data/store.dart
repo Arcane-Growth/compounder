@@ -62,6 +62,30 @@ class WorkoutDetail {
       .map((s) => (weightKg: s.weightKg, reps: s.reps, isWarmup: s.isWarmup)));
 }
 
+/// One exercise's personal-record outcome for a session: the best e1RM the
+/// user hit this session, the best they had before it, and the difference.
+///
+/// [previousBestKg] is 0 when the exercise had no prior finished session, in
+/// which case the session established the baseline.
+class PrSummary {
+  final int exerciseId;
+  final String exerciseName;
+  final double previousBestKg;
+  final double newBestKg;
+
+  const PrSummary({
+    required this.exerciseId,
+    required this.exerciseName,
+    required this.previousBestKg,
+    required this.newBestKg,
+  });
+
+  double get deltaKg => newBestKg - previousBestKg;
+
+  /// True when this session established the exercise's first baseline.
+  bool get isBaseline => previousBestKg <= 0;
+}
+
 /// Single source of truth: owns the database, cached lists and settings.
 class AppStore extends ChangeNotifier implements DeviceTokenStore {
   late final Database db;
@@ -93,7 +117,7 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
       {String? path, SecretStore? secretStore}) async {
     path ??= p.join(await getDatabasesPath(), 'compounder.db');
     final db = await openDatabase(path,
-        version: 11,
+        version: 12,
         onConfigure: _configureSchema,
         onCreate: _createSchema,
         onUpgrade: _upgradeSchema);
@@ -136,7 +160,8 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
       id INTEGER PRIMARY KEY AUTOINCREMENT, workout_exercise_id INTEGER NOT NULL
       REFERENCES workout_exercises(id) ON DELETE CASCADE,
       position INTEGER NOT NULL, weight_kg REAL NOT NULL, reps INTEGER NOT NULL,
-      completed_at INTEGER, is_warmup INTEGER NOT NULL DEFAULT 0)''');
+      completed_at INTEGER, is_warmup INTEGER NOT NULL DEFAULT 0,
+      is_pr INTEGER NOT NULL DEFAULT 0, pr_e1rm_kg REAL)''');
     await db.execute('''CREATE TABLE meals(
       id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp INTEGER NOT NULL, image_path TEXT NOT NULL DEFAULT '',
       dish TEXT NOT NULL, description TEXT, calories REAL NOT NULL, protein REAL NOT NULL,
@@ -275,6 +300,16 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
       // the table size, so it is accepted rather than widened into a
       // composite index.
       await _createV11Indexes(db);
+    }
+    if (oldVersion < 12) {
+      // Personal records. Two additive columns on workout_sets: the flag and
+      // the e1RM snapshot it was set at. Every existing row keeps its weight,
+      // reps and completion state; the defaults mark them all as non-PR, so a
+      // v11 history can never show a false PR. `_addColumnIfMissing` makes the
+      // step safe to re-run on a partially applied migration.
+      await _addColumnIfMissing(
+          db, 'workout_sets', 'is_pr', 'INTEGER NOT NULL DEFAULT 0');
+      await _addColumnIfMissing(db, 'workout_sets', 'pr_e1rm_kg', 'REAL');
     }
   }
 
@@ -738,6 +773,7 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
       'completed_at': completed ? DateTime.now().millisecondsSinceEpoch : null,
       'is_warmup': warmup ? 1 : 0,
     });
+    await _recomputePrFlagsForEntry(entryId);
     await refreshAll();
     return id;
   }
@@ -753,19 +789,158 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
     };
     if (values.isEmpty) return;
     await db.update('workout_sets', values, where: 'id = ?', whereArgs: [id]);
+    await _recomputePrFlagsForSet(id);
     await refreshAll();
   }
 
   Future<void> deleteSetRow(int id) async {
+    final entryId = await _entryIdForSet(id);
     await db.delete('workout_sets', where: 'id = ?', whereArgs: [id]);
+    if (entryId != null) await _recomputePrFlagsForEntry(entryId);
     await refreshAll();
   }
 
   Future<void> removeExercise(int entryId) async {
+    final workoutId = await _workoutIdForEntry(entryId);
     await db.delete('workout_sets',
         where: 'workout_exercise_id = ?', whereArgs: [entryId]);
     await db.delete('workout_exercises', where: 'id = ?', whereArgs: [entryId]);
+    if (workoutId != null) await _recomputePrFlags(workoutId);
     await refreshAll();
+  }
+
+  // ------------------------------------------------------ personal records
+
+  /// Best e1RM for [exerciseId] across finished sessions other than
+  /// [excludeWorkoutId]. Zero when the exercise has no prior history.
+  ///
+  /// Mirrors [progressFor]'s shape: every set in a finished session counts,
+  /// warm-ups and zero-rep placeholders are skipped (audit B4).
+  Future<double> _priorBestKg(int exerciseId, int excludeWorkoutId) async {
+    final rows = await db.rawQuery('''
+        SELECT s.weight_kg, s.reps FROM workouts w
+        JOIN workout_exercises we ON we.workout_id = w.id
+        JOIN workout_sets s ON s.workout_exercise_id = we.id
+        WHERE we.exercise_id = ? AND w.ended_at IS NOT NULL AND w.id != ?
+          AND s.is_warmup = 0 AND s.reps >= 1''',
+        [exerciseId, excludeWorkoutId]);
+    return formatE1rm(e1rmMaxOf(rows
+        .map((r) => (
+              (r['weight_kg'] as num).toDouble(),
+              r['reps'] as int,
+            ))
+        .toList()));
+  }
+
+  Future<int?> _workoutIdForEntry(int entryId) async {
+    final rows = await db.query('workout_exercises',
+        columns: ['workout_id'],
+        where: 'id = ?',
+        whereArgs: [entryId],
+        limit: 1);
+    return rows.isEmpty ? null : rows.first['workout_id'] as int;
+  }
+
+  Future<int?> _entryIdForSet(int setId) async {
+    final rows = await db.query('workout_sets',
+        columns: ['workout_exercise_id'],
+        where: 'id = ?',
+        whereArgs: [setId],
+        limit: 1);
+    return rows.isEmpty ? null : rows.first['workout_exercise_id'] as int;
+  }
+
+  Future<void> _recomputePrFlagsForSet(int setId) async {
+    final entryId = await _entryIdForSet(setId);
+    if (entryId != null) await _recomputePrFlagsForEntry(entryId);
+  }
+
+  Future<void> _recomputePrFlagsForEntry(int entryId) async {
+    final workoutId = await _workoutIdForEntry(entryId);
+    if (workoutId != null) await _recomputePrFlags(workoutId);
+  }
+
+  /// Recomputes and persists the PR flag for every set in [workoutId].
+  ///
+  /// The flag is a function of the whole session: a set is a PR only when it
+  /// beats the prior-session best *and* every earlier set in this session, so
+  /// editing or deleting one set can change the verdict for the sets after it.
+  /// Recomputing the session in one pass keeps the stored flags consistent
+  /// with the detection rule instead of drifting from it.
+  ///
+  /// Only completed sets are flagged: an untouched placeholder is not a
+  /// performed set, and completing it is what triggers the celebration.
+  Future<void> _recomputePrFlags(int workoutId) async {
+    final entries = await db.query('workout_exercises',
+        where: 'workout_id = ?', whereArgs: [workoutId], orderBy: 'position');
+    for (final entry in entries) {
+      final entryId = entry['id'] as int;
+      final exerciseId = entry['exercise_id'] as int;
+      final prior = await _priorBestKg(exerciseId, workoutId);
+      final rows = await db.query('workout_sets',
+          where: 'workout_exercise_id = ?',
+          whereArgs: [entryId],
+          orderBy: 'position, id');
+      final earlier = <(double, int)>[];
+      for (final row in rows) {
+        final set = WorkoutSet.fromMap(row);
+        final assessment = assessPr(
+          weightKg: set.weightKg,
+          reps: set.reps,
+          isWarmup: set.isWarmup,
+          priorBestKg: prior,
+          earlierSets: earlier,
+        );
+        final isPr = set.completedAt != null && assessment.isPr;
+        final prE1rm = isPr ? assessment.e1rmKg : null;
+        if (set.isPr != isPr || set.prE1rmKg != prE1rm) {
+          await db.update(
+              'workout_sets', {'is_pr': isPr ? 1 : 0, 'pr_e1rm_kg': prE1rm},
+              where: 'id = ?', whereArgs: [set.id]);
+        }
+        if (!set.isWarmup && set.reps >= 1 && set.weightKg >= 0) {
+          // Only performed sets count as "earlier in this session": a heavier
+          // set that is still an untouched placeholder must not suppress the
+          // PR for a set the user actually completed.
+          if (set.completedAt != null) earlier.add((set.weightKg, set.reps));
+        }
+      }
+    }
+  }
+
+  /// The personal records set in [workoutId], one row per exercise, with the
+  /// prior-session best and the delta.
+  ///
+  /// Reads the persisted flags rather than recomputing, so the summary and the
+  /// history agree with what the user was shown at the time.
+  Future<List<PrSummary>> prSummary(int workoutId) async {
+    final rows = await db.rawQuery('''
+        SELECT we.exercise_id, e.name, s.pr_e1rm_kg
+        FROM workout_exercises we
+        JOIN exercises e ON e.id = we.exercise_id
+        JOIN workout_sets s ON s.workout_exercise_id = we.id
+        WHERE we.workout_id = ? AND s.is_pr = 1 AND s.pr_e1rm_kg IS NOT NULL
+        ORDER BY we.position, s.position, s.id''', [workoutId]);
+    final byExercise = <int, ({String name, double best})>{};
+    for (final r in rows) {
+      final id = r['exercise_id'] as int;
+      final value = (r['pr_e1rm_kg'] as num).toDouble();
+      final existing = byExercise[id];
+      if (existing == null || value > existing.best) {
+        byExercise[id] = (name: r['name'] as String, best: value);
+      }
+    }
+    final summaries = <PrSummary>[];
+    for (final entry in byExercise.entries) {
+      final previous = await _priorBestKg(entry.key, workoutId);
+      summaries.add(PrSummary(
+        exerciseId: entry.key,
+        exerciseName: entry.value.name,
+        previousBestKg: previous,
+        newBestKg: entry.value.best,
+      ));
+    }
+    return summaries;
   }
 
   Future<void> createExercise(
@@ -804,7 +979,10 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
                COALESCE(SUM(CASE WHEN s.is_warmup = 0 AND s.completed_at IS NOT NULL
                                  THEN s.weight_kg * s.reps END), 0) total_kg,
                COUNT(s.id) set_count,
-               (SELECT COUNT(*) FROM workout_exercises we WHERE we.workout_id = w.id) exercise_count
+               (SELECT COUNT(*) FROM workout_exercises we WHERE we.workout_id = w.id) exercise_count,
+               (SELECT COUNT(*) FROM workout_sets s2
+                  JOIN workout_exercises we2 ON we2.id = s2.workout_exercise_id
+                 WHERE we2.workout_id = w.id AND s2.is_pr = 1) pr_count
         FROM workouts w
         LEFT JOIN workout_exercises we ON we.workout_id = w.id
         LEFT JOIN workout_sets s ON s.workout_exercise_id = we.id
@@ -819,6 +997,7 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
               totalKg: (r['total_kg'] as num).toDouble(),
               setCount: r['set_count'] as int,
               exerciseCount: r['exercise_count'] as int,
+              prCount: (r['pr_count'] as num?)?.toInt() ?? 0,
             ))
         .toList();
   }

@@ -62,6 +62,14 @@ def main():
     go += silence(8)
     go += tone(1400, 130, 0.32, attack_ms=3.0, release_ms=90.0)
     write_wav("rest_go.wav", go)
+    # Personal record: a three-note rising fanfare, longer and higher than the
+    # rest cues so it reads as a celebration, not a timer cue.
+    pr = tone(1175, 110, 0.30, attack_ms=3.0, release_ms=30.0)
+    pr += silence(20)
+    pr += tone(1568, 110, 0.32, attack_ms=3.0, release_ms=30.0)
+    pr += silence(20)
+    pr += tone(2093, 220, 0.34, attack_ms=3.0, release_ms=150.0)
+    write_wav("pr_fanfare.wav", pr)
 
 
 if __name__ == "__main__":

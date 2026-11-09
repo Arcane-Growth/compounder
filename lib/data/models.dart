@@ -96,6 +96,15 @@ class WorkoutSet {
   final int? completedAt;
   final bool isWarmup;
 
+  /// True when this set was a personal record (best e1RM for the exercise at
+  /// the moment it was completed). Persisted so history renders without
+  /// recomputing against a moving baseline.
+  final bool isPr;
+
+  /// The e1RM snapshot stored with a PR set, in kg. Null for non-PR sets and
+  /// for rows written before schema v12.
+  final double? prE1rmKg;
+
   const WorkoutSet({
     required this.id,
     required this.workoutExerciseId,
@@ -104,6 +113,8 @@ class WorkoutSet {
     required this.reps,
     this.completedAt,
     this.isWarmup = false,
+    this.isPr = false,
+    this.prE1rmKg,
   });
 
   Map<String, Object?> toMap() => {
@@ -114,6 +125,8 @@ class WorkoutSet {
         'reps': reps,
         'completed_at': completedAt,
         'is_warmup': isWarmup ? 1 : 0,
+        'is_pr': isPr ? 1 : 0,
+        'pr_e1rm_kg': prE1rmKg,
       };
 
   factory WorkoutSet.fromMap(Map<String, Object?> m) => WorkoutSet(
@@ -124,6 +137,10 @@ class WorkoutSet {
         reps: m['reps'] as int,
         completedAt: m['completed_at'] as int?,
         isWarmup: (m['is_warmup'] as int) == 1,
+        // A row read from a database that predates schema v12 has no PR
+        // columns; treat it as a non-PR set rather than throwing.
+        isPr: (m['is_pr'] as int? ?? 0) == 1,
+        prE1rmKg: (m['pr_e1rm_kg'] as num?)?.toDouble(),
       );
 }
 
@@ -380,6 +397,10 @@ class WorkoutSummary {
   final int setCount;
   final int exerciseCount;
 
+  /// Number of personal-record sets in the session. Zero for sessions logged
+  /// before schema v12 and for sessions with no PRs.
+  final int prCount;
+
   const WorkoutSummary({
     required this.workoutId,
     required this.name,
@@ -388,6 +409,7 @@ class WorkoutSummary {
     required this.totalKg,
     required this.setCount,
     required this.exerciseCount,
+    this.prCount = 0,
   });
 }
 

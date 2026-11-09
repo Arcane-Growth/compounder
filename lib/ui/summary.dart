@@ -20,6 +20,10 @@ class _SummaryScreenState extends State<SummaryScreen> {
   /// never drops the loaded workout back to a loading state.
   late final Future<WorkoutDetail?> _detail;
 
+  /// Personal records for this session, read from the persisted flags so the
+  /// summary agrees with what the user was shown during the workout.
+  late final Future<List<PrSummary>> _prs;
+
   /// Workout-exercise ids whose set list is expanded. Held in State so the
   /// expansion survives rebuilds and expanding one exercise does not collapse
   /// another. Collapsed by default: the owner asked to expand "if I want".
@@ -28,7 +32,9 @@ class _SummaryScreenState extends State<SummaryScreen> {
   @override
   void initState() {
     super.initState();
-    _detail = context.read<AppStore>().workoutDetail(widget.workoutId);
+    final store = context.read<AppStore>();
+    _detail = store.workoutDetail(widget.workoutId);
+    _prs = store.prSummary(widget.workoutId);
   }
 
   void _toggle(int workoutExerciseId) {
@@ -115,6 +121,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
                         StatCard(label: 'Total reps', value: '${volume.reps}')),
               ]),
               const SizedBox(height: 16),
+              _prSection(store),
               const SectionHeader('Exercises'),
               ...detail.exercises.map((view) => _exerciseCard(store, view)),
               const SizedBox(height: 16),
@@ -133,6 +140,51 @@ class _SummaryScreenState extends State<SummaryScreen> {
         );
       },
     );
+  }
+
+  /// The session's personal records, or nothing at all when there are none.
+  ///
+  /// Each row names the exercise, the previous best and the new best in the
+  /// unit the user selected in Settings, plus the delta. A first-ever baseline
+  /// reads "First PR" rather than "previous best 0".
+  Widget _prSection(AppStore store) {
+    return FutureBuilder<List<PrSummary>>(
+      future: _prs,
+      builder: (context, snap) {
+        final prs = snap.data ?? const <PrSummary>[];
+        if (prs.isEmpty) return const SizedBox.shrink();
+        final scheme = Theme.of(context).colorScheme;
+        final t = Theme.of(context).textTheme;
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const SectionHeader('Personal records'),
+          const SizedBox(height: 8),
+          for (final pr in prs)
+            Card(
+              color: scheme.tertiaryContainer,
+              child: ListTile(
+                leading: Icon(Icons.emoji_events,
+                    color: scheme.onTertiaryContainer),
+                title: Text(pr.exerciseName,
+                    style: t.titleMedium
+                        ?.copyWith(color: scheme.onTertiaryContainer)),
+                subtitle: Text(_prDetail(pr, store.unit),
+                    style: t.bodySmall
+                        ?.copyWith(color: scheme.onTertiaryContainer)),
+              ),
+            ),
+          const SizedBox(height: 16),
+        ]);
+      },
+    );
+  }
+
+  String _prDetail(PrSummary pr, WeightUnit unit) {
+    final newBest = '${trimZero(fromKg(pr.newBestKg, unit))} ${unit.label}';
+    if (pr.isBaseline) return 'First PR · $newBest';
+    final previous =
+        '${trimZero(fromKg(pr.previousBestKg, unit))} ${unit.label}';
+    final delta = '+${trimZero(fromKg(pr.deltaKg, unit))} ${unit.label}';
+    return 'Previous best $previous → new best $newBest ($delta)';
   }
 
   /// One exercise card: the same aggregate row the summary has always shown,
@@ -215,11 +267,15 @@ class _SummaryScreenState extends State<SummaryScreen> {
     final weight = trimZero(fromKg(set.weightKg, store.unit));
     final detail = '$weight ${store.unit.label} × ${set.reps} reps';
     final status = done ? 'Completed' : 'Not completed';
+    final prLabel = set.isPr
+        ? ', personal record'
+            '${set.prE1rmKg == null ? '' : ' at ${trimZero(fromKg(set.prE1rmKg!, store.unit))} ${store.unit.label} estimated 1RM'}'
+        : '';
 
     return Semantics(
       container: true,
       label: 'Set ${set.position + 1}, $detail'
-          '${set.isWarmup ? ', warm-up' : ''}, ${status.toLowerCase()}',
+          '${set.isWarmup ? ', warm-up' : ''}$prLabel, ${status.toLowerCase()}',
       child: ExcludeSemantics(
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 3),
@@ -234,6 +290,19 @@ class _SummaryScreenState extends State<SummaryScreen> {
                   style: t.bodyMedium?.copyWith(
                       color: done ? scheme.onSurface : scheme.onSurfaceVariant)),
             ),
+            if (set.isPr) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: scheme.tertiaryContainer,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text('PR',
+                    style: t.labelSmall
+                        ?.copyWith(color: scheme.onTertiaryContainer)),
+              ),
+            ],
             if (set.isWarmup) ...[
               const SizedBox(width: 6),
               Container(

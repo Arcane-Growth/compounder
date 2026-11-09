@@ -3,26 +3,30 @@ import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 
-/// A rest-timer cue.
-enum RestCue {
+/// A workout audio cue.
+enum WorkoutCue {
   /// Five seconds of rest left: one short, quiet warning tick.
   fiveSeconds('sounds/rest_tick.wav'),
 
   /// Rest over: a rising two-note "go" tone, clearly brighter than the tick.
-  go('sounds/rest_go.wav');
+  go('sounds/rest_go.wav'),
 
-  const RestCue(this.asset);
+  /// A set just became a personal record: a short three-note fanfare, higher
+  /// and longer than the rest cues so it cannot be mistaken for one.
+  personalRecord('sounds/pr_fanfare.wav');
+
+  const WorkoutCue(this.asset);
 
   /// Path under the asset bundle (audioplayers prefixes `assets/`).
   final String asset;
 }
 
-/// Plays rest-timer cues.
+/// Plays workout cues.
 ///
 /// Abstract so widget tests can inject a fake and assert which cues fired
 /// without touching audio hardware.
-abstract class RestSounds {
-  Future<void> play(RestCue cue);
+abstract class WorkoutSounds {
+  Future<void> play(WorkoutCue cue);
 
   Future<void> dispose();
 }
@@ -40,14 +44,14 @@ abstract class RestSounds {
 ///
 /// Playback failures are swallowed: a device with no audio route must never
 /// break a workout, and the plugin is absent in widget tests.
-class AudioRestSounds implements RestSounds {
-  AudioRestSounds({this.volume = 0.35});
+class AudioWorkoutSounds implements WorkoutSounds {
+  AudioWorkoutSounds({this.volume = 0.35});
 
   /// Per-stream volume. The WAVs are already quiet; this is a second cap.
   final double volume;
 
-  final Map<RestCue, AudioPlayer> _players = {};
-  final Set<RestCue> _loaded = {};
+  final Map<WorkoutCue, AudioPlayer> _players = {};
+  final Set<WorkoutCue> _loaded = {};
   bool _disposed = false;
 
   static final AudioContext _context = AudioContext(
@@ -63,11 +67,11 @@ class AudioRestSounds implements RestSounds {
   );
 
   @override
-  Future<void> play(RestCue cue) async {
+  Future<void> play(WorkoutCue cue) async {
     if (_disposed) return;
     try {
       final player = _players.putIfAbsent(
-          cue, () => AudioPlayer(playerId: 'compounder-rest-${cue.name}'));
+          cue, () => AudioPlayer(playerId: 'compounder-cue-${cue.name}'));
       if (!_loaded.contains(cue)) {
         // Order matters: the audio context must be set before the source,
         // because the low-latency backend builds its stream from the context
@@ -83,7 +87,7 @@ class AudioRestSounds implements RestSounds {
       await player.stop();
       await player.resume();
     } catch (error) {
-      debugPrint('rest cue ${cue.name} failed: $error');
+      debugPrint('workout cue ${cue.name} failed: $error');
     }
   }
 
@@ -95,7 +99,7 @@ class AudioRestSounds implements RestSounds {
       try {
         await player.dispose();
       } catch (error) {
-        debugPrint('rest cue dispose failed: $error');
+        debugPrint('workout cue dispose failed: $error');
       }
     }
     _players.clear();
