@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -222,7 +224,7 @@ class ActivityHeatmap extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (showMonthLabels)
-                  _monthLabels(context, columns, columnWidth),
+                  _monthLabels(context, columns, columnWidth, start, end),
                 gridColumns,
               ],
             ),
@@ -270,8 +272,8 @@ class ActivityHeatmap extends StatelessWidget {
     );
   }
 
-  Widget _monthLabels(
-      BuildContext context, List<List<DateTime>> columns, double columnWidth) {
+  Widget _monthLabels(BuildContext context, List<List<DateTime>> columns,
+      double columnWidth, DateTime first, DateTime last) {
     final style = Theme.of(context)
         .textTheme
         .labelSmall
@@ -295,13 +297,16 @@ class ActivityHeatmap extends StatelessWidget {
     for (var i = 0; i < columns.length; i++) {
       DateTime? firstOfMonth;
       for (final day in columns[i]) {
+        // A week column can extend past the requested range (the grid is
+        // padded to whole weeks). A month that starts in that padding must
+        // not be labelled: it is outside the range the user asked for.
+        if (day.isBefore(first) || day.isAfter(last)) continue;
         if (day.day == 1) {
           firstOfMonth = day;
           break;
         }
       }
-      final month =
-          firstOfMonth?.month ?? (i == 0 ? columns[i].first.month : null);
+      final month = firstOfMonth?.month ?? (i == 0 ? first.month : null);
       if (month == null || month == lastMonth) continue;
       lastMonth = month;
       labels.add(Positioned(
@@ -395,34 +400,107 @@ class HeatmapScreen extends StatefulWidget {
   State<HeatmapScreen> createState() => _HeatmapScreenState();
 }
 
-class _HeatmapScreenState extends State<HeatmapScreen> {
+class _HeatmapScreenState extends State<HeatmapScreen>
+    with WidgetsBindingObserver {
+  AppStore? _store;
   Map<String, PillarDay> _days = {};
   DateTime _today = DateTime.now();
   String? _error;
 
+  /// Coalesces a burst of store notifications into one reload.
+  Timer? _debounce;
+
+  /// One-shot timer for the next local midnight, so a screen left open
+  /// overnight does not keep showing yesterday's summary.
+  Timer? _midnight;
+
+  /// Incremented for every load; a result whose generation is stale is
+  /// dropped, so two overlapping queries cannot land out of order.
+  int _generation = 0;
+
   @override
   void initState() {
     super.initState();
-    _load();
+    WidgetsBinding.instance.addObserver(this);
+    _scheduleMidnight();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final store = context.read<AppStore>();
+    if (!identical(store, _store)) {
+      _store?.removeListener(_scheduleReload);
+      _store = store;
+      store.addListener(_scheduleReload);
+      _load();
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _debounce?.cancel();
+    _midnight?.cancel();
+    _store?.removeListener(_scheduleReload);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _scheduleMidnight();
+      _load();
+    }
+  }
+
+  /// Arms a one-shot timer for the next local midnight. Calendar arithmetic,
+  /// not `Duration(days: 1)`: a DST transition must not make it fire an hour
+  /// early or late.
+  void _scheduleMidnight() {
+    _midnight?.cancel();
+    final now = (widget.now ?? DateTime.now)();
+    final nextMidnight = DateTime(now.year, now.month, now.day + 1);
+    _midnight = Timer(
+        nextMidnight.difference(now) + const Duration(seconds: 1), () {
+      if (!mounted) return;
+      _scheduleMidnight();
+      _load();
+    });
+  }
+
+  /// Debounced store listener: a background sync or a log made while this
+  /// screen is open must refresh it, but a burst of notifications must not
+  /// run the aggregate queries once per notification.
+  void _scheduleReload() {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 150), _load);
   }
 
   Future<void> _load() async {
-    final store = context.read<AppStore>();
+    final store = _store;
+    if (store == null) return;
+    final generation = ++_generation;
     final now = (widget.now ?? DateTime.now)();
     final today = DateTime(now.year, now.month, now.day);
     final from = DateTime(today.year, today.month, today.day - 364);
     final to = DateTime(today.year, today.month, today.day + 1);
     try {
       final days = await store.dailyPillarActivity(from, to);
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
       setState(() {
         _days = days;
         _today = today;
         _error = null;
       });
     } catch (e) {
-      if (!mounted) return;
-      setState(() => _error = e.toString());
+      // A load that lands after the screen is gone (or after a newer load
+      // started) is irrelevant: do not log it or touch state.
+      if (!mounted || generation != _generation) return;
+      // Keep the raw error for the log; the user gets a human message.
+      debugPrint('HeatmapScreen: activity load failed: $e');
+      setState(() => _error =
+          'Your activity could not be loaded. Try again in a moment.');
     }
   }
 
@@ -434,11 +512,17 @@ class _HeatmapScreenState extends State<HeatmapScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Activity')),
       body: _error != null
-          ? EmptyState(
-              title: 'Could not load activity',
-              subtitle: _error!,
-              icon: Icons.error_outline,
-            )
+          ? Column(children: [
+              EmptyState(
+                title: 'Could not load activity',
+                subtitle: _error!,
+                icon: Icons.error_outline,
+              ),
+              FilledButton(
+                onPressed: _load,
+                child: const Text('Try again'),
+              ),
+            ])
           : ListView(
                   padding: const EdgeInsets.all(20),
                   children: [
@@ -500,8 +584,54 @@ class _HeatmapScreenState extends State<HeatmapScreen> {
                         ),
                       ),
                     ),
+                    const SizedBox(height: 20),
+                    const SectionHeader('Recent days'),
+                    const SizedBox(height: 8),
+                    Card(
+                      color: scheme.surfaceContainerLow,
+                      child: Column(children: [
+                        for (var i = 0; i < 7; i++) ...[
+                          if (i > 0) const Divider(height: 1),
+                          _DayRow(
+                            day: DateTime(
+                                _today.year, _today.month, _today.day - i),
+                            data: _days[localDayKey(DateTime(
+                                _today.year, _today.month, _today.day - i))],
+                          ),
+                        ],
+                      ]),
+                    ),
                   ],
                 ),
+    );
+  }
+}
+
+/// One accessible per-day row: a 48dp [ListTile] that opens the same detail
+/// sheet as a heatmap square. The 14px squares are a dense visualisation, so
+/// this list is the touch-target-sized path to the same information.
+class _DayRow extends StatelessWidget {
+  final DateTime day;
+  final PillarDay? data;
+
+  const _DayRow({required this.day, required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final t = Theme.of(context).textTheme;
+    final entry = data;
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      onTap: () => showDayDetail(context, day, entry),
+      title: Text(formatDate(day.millisecondsSinceEpoch), style: t.titleMedium),
+      subtitle: Text(
+        entry == null
+            ? 'Nothing logged'
+            : '${entry.pillarCount} of 4 pillars logged',
+        style: t.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+      ),
+      trailing: Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
     );
   }
 }

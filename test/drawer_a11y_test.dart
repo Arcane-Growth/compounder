@@ -397,6 +397,9 @@ void main() {
       expect(nav().updateShouldNotify(ShellNav(
             openDrawer: before,
             selectTab: beforeSelect,
+            // The shell now also carries the active-tab visibility flag; a
+            // rebuild that changes only the tab must not notify dependents.
+            visible: nav().visible,
             child: const SizedBox(),
           )),
           isFalse);

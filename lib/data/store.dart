@@ -93,7 +93,7 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
       {String? path, SecretStore? secretStore}) async {
     path ??= p.join(await getDatabasesPath(), 'compounder.db');
     final db = await openDatabase(path,
-        version: 10,
+        version: 11,
         onConfigure: _configureSchema,
         onCreate: _createSchema,
         onUpgrade: _upgradeSchema);
@@ -157,6 +157,7 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
     await _createV8Indexes(db);
     await _createV9Indexes(db);
     await _createV10Tables(db);
+    await _createV11Indexes(db);
   }
 
   static Future<void> _createV2Tables(Database db) async {
@@ -261,6 +262,20 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
       // applied migration.
       await _createV10Tables(db);
     }
+    if (oldVersion < 11) {
+      // The activity heatmap's aggregate queries filtered on a timestamp (or
+      // day) column with no index, so every refresh full-scanned workouts,
+      // moods, meditations, thought_records and habit_completions. These
+      // indexes turn each scan into a bounded range search. Indexes hold no
+      // user data, so the step is additive and safe to re-run.
+      //
+      // The GROUP BY still builds a temp B-tree: the group key is a computed
+      // local-date expression (`date(...)`), which an index cannot satisfy.
+      // That sort is bounded by the rows inside the requested window, not by
+      // the table size, so it is accepted rather than widened into a
+      // composite index.
+      await _createV11Indexes(db);
+    }
   }
 
   /// Indexes for the non-health tables (schema v8/v9). Idempotent so both
@@ -312,6 +327,25 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
       count INTEGER NOT NULL DEFAULT 1,
       created_at INTEGER NOT NULL,
       UNIQUE(habit_id, day))''');
+  }
+
+  /// Schema v11: range indexes for the activity heatmap's aggregate queries.
+  /// Idempotent, additive only.
+  ///
+  /// `habit_completions` already has an implicit `UNIQUE(habit_id, day)` index,
+  /// but its leading column is `habit_id`, so a day-range query cannot use it.
+  /// The explicit day-leading index serves the heatmap's range scan.
+  static Future<void> _createV11Indexes(Database db) async {
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_workouts_started_at ON workouts(started_at)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_moods_timestamp ON moods(timestamp)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_meditations_timestamp ON meditations(timestamp)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_thought_records_timestamp ON thought_records(timestamp)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_habit_completions_day ON habit_completions(day)');
   }
 
   /// Adds [column] to [table] only when it is absent, so a partially applied

@@ -63,6 +63,7 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
       body: ShellNav(
         openDrawer: _openDrawer,
         selectTab: _selectTab,
+        visible: _index == 0,
         child: IndexedStack(
           index: _index,
           children: const [

@@ -259,7 +259,7 @@ void main() {
       final heartState = await store.db
           .query('health_sync_state', where: "metric = 'HEART_RATE'");
       expect(heartState, hasLength(1));
-      expect(await store.db.getVersion(), 10);
+      expect(await store.db.getVersion(), 11);
       await store.db.close();
       await databaseFactory.deleteDatabase(path);
     });
@@ -325,7 +325,7 @@ void main() {
       await store.db.close();
 
       store = await AppStore.open(prefs, path: path);
-      expect(await store.db.getVersion(), 10);
+      expect(await store.db.getVersion(), 11);
 
       final allRows = await store.db.query('health_sync_state',
           where: "metric = '__all__'");
@@ -413,7 +413,7 @@ void main() {
       await store.db.close();
 
       store = await AppStore.open(prefs, path: path);
-      expect(await store.db.getVersion(), 10);
+      expect(await store.db.getVersion(), 11);
       expect(
           await store.db
               .query('health_sync_state', where: "metric = '__all__'"),

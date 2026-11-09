@@ -1,5 +1,7 @@
+import 'package:compounder/data/models.dart';
 import 'package:compounder/data/store.dart';
 import 'package:compounder/domain/activity.dart';
+import 'package:compounder/domain/domain.dart';
 import 'package:compounder/health/repository.dart';
 import 'package:compounder/health/service.dart';
 import 'package:compounder/services/notify.dart';
@@ -14,12 +16,10 @@ import 'package:compounder/ui/widgets.dart';
 import 'package:compounder/ui/workout.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:health/health.dart';
+import 'package:health/health.dart' hide WorkoutSummary;
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:timezone/data/latest_all.dart' as tzdata;
-import 'package:timezone/timezone.dart' as tz;
 
 /// Health plugin stub: the home quick links open Settings and the Fitness
 /// screen, both of which read [HealthService]; the stub keeps them off the
@@ -68,9 +68,47 @@ class _StubHealthSource implements HealthSource {
   Future<void> revokePermissions() async {}
 }
 
+/// A store stand-in that counts the aggregate queries HomeTab issues.
+///
+/// It implements only the members HomeTab reads; anything else is forwarded to
+/// [noSuchMethod] (and throws if actually used), so the fake cannot silently
+/// diverge from the real store's surface.
+class _CountingStore extends ChangeNotifier implements AppStore {
+  int activityQueries = 0;
+  int activeWorkoutQueries = 0;
+  bool fail = false;
+  Map<String, PillarDay> days = const {};
+  Workout? active;
+
+  @override
+  Future<Map<String, PillarDay>> dailyPillarActivity(
+      DateTime from, DateTime to) async {
+    activityQueries++;
+    if (fail) throw Exception('database_closed: the database is closed');
+    return days;
+  }
+
+  @override
+  Future<Workout?> activeWorkout() async {
+    activeWorkoutQueries++;
+    return active;
+  }
+
+  @override
+  List<WorkoutSummary> history = const [];
+
+  @override
+  WeightUnit get unit => WeightUnit.kg;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      super.noSuchMethod(invocation);
+}
+
 /// Activity heatmap + gamified home: intensity mapping, streak and perfect-day
-/// math (including a gap, a single day and a DST transition), the aggregate
-/// store query against a seeded database, and the heatmap widget itself.
+/// math (including a gap and a single day), the aggregate store query against a
+/// seeded database, and the heatmap widget itself. The DST guard lives in
+/// `activity_heatmap_dst_test.dart`, which pins the ambient zone.
 
 PillarDay day(String key,
         {int workout = 0,
@@ -89,7 +127,6 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   sqfliteFfiInit();
   databaseFactory = databaseFactoryFfi;
-  setUpAll(tzdata.initializeTimeZones);
 
   group('intensity mapping', () {
     test('0-4 distinct pillars map to intensity 0-4', () {
@@ -176,28 +213,6 @@ void main() {
       expect(currentStreak(days, today), 1);
     });
 
-    test('a DST transition day is one day, not zero or two', () {
-      final ny = tz.getLocation('America/New_York');
-      final before = tz.TZDateTime(ny, 2026, 3, 7, 12);
-      final dst = tz.TZDateTime(ny, 2026, 3, 8, 12);
-      final after = tz.TZDateTime(ny, 2026, 3, 9, 12);
-      // Fail loudly if the zone data ever stops having the transition: the
-      // test would otherwise pass without exercising DST at all.
-      expect(dst.timeZoneOffset, isNot(before.timeZoneOffset),
-          reason: 'America/New_York must spring forward on 2026-03-08');
-      expect(localDayKey(before), '2026-03-07');
-      expect(localDayKey(dst), '2026-03-08');
-      expect(localDayKey(after), '2026-03-09');
-      final days = {
-        for (final d in [before, dst, after])
-          localDayKey(d): day(localDayKey(d), workout: 1),
-      };
-      expect(currentStreak(days, after), 3,
-          reason: 'calendar-day arithmetic must not skip the 23-hour day');
-      expect(longestStreak(days), 3);
-      expect(previousDayKey('2026-03-09'), '2026-03-08');
-      expect(previousDayKey('2026-03-08'), '2026-03-07');
-    });
   });
 
   group('perfect-day counting', () {
@@ -413,7 +428,12 @@ void main() {
       await databaseFactory.deleteDatabase(path);
     });
 
-    Widget host({ValueChanged<int>? selectTab}) => MultiProvider(
+    Widget host({
+      ValueChanged<int>? selectTab,
+      bool visible = true,
+      DateTime Function()? now,
+    }) =>
+        MultiProvider(
           providers: [
             ChangeNotifierProvider<AppStore>.value(value: store),
             ChangeNotifierProvider<HealthService>.value(value: health),
@@ -424,7 +444,8 @@ void main() {
             home: ShellNav(
               openDrawer: () {},
               selectTab: selectTab,
-              child: const HomeTab(),
+              visible: visible,
+              child: HomeTab(now: now),
             ),
           ),
         );
@@ -579,6 +600,166 @@ void main() {
       expect(find.byType(SettingsScreen, skipOffstage: false), findsOneWidget);
     });
 
+    testWidgets('home does not query the store while off-screen',
+        (tester) async {
+      final fake = _CountingStore();
+      await tester.pumpWidget(MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AppStore>.value(value: fake),
+          ChangeNotifierProvider<HealthService>.value(value: health),
+          Provider<NotifyService>.value(value: NotifyService()),
+        ],
+        child: MaterialApp(
+          theme: CompounderTheme.light(),
+          home: ShellNav(
+            openDrawer: () {},
+            visible: false,
+            child: const HomeTab(),
+          ),
+        ),
+      ));
+      await tester.pump();
+      expect(fake.activityQueries, 0,
+          reason: 'an off-screen tab must not run the aggregate query');
+      expect(fake.activeWorkoutQueries, 0);
+
+      // A store notification while off-screen must not query either.
+      fake.notifyListeners();
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(fake.activityQueries, 0,
+          reason: 'a mutation on another tab must not reload this one');
+      expect(fake.activeWorkoutQueries, 0);
+    });
+
+    testWidgets('home catches up when it becomes visible', (tester) async {
+      final fake = _CountingStore();
+      Widget build(bool visible) => MultiProvider(
+            providers: [
+              ChangeNotifierProvider<AppStore>.value(value: fake),
+              ChangeNotifierProvider<HealthService>.value(value: health),
+              Provider<NotifyService>.value(value: NotifyService()),
+            ],
+            child: MaterialApp(
+              theme: CompounderTheme.light(),
+              home: ShellNav(
+                openDrawer: () {},
+                visible: visible,
+                child: const HomeTab(),
+              ),
+            ),
+          );
+
+      await tester.pumpWidget(build(false));
+      await tester.pump();
+      expect(fake.activityQueries, 0);
+
+      await tester.pumpWidget(build(true));
+      await tester.pump();
+      expect(fake.activityQueries, 1,
+          reason: 'becoming visible must catch up on the missed data');
+    });
+
+    testWidgets('home refreshes today when the app resumes', (tester) async {
+      var now = DateTime(2026, 11, 9, 23, 30);
+      await tester.pumpWidget(host(now: () => now));
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)));
+      await tester.pump();
+      expect(find.text(formatDate(DateTime(2026, 11, 9).millisecondsSinceEpoch)),
+          findsOneWidget);
+
+      // The app was backgrounded across midnight; resuming must follow the
+      // clock instead of waiting for the next store notification.
+      now = DateTime(2026, 11, 10, 0, 5);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)));
+      await tester.pump();
+      expect(find.text(formatDate(DateTime(2026, 11, 10).millisecondsSinceEpoch)),
+          findsOneWidget,
+          reason: 'a resumed app must not keep showing yesterday');
+    });
+
+    testWidgets('activity screen refreshes when the store changes',
+        (tester) async {
+      await tester.pumpWidget(ChangeNotifierProvider<AppStore>.value(
+        value: store,
+        child: MaterialApp(
+          theme: CompounderTheme.light(),
+          home: const HeatmapScreen(),
+        ),
+      ));
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)));
+      await tester.pump();
+      expect(find.text('0-day streak'), findsNothing);
+      expect(find.text('0'), findsWidgets,
+          reason: 'the summary renders the empty store');
+
+      // A log made while the screen is open must be reflected without a
+      // manual refresh.
+      await tester.runAsync(() async {
+        await store.db.insert('workouts', {
+          'name': 'Evening',
+          'started_at': DateTime.now().millisecondsSinceEpoch,
+        });
+        await store.refreshAll();
+        // The screen debounces store notifications; let the timer fire and the
+        // aggregate query complete inside the real-async zone.
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      });
+      await tester.pump();
+      expect(find.text('1'), findsWidgets,
+          reason: 'the current streak must update after a store change');
+    });
+
+    testWidgets('activity screen shows a human error, not raw SQLite text',
+        (tester) async {
+      final fake = _CountingStore()..fail = true;
+      await tester.pumpWidget(ChangeNotifierProvider<AppStore>.value(
+        value: fake,
+        child: MaterialApp(
+          theme: CompounderTheme.light(),
+          home: const HeatmapScreen(),
+        ),
+      ));
+      await tester.pump();
+      expect(find.text('Could not load activity'), findsOneWidget);
+      expect(find.textContaining('database_closed'), findsNothing,
+          reason: 'the raw exception belongs in the log, not the UI');
+      expect(find.text('Try again'), findsOneWidget);
+    });
+
+    testWidgets('activity screen offers a per-day list with tappable rows',
+        (tester) async {
+      await tester.pumpWidget(ChangeNotifierProvider<AppStore>.value(
+        value: store,
+        child: MaterialApp(
+          theme: CompounderTheme.light(),
+          home: const HeatmapScreen(),
+        ),
+      ));
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)));
+      await tester.pump();
+
+      expect(find.byType(ListView), findsOneWidget,
+          reason: 'the activity screen must render its scrollable body');
+      expect(find.text('RECENT DAYS'), findsOneWidget,
+          reason: 'the per-day list is reachable without scrolling');
+
+      // Scroll so the whole per-day list is on screen, then check every row.
+      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.pumpAndSettle();
+      expect(find.byType(ListTile), findsNWidgets(7),
+          reason: 'the per-day list is the 48dp touch-target path');
+
+      await tester.tap(find.byType(ListTile).first);
+      await tester.pumpAndSettle();
+      expect(find.text('Nothing logged'), findsWidgets,
+          reason: 'tapping a day row opens the same detail sheet');
+    });
+
     testWidgets('home and legend do not overflow at 320x640/textScaler 2.0',
         (tester) async {
       tester.view.physicalSize = const Size(320, 640);
@@ -688,6 +869,26 @@ void main() {
       expect((labelX - cellX).abs(), lessThan(0.5),
           reason: 'the Jan label must sit over the Jan 1 column, not the '
               'weekday-label gutter');
+    });
+
+    testWidgets('month labels stay inside the requested range', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        theme: CompounderTheme.light(),
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: ActivityHeatmap(
+              days: const {},
+              start: DateTime(2026, 12, 28),
+              end: DateTime(2026, 12, 31),
+              scrollable: false,
+            ),
+          ),
+        ),
+      ));
+      expect(find.text('Dec'), findsOneWidget);
+      expect(find.text('Jan'), findsNothing,
+          reason: 'the grid is padded to whole weeks; January starts after '
+              'the requested range and must not be labelled');
     });
 
     testWidgets('a cell tap reports its own day', (tester) async {

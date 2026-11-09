@@ -70,6 +70,11 @@ class PillarDay {
 }
 
 /// The local day key for [day], discarding any time component.
+///
+/// Deliberately an alias for [habitDayKey]: the activity heatmap and the habit
+/// tracker must agree on what "a day" means, and one shared implementation is
+/// the only way to guarantee that. The separate name documents the domain
+/// boundary; it is not an independent implementation.
 String localDayKey(DateTime day) => habitDayKey(day);
 
 /// The day key immediately before [key], or null when [key] is malformed.

@@ -14,10 +14,19 @@ class ShellNav extends InheritedWidget {
   /// only [openDrawer]; the app always supplies it.
   final ValueChanged<int>? selectTab;
 
+  /// Whether the tab wrapped by this widget is the one currently on screen.
+  ///
+  /// The shell keeps every tab mounted in an [IndexedStack], so a tab cannot
+  /// infer visibility from its own lifecycle. Tabs that poll the store use
+  /// this to skip work while they are off-screen. Defaults to true so a tab
+  /// mounted on its own (widget tests, a future single-tab route) still loads.
+  final bool visible;
+
   const ShellNav({
     super.key,
     required this.openDrawer,
     this.selectTab,
+    this.visible = true,
     required super.child,
   });
 
@@ -29,7 +38,9 @@ class ShellNav extends InheritedWidget {
 
   @override
   bool updateShouldNotify(ShellNav oldWidget) =>
-      openDrawer != oldWidget.openDrawer || selectTab != oldWidget.selectTab;
+      openDrawer != oldWidget.openDrawer ||
+      selectTab != oldWidget.selectTab ||
+      visible != oldWidget.visible;
 }
 
 /// A single destination listed in the app drawer.

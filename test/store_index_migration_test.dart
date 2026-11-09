@@ -23,6 +23,21 @@ const _indexes = <String, String>{
   'idx_balance_snapshots_taken': 'balance_snapshots',
   'idx_balance_snapshots_account_taken': 'balance_snapshots',
   'idx_reminders_due_at': 'reminders',
+  'idx_workouts_started_at': 'workouts',
+  'idx_moods_timestamp': 'moods',
+  'idx_meditations_timestamp': 'meditations',
+  'idx_thought_records_timestamp': 'thought_records',
+  'idx_habit_completions_day': 'habit_completions',
+};
+
+/// The v11 activity range indexes, kept separate so the 10 -> 11 upgrade test
+/// can drop exactly these and drive the production migration path.
+const _v11Indexes = <String, String>{
+  'idx_workouts_started_at': 'workouts',
+  'idx_moods_timestamp': 'moods',
+  'idx_meditations_timestamp': 'meditations',
+  'idx_thought_records_timestamp': 'thought_records',
+  'idx_habit_completions_day': 'habit_completions',
 };
 
 /// The v8 index set, as shipped in e84c232: the workout_sets index carried the
@@ -65,6 +80,39 @@ const _plans = <String, ({String sql, bool avoidsTempBTree})>{
   'reminders due_at': (
     sql: 'SELECT * FROM reminders WHERE due_at > 0 ORDER BY due_at',
     avoidsTempBTree: true,
+  ),
+  // The activity heatmap's aggregate queries (schema v11). The GROUP BY is on
+  // a computed local-date expression, so a temp B-tree remains; the win is
+  // that each table is now a bounded range search instead of a full scan.
+  'workouts by started_at': (
+    sql: "SELECT date(started_at / 1000, 'unixepoch', 'localtime') AS day, "
+        'COUNT(*) AS c FROM workouts '
+        'WHERE started_at >= 0 AND started_at < 9999999999999 GROUP BY day',
+    avoidsTempBTree: false,
+  ),
+  'moods by timestamp': (
+    sql: "SELECT date(timestamp / 1000, 'unixepoch', 'localtime') AS day, "
+        'COUNT(*) AS c FROM moods '
+        'WHERE timestamp >= 0 AND timestamp < 9999999999999 GROUP BY day',
+    avoidsTempBTree: false,
+  ),
+  'meditations by timestamp': (
+    sql: "SELECT date(timestamp / 1000, 'unixepoch', 'localtime') AS day, "
+        'COUNT(*) AS c FROM meditations '
+        'WHERE timestamp >= 0 AND timestamp < 9999999999999 GROUP BY day',
+    avoidsTempBTree: false,
+  ),
+  'thought_records by timestamp': (
+    sql: "SELECT date(timestamp / 1000, 'unixepoch', 'localtime') AS day, "
+        'COUNT(*) AS c FROM thought_records '
+        'WHERE timestamp >= 0 AND timestamp < 9999999999999 GROUP BY day',
+    avoidsTempBTree: false,
+  ),
+  'habit_completions by day': (
+    sql: 'SELECT day, COUNT(*) AS c FROM habit_completions '
+        "WHERE day >= '2025-01-01' AND day < '2026-01-01' AND count > 0 "
+        'GROUP BY day',
+    avoidsTempBTree: false,
   ),
 };
 
@@ -154,6 +202,34 @@ Future<void> _seedHotPathTables(Database db) async {
       'taken_at': i * 60000,
     });
   }
+  // Activity heatmap tables (schema v11). The habit completion days must be
+  // unique because of UNIQUE(habit_id, day).
+  final habitId = await db.insert('habits', {
+    'name': 'Read',
+    'cadence': 'daily',
+    'target': 1,
+    'created_at': 0,
+  });
+  for (var i = 0; i < 300; i++) {
+    await db.insert('moods', {'timestamp': i * 60000, 'mood': 4});
+    await db.insert('meditations', {'timestamp': i * 60000, 'minutes': 10});
+    await db.insert('thought_records', {
+      'timestamp': i * 60000,
+      'situation': 's$i',
+      'thought': 't$i',
+    });
+  }
+  for (var i = 0; i < 28; i++) {
+    final day = DateTime(2025, 1, 1 + i);
+    await db.insert('habit_completions', {
+      'habit_id': habitId,
+      'day': '${day.year.toString().padLeft(4, '0')}-'
+          '${day.month.toString().padLeft(2, '0')}-'
+          '${day.day.toString().padLeft(2, '0')}',
+      'count': 1,
+      'created_at': 0,
+    });
+  }
 }
 
 void main() {
@@ -181,7 +257,7 @@ void main() {
       () async {
     final prefs = await SharedPreferences.getInstance();
     final store = await AppStore.open(prefs, path: path);
-    expect(await store.db.getVersion(), 10);
+    expect(await store.db.getVersion(), 11);
 
     await _expectIndexesOnTables(store.db, _indexes);
     expect(await _indexTable(store.db, 'idx_workout_sets_exercise'), isNull,
@@ -281,7 +357,7 @@ void main() {
     await store.db.close();
 
     store = await AppStore.open(prefs, path: path);
-    expect(await store.db.getVersion(), 10);
+    expect(await store.db.getVersion(), 11);
 
     // No data loss: the seeded rows are all still there.
     expect(await store.db.query('workouts'), hasLength(1));
@@ -400,7 +476,7 @@ void main() {
     await store.db.close();
 
     store = await AppStore.open(prefs, path: path);
-    expect(await store.db.getVersion(), 10);
+    expect(await store.db.getVersion(), 11);
 
     // The v9 step must have replaced both index shapes.
     expect(await _indexTable(store.db, 'idx_balance_snapshots_taken'),
@@ -440,6 +516,70 @@ void main() {
     await store.db.close();
   });
 
+  test('upgrade 10 -> 11 adds the activity range indexes without data loss',
+      () async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // Build a current-schema database, seed one row in every table the v11
+    // indexes cover, then rewind to a genuine v10 shape: the habit tables
+    // exist, but none of the v11 indexes do.
+    var store = await AppStore.open(prefs, path: path);
+    await store.db.insert('workouts', {
+      'name': 'Leg day',
+      'started_at': 1000,
+      'ended_at': 2000,
+    });
+    await store.db.insert('moods', {
+      'timestamp': 3000,
+      'mood': 4,
+      'note': 'ok',
+    });
+    await store.db.insert('meditations', {
+      'timestamp': 4000,
+      'minutes': 10,
+    });
+    await store.db.insert('thought_records', {
+      'timestamp': 5000,
+      'situation': 's',
+      'thought': 't',
+    });
+    final habitId = await store.db.insert('habits', {
+      'name': 'Read',
+      'cadence': 'daily',
+      'target': 1,
+      'created_at': 0,
+    });
+    await store.db.insert('habit_completions', {
+      'habit_id': habitId,
+      'day': '2026-11-08',
+      'count': 1,
+      'created_at': 0,
+    });
+
+    for (final index in _v11Indexes.keys) {
+      await store.db.execute('DROP INDEX IF EXISTS $index');
+    }
+    await store.db.setVersion(10);
+    expect(await store.db.getVersion(), 10);
+    for (final index in _v11Indexes.keys) {
+      expect(await _indexTable(store.db, index), isNull,
+          reason: 'a v10 database has no $index');
+    }
+    await store.db.close();
+
+    store = await AppStore.open(prefs, path: path);
+    expect(await store.db.getVersion(), 11);
+    await _expectIndexesOnTables(store.db, _v11Indexes);
+
+    // No data loss: every seeded row survives the migration.
+    expect(await store.db.query('workouts'), hasLength(1));
+    expect(await store.db.query('moods'), hasLength(1));
+    expect(await store.db.query('meditations'), hasLength(1));
+    expect(await store.db.query('thought_records'), hasLength(1));
+    expect(await store.db.query('habit_completions'), hasLength(1));
+    await store.db.close();
+  });
+
   test('the 7 -> 9 step is safe to re-run (IF NOT EXISTS)', () async {
     final prefs = await SharedPreferences.getInstance();
     var store = await AppStore.open(prefs, path: path);
@@ -449,7 +589,7 @@ void main() {
     await store.db.close();
 
     store = await AppStore.open(prefs, path: path);
-    expect(await store.db.getVersion(), 10);
+    expect(await store.db.getVersion(), 11);
     await store.db.close();
   });
 
@@ -508,6 +648,19 @@ void main() {
         reason: 'the net-worth index must cover exactly the queried columns');
     expect(await _plan(store.db, _plans['reminders due_at']!.sql),
         contains('idx_reminders_due_at'));
+
+    // The activity heatmap's aggregate queries must each pick their v11 range
+    // index. Pinning the name catches a dropped or mis-shaped index.
+    expect(await _plan(store.db, _plans['workouts by started_at']!.sql),
+        contains('idx_workouts_started_at'));
+    expect(await _plan(store.db, _plans['moods by timestamp']!.sql),
+        contains('idx_moods_timestamp'));
+    expect(await _plan(store.db, _plans['meditations by timestamp']!.sql),
+        contains('idx_meditations_timestamp'));
+    expect(await _plan(store.db, _plans['thought_records by timestamp']!.sql),
+        contains('idx_thought_records_timestamp'));
+    expect(await _plan(store.db, _plans['habit_completions by day']!.sql),
+        contains('idx_habit_completions_day'));
 
     // deleteAccount filters on account_id alone; the account_id-leading index
     // must keep that a seek rather than a full scan.

@@ -355,15 +355,16 @@ void main() {
       return {for (final r in rows) r['name'] as String};
     }
 
-    test('fresh install creates the habit tables at version 10', () async {
+    test('fresh install creates the habit tables at the current version',
+        () async {
       final prefs = await SharedPreferences.getInstance();
       final store = await AppStore.open(prefs, path: path);
-      expect(await store.db.getVersion(), 10);
+      expect(await store.db.getVersion(), 11);
       expect(await tables(store), containsAll(['habits', 'habit_completions']));
       await store.db.close();
     });
 
-    test('a real v9 database upgrades to v10 without losing data', () async {
+    test('a real v9 database upgrades without losing data', () async {
       final prefs = await SharedPreferences.getInstance();
       var store = await AppStore.open(prefs, path: path);
       await store.db.insert('meals', {
@@ -386,7 +387,7 @@ void main() {
       });
 
       // Rewind to a genuine v9 shape: the habit tables did not exist and
-      // user_version was 9. This drives the production 9 -> 10 path.
+      // user_version was 9. This drives the production 9 -> 11 path.
       await store.db.execute('DROP TABLE IF EXISTS habit_completions');
       await store.db.execute('DROP TABLE IF EXISTS habits');
       await store.db.setVersion(9);
@@ -395,7 +396,7 @@ void main() {
       await store.db.close();
 
       store = await AppStore.open(prefs, path: path);
-      expect(await store.db.getVersion(), 10);
+      expect(await store.db.getVersion(), 11);
       expect(await tables(store), containsAll(['habits', 'habit_completions']));
 
       // No data loss in the pre-existing tables.
@@ -423,7 +424,7 @@ void main() {
       await store.db.close();
 
       store = await AppStore.open(prefs, path: path);
-      expect(await store.db.getVersion(), 10);
+      expect(await store.db.getVersion(), 11);
       expect(store.habits, hasLength(1));
       expect(store.habitCompletions, hasLength(1),
           reason: 'IF NOT EXISTS must not drop the existing rows');

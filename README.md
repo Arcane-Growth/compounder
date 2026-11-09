@@ -70,7 +70,10 @@ tracking) and expands it into one place for every area of life you want to get 1
 
 ```bash
 flutter pub get
-flutter analyze && flutter test
+flutter analyze
+# The DST regression guards assert on ambient-zone transitions and fail loudly
+# rather than passing vacuously when the runner has none. Pin the zone:
+TZ=America/New_York flutter test
 
 # Android (release APK lands in build/app/outputs/flutter-apk/)
 flutter build apk --release

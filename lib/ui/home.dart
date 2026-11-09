@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -32,33 +34,106 @@ class HomeTab extends StatefulWidget {
   State<HomeTab> createState() => _HomeTabState();
 }
 
-class _HomeTabState extends State<HomeTab> {
+class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
   AppStore? _store;
   Map<String, PillarDay> _days = {};
   Workout? _active;
   DateTime _today = DateTime.now();
 
+  /// Whether this tab is the one the shell is showing. The shell keeps every
+  /// tab mounted in an [IndexedStack], so without this flag a mutation on any
+  /// other tab would still run this tab's aggregate queries.
+  bool _visible = true;
+
+  /// Coalesces a burst of store notifications into one reload.
+  Timer? _debounce;
+
+  /// One-shot timer for the next local midnight, so a home screen left open
+  /// overnight does not keep showing yesterday's date and streak.
+  Timer? _midnight;
+
+  /// Incremented for every reload; a result whose generation is stale is
+  /// dropped, so two overlapping queries cannot land out of order.
+  int _generation = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _scheduleMidnight();
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final store = context.read<AppStore>();
+    final visible = ShellNav.of(context).visible;
+    final becameVisible = visible && !_visible;
+    _visible = visible;
     if (!identical(store, _store)) {
-      _store?.removeListener(_reload);
+      _store?.removeListener(_scheduleReload);
       _store = store;
-      store.addListener(_reload);
+      store.addListener(_scheduleReload);
+      // An off-screen tab must not run the aggregate queries on first bind;
+      // it catches up in the `becameVisible` branch below.
+      if (_visible) _reload();
+    } else if (becameVisible) {
+      // The tab was off-screen while the store changed; catch up now that it
+      // is visible again.
       _reload();
     }
   }
 
   @override
   void dispose() {
-    _store?.removeListener(_reload);
+    WidgetsBinding.instance.removeObserver(this);
+    _debounce?.cancel();
+    _midnight?.cancel();
+    _store?.removeListener(_scheduleReload);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // The clock may have crossed midnight while the app was backgrounded.
+      _scheduleMidnight();
+      if (_visible) _reload();
+    }
+  }
+
+  /// Arms a one-shot timer for the next local midnight. Calendar arithmetic,
+  /// not `Duration(days: 1)`: a DST transition must not make it fire an hour
+  /// early or late.
+  void _scheduleMidnight() {
+    _midnight?.cancel();
+    final now = (widget.now ?? DateTime.now)();
+    final nextMidnight = DateTime(now.year, now.month, now.day + 1);
+    _midnight = Timer(
+        nextMidnight.difference(now) + const Duration(seconds: 1), () {
+      if (!mounted) return;
+      _scheduleMidnight();
+      if (_visible) _reload();
+    });
+  }
+
+  /// Debounced store listener: logging a set, a meal or a habit notifies the
+  /// store several times, and each notification must not cost five queries.
+  void _scheduleReload() {
+    // Notifications from mutations on other tabs are ignored while this tab is
+    // off-screen; becoming visible reloads once with the latest data.
+    if (!_visible) return;
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 150), () {
+      // The tab may have gone off-screen during the debounce window.
+      if (_visible) _reload();
+    });
   }
 
   Future<void> _reload() async {
     final store = _store;
     if (store == null) return;
+    final generation = ++_generation;
     final now = (widget.now ?? DateTime.now)();
     final today = DateTime(now.year, now.month, now.day);
     final from = DateTime(today.year, today.month, today.day - 364);
@@ -66,7 +141,7 @@ class _HomeTabState extends State<HomeTab> {
     try {
       final days = await store.dailyPillarActivity(from, to);
       final active = await store.activeWorkout();
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
       setState(() {
         _days = days;
         _active = active;
@@ -75,7 +150,7 @@ class _HomeTabState extends State<HomeTab> {
     } catch (_) {
       // A closed database (test teardown) or a transient query failure must
       // not take the front door down: the last known data stays on screen.
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
       setState(() => _today = today);
     }
   }
@@ -404,24 +479,29 @@ class _PillarTile extends StatelessWidget {
 
 Future<String?> _askWorkoutName(BuildContext context) async {
   final controller = TextEditingController(text: 'Workout');
-  final result = await showDialog<String>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: const Text('New workout'),
-      content: TextField(
-        controller: controller,
-        autofocus: true,
-        decoration: const InputDecoration(labelText: 'Name'),
+  try {
+    return await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('New workout'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Name'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, controller.text),
+              child: const Text('Start')),
+        ],
       ),
-      actions: [
-        TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel')),
-        FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text),
-            child: const Text('Start')),
-      ],
-    ),
-  );
-  return result;
+    );
+  } finally {
+    // The dialog's TextField no longer needs the controller once the route is
+    // gone; disposing it here avoids leaking one per "new workout" prompt.
+    controller.dispose();
+  }
 }
