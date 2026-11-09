@@ -47,7 +47,7 @@ val missingSigningInputs = buildList {
 val releaseSigningConfigured = missingSigningInputs.isEmpty()
 
 android {
-    namespace = "dev.compounder.compounder"
+    namespace = "com.arcanegrowth.compounder"
     // API 37 is a floor, not a pin: permission_handler_android 14.x compiles
     // against API 37 constants (ACCESS_LOCAL_NETWORK,
     // VERSION_CODES.CINNAMON_BUN), and AGP refuses to build an app whose
@@ -64,8 +64,8 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "dev.compounder.compounder"
+        // Final application ID: irreversible after the first Play upload.
+        applicationId = "com.arcanegrowth.compounder"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 26

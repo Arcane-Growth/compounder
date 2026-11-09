@@ -92,8 +92,8 @@ are absent.
 
 ## iOS
 
-- Bundle identifier: `dev.compounder.compounder` (owner is deciding whether this
-  changes; do not change it in a build-only PR).
+- Bundle identifier: `com.arcanegrowth.compounder` (final; matches the Android
+  `applicationId`. Irreversible after the first App Store upload).
 - Deployment target: iOS 15.0 (`IPHONEOS_DEPLOYMENT_TARGET` in
   `Runner.xcodeproj`), above Flutter's minimum.
 - `CFBundleShortVersionString` / `CFBundleVersion` come from

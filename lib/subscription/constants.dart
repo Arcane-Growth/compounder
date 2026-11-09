@@ -35,7 +35,7 @@ const Map<String, String> subscriptionPlanLabels = {
 /// in-app billing UI for cancellation, so the screen deep-links to the store.
 const String manageSubscriptionUrlAndroid =
     'https://play.google.com/store/account/subscriptions'
-    '?package=dev.compounder.compounder';
+    '?package=com.arcanegrowth.compounder';
 const String manageSubscriptionUrlIos =
     'https://apps.apple.com/account/subscriptions';
 
