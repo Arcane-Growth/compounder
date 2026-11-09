@@ -6,6 +6,46 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// ---------------------------------------------------------------------------
+// Release signing
+// ---------------------------------------------------------------------------
+// The upload keystore lives outside the repository; android/key.properties
+// (gitignored) points at it. A release build must never silently fall back to
+// the debug key: Play rejects an update signed with a different key, and a
+// debug-signed artifact installs and runs fine locally, so the mistake would
+// only surface at upload time. Instead, configuration fails with an actionable
+// message before any release task runs.
+//
+// Escape hatch for a local `flutter run --release` on a machine without the
+// keystore: set `compounder.allowDebugSigning=true` in
+// ~/.gradle/gradle.properties. That file is user-level and never committed, so
+// CI stays strict. See docs/release-build.md.
+val keystorePropertiesFile = rootProject.file("key.properties")
+val keystoreProperties = Properties()
+val allowDebugSigning =
+    providers.gradleProperty("compounder.allowDebugSigning")
+        .map { it.toBoolean() }
+        .orElse(false)
+        .get()
+
+val missingSigningInputs = buildList {
+    if (!keystorePropertiesFile.exists()) {
+        add("android/key.properties does not exist")
+    } else {
+        keystoreProperties.load(keystorePropertiesFile.inputStream())
+        val required = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+        val blank = required.filter { keystoreProperties.getProperty(it).isNullOrBlank() }
+        if (blank.isNotEmpty()) {
+            add("android/key.properties is missing: ${blank.joinToString(", ")}")
+        }
+        val storeFile = keystoreProperties.getProperty("storeFile")
+        if (!storeFile.isNullOrBlank() && !rootProject.file(storeFile).exists()) {
+            add("keystore file not found at '$storeFile' (android/key.properties storeFile)")
+        }
+    }
+}
+val releaseSigningConfigured = missingSigningInputs.isEmpty()
+
 android {
     namespace = "dev.compounder.compounder"
     // API 37 is a floor, not a pin: permission_handler_android 14.x compiles
@@ -39,10 +79,7 @@ android {
     }
 
     signingConfigs {
-        val keystoreProperties = Properties()
-        val keystorePropertiesFile = rootProject.file("key.properties")
-        if (keystorePropertiesFile.exists()) {
-            keystoreProperties.load(keystorePropertiesFile.inputStream())
+        if (releaseSigningConfigured) {
             create("release") {
                 storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
                 storePassword = keystoreProperties.getProperty("storePassword")
@@ -54,10 +91,46 @@ android {
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.findByName("release")
-                ?: signingConfigs.getByName("debug")
+            // Only reached when releaseSigningConfigured, or when the local
+            // escape hatch is set; the guard below fails the build otherwise.
+            signingConfig =
+                if (releaseSigningConfigured) {
+                    signingConfigs.getByName("release")
+                } else {
+                    signingConfigs.getByName("debug")
+                }
+            // R8: shrink, obfuscate and resource-shrink the release artifact.
+            // Rules for plugins that resolve classes reflectively (Gson in
+            // flutter_local_notifications, Tink in flutter_secure_storage) are
+            // in proguard-rules.pro.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
+}
+
+// Fail loudly, at configuration time, when a release task is requested and the
+// upload key is not available. `flutter build apk/appbundle --release` and
+// `flutter run --release` request assembleRelease / bundleRelease, so the guard
+// covers every path Flutter uses. (Gradle 9's Kotlin DSL no longer accepts a
+// lambda for TaskExecutionGraph.whenReady, so the requested task names are the
+// reliable signal here.)
+val releaseRequested =
+    gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }
+if (releaseRequested && !releaseSigningConfigured && !allowDebugSigning) {
+    throw GradleException(
+        buildString {
+            appendLine("Release build is not signed with the upload key:")
+            missingSigningInputs.forEach { appendLine("  - $it") }
+            appendLine("Create android/key.properties (see docs/release-build.md), or set")
+            appendLine("compounder.allowDebugSigning=true in ~/.gradle/gradle.properties for a")
+            append("local `flutter run --release` without the keystore.")
+        },
+    )
 }
 
 kotlin {
