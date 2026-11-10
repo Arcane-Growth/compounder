@@ -97,6 +97,37 @@ the release build.
 `gh pr list` at 2026-11-10: all four PRs `MERGEABLE`, `REVIEW_REQUIRED`, zero failing checks.
 No merges performed; `main` untouched.
 
+## Round 2 — fixes for the gate's Minors
+
+Round 1 verdicts were APPROVE WITH FIXES (no Blockers, no Majors). The three cheap Minors were fixed
+on the Dependabot branches; PR #2 M1 (integration-level coach-screen guard) is left as a follow-up
+because it needs store/agent scaffolding and does not affect shipped behaviour.
+
+**PR #4 `189697c`** (branch `dependabot/pub/permission_handler-13.0.2`) — closes M1 and M2:
+- `android/build.gradle.kts` now reads each plugin's declared `compileSdk` and only raises it to the
+  37 floor (`if (declared == null || declared < 37)`), so a plugin declaring 38 is never lowered.
+  Probed at build time: `permission_handler_android declared=37` (left alone), the other 17 plugins
+  declared 34–36 and were raised.
+- `android/app/build.gradle.kts` uses `compileSdk = maxOf(37, flutter.compileSdkVersion)` instead of a
+  hardcoded 37, so a future Flutter bump is followed automatically and the two files cannot silently
+  diverge.
+- Local: `flutter build apk --release` → `✓ Built … app-release.apk (68.3MB)`; `aapt2 dump badging` →
+  `compileSdkVersion='37'`, `targetSdkVersion:'36'`; merged manifest `minSdkVersion="26"`.
+- CI on `189697c`: run https://github.com/Arcane-Growth/compounder/actions/runs/42745638782 → 4/4
+  success, release build job 129597980868 (8m57s), `✓ Built … app-release.apk (63.4MB)` +
+  `✓ Built … app-release.aab (60.5MB)`.
+
+**PR #2 `7686d83`** (branch `dependabot/pub/flutter-minor-patch-fbd56fded5`) — closes M2:
+- `test/coach_markdown_render_test.dart` now asserts the U+FFFC object-replacement character that the
+  embedded formula surfaces as, so the case fails if `val_latex_flutter` renders nothing.
+- Local: `flutter test test/coach_markdown_render_test.dart` → `+4: All tests passed!`;
+  `dart format --set-exit-if-changed` clean.
+- CI on `7686d83`: run https://github.com/Arcane-Growth/compounder/actions/runs/42745665088 → 4/4
+  success, release build job 129598050618 (8m24s), `✓ Built … app-release.apk (74.4MB)` +
+  `✓ Built … app-release.aab (72.7MB)`.
+
+**PR #3 / PR #5** — unchanged (`e933dcb`, `24df4d6`), both still 4/4 green.
+
 ## Gate verdict
 
 **Reviewer**: Code Reviewer. **Date**: 2026-11-10. Every command below was re-run by me in the
