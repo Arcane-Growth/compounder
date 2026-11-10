@@ -27,7 +27,7 @@ dependencies:
   gpt_markdown: ^1.2.1
   pdfx: ^2.11.0
   health: ^13.3.2
-  permission_handler: ^12.0.1
+  permission_handler: ^13.0.2
   # Compounder AI subscription. in_app_purchase is the Flutter team's
   # Play Billing / StoreKit wrapper; the two platform packages are pulled in
   # transitively but pinned here so the Android (Billing 9.x) and iOS
