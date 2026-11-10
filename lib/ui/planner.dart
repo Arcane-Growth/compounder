@@ -36,6 +36,101 @@ const double _minBodySlack = 2;
 /// Padding around the card body's text.
 const EdgeInsets _cardBodyPadding = EdgeInsets.fromLTRB(4, 2, 8, 2);
 
+/// Visual inset between a card and its slot edges, so two blocks that touch in
+/// time (one ends exactly when the next starts) are separated on screen. The
+/// inset is drawn inside the slot: the block still represents its exact start
+/// and end, and every drag/resize delta is unchanged. Kept at 2dp because a
+/// 60-minute card must still afford its 48dp resize strip.
+const double _cardGap = 2;
+
+/// Horizontal gutter between two lanes of overlapping blocks.
+const double _laneGutter = 3;
+
+/// Left edge of the block column, clear of the hour labels.
+const double _timelineLeft = 56;
+
+/// Right margin of the block column.
+const double _timelineRight = 8;
+
+/// Lane placement for one block on the timeline: [lane] is the zero-based lane
+/// inside a cluster of [lanes] overlapping blocks.
+class PlannerLane {
+  const PlannerLane({required this.lane, required this.lanes});
+
+  final int lane;
+  final int lanes;
+}
+
+/// One block's time range, as the lane layout sees it. The planner passes the
+/// live drag times for the block under the finger, so the layout follows the
+/// gesture.
+class PlannerSpan {
+  const PlannerSpan({required this.id, required this.start, required this.end});
+
+  final int id;
+  final int start;
+  final int end;
+}
+
+/// Google-Calendar-style lane layout for [spans].
+///
+/// Blocks whose time ranges overlap form one cluster, transitively: if A
+/// overlaps B and B overlaps C, all three share a cluster. Inside a cluster
+/// each block takes the lowest lane whose last block has already ended, so the
+/// lane count is the cluster's peak concurrency and no two blocks in the same
+/// lane overlap. Blocks that merely touch (one ends exactly when the next
+/// starts) are not overlapping and stay in separate clusters.
+///
+/// The result is deterministic: spans are ordered by start minute, then id, so
+/// the same day always produces the same lanes and a rebuild cannot reshuffle
+/// them. Every span gets an entry.
+Map<int, PlannerLane> plannerLaneLayout(List<PlannerSpan> spans) {
+  final sorted = [...spans]..sort((a, b) {
+      final byStart = a.start.compareTo(b.start);
+      if (byStart != 0) return byStart;
+      return a.id.compareTo(b.id);
+    });
+  final result = <int, PlannerLane>{};
+  var cluster = <PlannerSpan>[];
+  var clusterEnd = 0;
+
+  void flush() {
+    if (cluster.isEmpty) return;
+    final laneEnds = <int>[];
+    final assignment = <int, int>{};
+    for (final span in cluster) {
+      var lane = -1;
+      for (var i = 0; i < laneEnds.length; i++) {
+        if (laneEnds[i] <= span.start) {
+          lane = i;
+          break;
+        }
+      }
+      if (lane < 0) {
+        lane = laneEnds.length;
+        laneEnds.add(span.end);
+      } else {
+        laneEnds[lane] = span.end;
+      }
+      assignment[span.id] = lane;
+    }
+    for (final entry in assignment.entries) {
+      result[entry.key] =
+          PlannerLane(lane: entry.value, lanes: laneEnds.length);
+    }
+    cluster = <PlannerSpan>[];
+    clusterEnd = 0;
+  }
+
+  for (final span in sorted) {
+    if (cluster.isNotEmpty && span.start >= clusterEnd) flush();
+    cluster.add(span);
+    clusterEnd = math.max(clusterEnd, span.end);
+  }
+  flush();
+  return result;
+}
+
 /// Chronological day planner as a direct-manipulation timeline: tap an empty
 /// slot to type a one-liner, drag a block's bottom edge to resize it, drag its
 /// body to move it, tap it to rename, long-press to delete with undo.
@@ -602,25 +697,38 @@ class _PlannerScreenState extends State<PlannerScreen>
       {required bool isToday, required int nowMinute}) {
     final ordered = chronological(_blocks);
     final editing = _editingId == null ? null : _blockById(_editingId!);
+    // Lane layout from the live times, so a block being dragged or resized
+    // re-lanes mid-gesture instead of leaving a stale side-by-side split.
+    final lanes = plannerLaneLayout([
+      for (final block in ordered)
+        PlannerSpan(
+            id: block.id,
+            start: _dragId == block.id ? _dragStart : block.startMin,
+            end: _dragId == block.id ? _dragEnd : block.endMin),
+    ]);
     return SingleChildScrollView(
       controller: _scroll,
       child: SizedBox(
         height: minutesPerDay / 60 * _hourHeight,
-        child: Stack(children: [
-          // The grid is static between drags; a repaint boundary keeps the
-          // per-event drag rebuild from repainting the 73-widget grid.
-          RepaintBoundary(child: _grid(context)),
-          if (isToday) _nowLine(context, nowMinute),
-          for (final block in ordered) _positionedBlock(context, block),
-          if (_creatingStart != null)
-            _positionedEditor(context,
-                start: _creatingStart!,
-                end: _clampInt(
-                    _creatingStart! + _defaultDuration, 0, minutesPerDay)),
-          if (editing != null)
-            _positionedEditor(context,
-                block: editing, start: editing.startMin, end: editing.endMin),
-        ]),
+        child: LayoutBuilder(builder: (context, constraints) {
+          final width = constraints.maxWidth;
+          return Stack(children: [
+            // The grid is static between drags; a repaint boundary keeps the
+            // per-event drag rebuild from repainting the 73-widget grid.
+            RepaintBoundary(child: _grid(context)),
+            if (isToday) _nowLine(context, nowMinute),
+            for (final block in ordered)
+              _positionedBlock(context, block, lanes[block.id]!, width: width),
+            if (_creatingStart != null)
+              _positionedEditor(context,
+                  start: _creatingStart!,
+                  end: _clampInt(
+                      _creatingStart! + _defaultDuration, 0, minutesPerDay)),
+            if (editing != null)
+              _positionedEditor(context,
+                  block: editing, start: editing.startMin, end: editing.endMin),
+          ]);
+        }),
       ),
     );
   }
@@ -742,21 +850,48 @@ class _PlannerScreenState extends State<PlannerScreen>
   /// Card height for a [duration]-minute block. A card is never shorter than
   /// its own text: at large text scales a 30-minute block has to grow past its
   /// slot, otherwise the body would have to clip the title or the time label.
+  ///
+  /// The card is inset by [_cardGap] inside its slot, so a block that can
+  /// afford it renders [_cardGap] shorter than its slot and back-to-back
+  /// blocks are visually separated. A slot shorter than [_minCardHeight] (a
+  /// 15-minute block) keeps the 48dp floor and grows past its slot instead.
   double _cardHeight(BuildContext context, int duration) {
     final content = _bodyContentHeights(context).compact;
     final needed = content + _minHandleHit + _minBodySlack;
-    return math.max(_topFor(duration), math.max(_minCardHeight, needed));
+    final slot = _topFor(duration);
+    final floor = slot < _minCardHeight ? _minCardHeight : slot - _cardGap;
+    return math.max(needed, floor);
   }
 
-  Widget _positionedBlock(BuildContext context, PlanBlock block) {
+  /// Left offset and width of [lane] inside a cluster of [lanes] overlapping
+  /// blocks. The lanes split the block column exactly, so no lane can overflow
+  /// the timeline horizontally.
+  ({double left, double width}) _laneGeometry(
+      int lane, int lanes, double width) {
+    final available = math.max(0.0, width - _timelineLeft - _timelineRight);
+    final laneWidth =
+        math.max(0.0, (available - (lanes - 1) * _laneGutter) / lanes);
+    return (
+      left: _timelineLeft + lane * (laneWidth + _laneGutter),
+      width: laneWidth,
+    );
+  }
+
+  Widget _positionedBlock(
+      BuildContext context, PlanBlock block, PlannerLane placement,
+      {required double width}) {
     final dragging = _dragId == block.id;
     final start = dragging ? _dragStart : block.startMin;
     final end = dragging ? _dragEnd : block.endMin;
     final height = _cardHeight(context, end - start);
+    final geometry = _laneGeometry(placement.lane, placement.lanes, width);
     return Positioned(
-      top: _clampTop(_topFor(start), height),
-      left: 56,
-      right: 8,
+      // The gap is an inset inside the slot: the card's top is half a gap below
+      // the block's real start, and its height is a gap shorter, so the card
+      // never claims a minute it does not own.
+      top: _clampTop(_topFor(start) + _cardGap / 2, height),
+      left: geometry.left,
+      width: geometry.width,
       height: height,
       child: _blockCard(context, block, height: height, dragging: dragging),
     );
@@ -767,8 +902,8 @@ class _PlannerScreenState extends State<PlannerScreen>
     final height = _topFor(end - start).clamp(64.0, double.infinity).toDouble();
     return Positioned(
       top: _clampTop(_topFor(start), height),
-      left: 56,
-      right: 8,
+      left: _timelineLeft,
+      right: _timelineRight,
       height: height,
       child: _inlineEditor(context, block: block, start: start, end: end),
     );
@@ -796,7 +931,12 @@ class _PlannerScreenState extends State<PlannerScreen>
     // 48dp whenever the card can afford it and shrinks to [_minHandleHit]
     // before it would eat the text.
     final content = _bodyContentHeights(context);
-    final columnFits = height >= content.column + 2 + 48 + _minBodySlack;
+    // The gap is an inset inside the slot, so the height the block's slot
+    // affords is the card plus the gap. Deriving the decision from that keeps
+    // the compact-vs-column choice identical to the pre-gap behaviour: the gap
+    // must not turn a card that could host two lines into a clipped one.
+    final slotHeight = height + _cardGap;
+    final columnFits = slotHeight >= content.column + 2 + 48 + _minBodySlack;
     final compact = !columnFits;
     final bodyContent = columnFits ? content.column : content.compact;
     final handleHit = (height - bodyContent - _minBodySlack)
@@ -813,145 +953,153 @@ class _PlannerScreenState extends State<PlannerScreen>
         color: current ? scheme.primaryContainer : scheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(12),
         clipBehavior: Clip.antiAlias,
-        child: Stack(children: [
-          Positioned(
-            left: 0,
-            top: 0,
-            bottom: 0,
-            width: 44,
-            child: _doneToggle(context, block, current: current),
-          ),
-          Positioned(
-            left: 44,
-            top: 0,
-            right: 0,
-            bottom: handleHit,
-            child: GestureDetector(
-              key: ValueKey('plan-block-${block.id}'),
-              behavior: HitTestBehavior.opaque,
-              dragStartBehavior: DragStartBehavior.down,
-              onTap: () => _startEdit(block),
-              onLongPress: () => _deleteBlock(context, block),
-              onVerticalDragStart: (_) => _beginDrag(block, resize: false),
-              onVerticalDragUpdate: (details) =>
-                  _updateDrag(details.primaryDelta! / _hourHeight * 60),
-              onVerticalDragEnd: (_) => _endDrag(),
-              child: ClipRect(
-                child: OverflowBox(
-                  alignment: Alignment.topLeft,
-                  maxHeight: double.infinity,
-                  child: Padding(
-                    padding: _cardBodyPadding,
-                    child: compact
-                        // A card that cannot host two lines puts the time
-                        // beside the title on one line.
-                        ? Row(children: [
-                            Expanded(
-                              flex: 2,
-                              child: Text(
-                                block.title,
-                                style: t.bodyMedium?.copyWith(
-                                  decoration: block.done
-                                      ? TextDecoration.lineThrough
-                                      : null,
+        child: LayoutBuilder(builder: (context, constraints) {
+          // A lane can be narrower than the 44dp toggle. Cap the toggle at a
+          // share of the card so the body always keeps the majority of the
+          // width and a 3+ lane cluster cannot squeeze it to nothing.
+          final toggleWidth = math.min(44.0, constraints.maxWidth * 0.45);
+          return Stack(children: [
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: toggleWidth,
+              child: _doneToggle(context, block, current: current),
+            ),
+            Positioned(
+              left: toggleWidth,
+              top: 0,
+              right: 0,
+              bottom: handleHit,
+              child: GestureDetector(
+                key: ValueKey('plan-block-${block.id}'),
+                behavior: HitTestBehavior.opaque,
+                dragStartBehavior: DragStartBehavior.down,
+                onTap: () => _startEdit(block),
+                onLongPress: () => _deleteBlock(context, block),
+                onVerticalDragStart: (_) => _beginDrag(block, resize: false),
+                onVerticalDragUpdate: (details) =>
+                    _updateDrag(details.primaryDelta! / _hourHeight * 60),
+                onVerticalDragEnd: (_) => _endDrag(),
+                child: ClipRect(
+                  child: OverflowBox(
+                    alignment: Alignment.topLeft,
+                    maxHeight: double.infinity,
+                    child: Padding(
+                      padding: _cardBodyPadding,
+                      child: compact
+                          // A card that cannot host two lines puts the time
+                          // beside the title on one line.
+                          ? Row(children: [
+                              Expanded(
+                                flex: 2,
+                                child: Text(
+                                  block.title,
+                                  style: t.bodyMedium?.copyWith(
+                                    decoration: block.done
+                                        ? TextDecoration.lineThrough
+                                        : null,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
                               ),
-                            ),
-                            const SizedBox(width: 6),
-                            Flexible(
-                              flex: 3,
-                              child: Text(
-                                dragging
-                                    ? formatPlanDuration(duration)
-                                    : timeLabel,
-                                key: dragging
-                                    ? ValueKey('plan-drag-readout-${block.id}')
-                                    : null,
-                                style: t.labelSmall?.copyWith(
-                                    color: current
-                                        ? scheme.onPrimaryContainer
-                                        : scheme.onSurfaceVariant),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ])
-                        : Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                block.title,
-                                style: t.bodyMedium?.copyWith(
-                                  decoration: block.done
-                                      ? TextDecoration.lineThrough
+                              const SizedBox(width: 6),
+                              Flexible(
+                                flex: 3,
+                                child: Text(
+                                  dragging
+                                      ? formatPlanDuration(duration)
+                                      : timeLabel,
+                                  key: dragging
+                                      ? ValueKey(
+                                          'plan-drag-readout-${block.id}')
                                       : null,
+                                  style: t.labelSmall?.copyWith(
+                                      color: current
+                                          ? scheme.onPrimaryContainer
+                                          : scheme.onSurfaceVariant),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                dragging
-                                    ? formatPlanDuration(duration)
-                                    : timeLabel,
-                                key: dragging
-                                    ? ValueKey('plan-drag-readout-${block.id}')
-                                    : null,
-                                style: t.bodySmall?.copyWith(
-                                    color: current
-                                        ? scheme.onPrimaryContainer
-                                        : scheme.onSurfaceVariant),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ),
+                            ])
+                          : Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  block.title,
+                                  style: t.bodyMedium?.copyWith(
+                                    decoration: block.done
+                                        ? TextDecoration.lineThrough
+                                        : null,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  dragging
+                                      ? formatPlanDuration(duration)
+                                      : timeLabel,
+                                  key: dragging
+                                      ? ValueKey(
+                                          'plan-drag-readout-${block.id}')
+                                      : null,
+                                  style: t.bodySmall?.copyWith(
+                                      color: current
+                                          ? scheme.onPrimaryContainer
+                                          : scheme.onSurfaceVariant),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-          Positioned(
-            left: 44,
-            right: 0,
-            bottom: 0,
-            height: handleHit,
-            child: Semantics(
-              label: 'Resize ${block.title}',
-              onIncrease: () => _resizeBy(block, _snapMinutes),
-              onDecrease: () => _resizeBy(block, -_snapMinutes),
-              child: GestureDetector(
-                key: ValueKey('plan-resize-${block.id}'),
-                behavior: HitTestBehavior.opaque,
-                dragStartBehavior: DragStartBehavior.down,
-                // The strip is part of the card, so a tap on it renames too
-                // instead of being a dead zone.
-                onTap: () => _startEdit(block),
-                onVerticalDragStart: (_) => _beginDrag(block, resize: true),
-                onVerticalDragUpdate: (details) =>
-                    _updateDrag(details.primaryDelta! / _hourHeight * 60),
-                onVerticalDragEnd: (_) => _endDrag(),
-                child: Align(
-                  alignment: Alignment.bottomCenter,
-                  child: Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Container(
-                      width: 28,
-                      height: 3,
-                      decoration: BoxDecoration(
-                        color: scheme.onSurfaceVariant.withValues(alpha: 0.5),
-                        borderRadius: BorderRadius.circular(2),
+            Positioned(
+              left: toggleWidth,
+              right: 0,
+              bottom: 0,
+              height: handleHit,
+              child: Semantics(
+                label: 'Resize ${block.title}',
+                onIncrease: () => _resizeBy(block, _snapMinutes),
+                onDecrease: () => _resizeBy(block, -_snapMinutes),
+                child: GestureDetector(
+                  key: ValueKey('plan-resize-${block.id}'),
+                  behavior: HitTestBehavior.opaque,
+                  dragStartBehavior: DragStartBehavior.down,
+                  // The strip is part of the card, so a tap on it renames too
+                  // instead of being a dead zone.
+                  onTap: () => _startEdit(block),
+                  onVerticalDragStart: (_) => _beginDrag(block, resize: true),
+                  onVerticalDragUpdate: (details) =>
+                      _updateDrag(details.primaryDelta! / _hourHeight * 60),
+                  onVerticalDragEnd: (_) => _endDrag(),
+                  child: Align(
+                    alignment: Alignment.bottomCenter,
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Container(
+                        width: 28,
+                        height: 3,
+                        decoration: BoxDecoration(
+                          color: scheme.onSurfaceVariant.withValues(alpha: 0.5),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-        ]),
+          ]);
+        }),
       ),
     );
   }
