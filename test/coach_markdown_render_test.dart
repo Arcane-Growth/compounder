@@ -68,7 +68,13 @@ void main() {
   ) async {
     await pump(tester, r'Your deficit is \(500\) kcal per day.');
     expect(tester.takeException(), isNull);
-    expect(rendered(tester), contains('deficit'));
+    final text = rendered(tester);
+    expect(text, contains('deficit'));
+    // The maths engine renders the formula as an embedded widget, which
+    // surfaces as U+FFFC (object replacement character) in the plain text.
+    // Asserting it proves the engine produced something, rather than the
+    // paragraph silently dropping the formula.
+    expect(text, contains('\uFFFC'));
   });
 
   testWidgets('renders bold and inline code', (tester) async {
