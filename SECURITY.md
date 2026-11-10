@@ -1,9 +1,11 @@
 # Security Policy
 
 Compounder is a local-first Android/iOS app: your data lives in a SQLite database
-on your device, and the only network traffic is to the AI endpoint *you*
-configure. That keeps the attack surface small, but the code still handles health
-data, backups and API keys, so we treat security reports seriously.
+on your device. The app makes network calls to exactly two kinds of destination:
+the AI endpoint *you* configure, and `gateway.arcanegrowth.com` for the optional
+Compounder AI subscription (device registration, purchase verification,
+entitlement and usage). That keeps the attack surface small, but the code still
+handles health data, backups and API keys, so we treat security reports seriously.
 
 ## Supported versions
 
@@ -51,8 +53,10 @@ We will credit you in the advisory and the release notes unless you ask us not t
 
 In scope:
 
-- The Flutter app (`lib/`) — especially `lib/llm/llm.dart`, the entire network
-  surface, and `lib/services/backup.dart`, which reads and writes user data.
+- The Flutter app (`lib/`) — especially `lib/llm/llm.dart` and
+  `lib/llm/routing.dart` (the chat/vision network surface),
+  `lib/subscription/gateway.dart` (subscription endpoints), and
+  `lib/services/backup.dart`, which reads and writes user data.
 - Release artifacts published on the GitHub Releases page.
 - The build and release pipeline in `.github/workflows/`.
 - The Arcane Gateway (`arcane-gateway`) where the app talks to Compounder AI.
@@ -74,22 +78,44 @@ Out of scope:
 - Release signing material is supplied to CI as repository secrets
   (`KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`) and never
   written to the repository. See [docs/release-process.md](docs/release-process.md).
-- Dependencies are monitored by Dependabot (`.github/dependabot.yml`).
+- Dependencies are monitored by Dependabot (`.github/dependabot.yml`) for
+  Dart/pub, GitHub Actions and Gradle (AGP, Kotlin, desugaring).
 
 ## Repository settings we rely on
 
-These are configured in GitHub, not in the tree. Maintainers must keep them on:
+Compounder's source is **public** (MIT). These settings are configured in GitHub,
+not in the tree; maintainers must keep them on. Verified against the live
+repository on **2026-11-10** with `gh api repos/Arcane-Growth/compounder` and the
+endpoints named below — re-run those commands before trusting this list.
 
-1. **Settings → Code security → Secret scanning**: enabled, with **push
-   protection** enabled for all branches. This blocks a push containing a
-   recognised secret before it reaches history.
-2. **Settings → Code security → Dependabot alerts** and **Dependabot security
-   updates**: enabled.
-3. **Settings → Actions → General**: workflow permissions default to
-   *read-only*; "Allow GitHub Actions to create and approve pull requests" off.
-4. **Branch protection on `main`**: required PR review, required status checks,
-   no force-push, signed commits. See
-   [docs/branching-and-protection.md](docs/branching-and-protection.md).
+1. **Secret scanning**: enabled, with **push protection** enabled for all
+   branches (`security_and_analysis.secret_scanning` and
+   `.secret_scanning_push_protection` → `enabled`). This blocks a push containing
+   a recognised secret before it reaches history. Non-provider patterns and
+   validity checks are off; open alerts: 0
+   (`gh api repos/Arcane-Growth/compounder/secret-scanning/alerts`).
+2. **Dependabot alerts** and **Dependabot security updates**: enabled
+   (`vulnerability-alerts` → 204, `automated-security-fixes` → `enabled`).
+3. **Private vulnerability reporting**: enabled
+   (`gh api repos/Arcane-Growth/compounder/private-vulnerability-reporting` →
+   `{"enabled":true}`), so the link in the section above works.
+4. **Actions**: allow selected actions only (GitHub-owned plus
+   `subosito/flutter-action@*` and `softprops/action-gh-release@*`); workflow
+   permissions default to *read-only*; "Allow GitHub Actions to create and
+   approve pull requests" off. SHA pinning is **not** enforced by GitHub — the
+   workflows pin every action to a 40-character SHA by convention instead
+   (`sha_pinning_required: false`, because `subosito/flutter-action` internally
+   uses `actions/cache@v5` by tag and would fail setup under enforcement).
+5. **Branch protection on `main`**: required PR review (1 approval, Code Owners,
+   dismiss stale approvals, approval of the latest push), four required status
+   checks, signed commits, linear history, conversation resolution, no
+   force-push, no deletion, enforced for admins. See
+   [docs/branching-and-protection.md](docs/branching-and-protection.md) for the
+   exact rule set.
+6. **Tag protection**: ruleset `Protect release tags (v*)` is active for
+   `refs/tags/v*` — deletion and non-fast-forward updates are blocked.
+7. **Merge policy**: squash merge only; merge commits and rebase are disabled and
+   the branch is deleted on merge.
 
 If secret scanning or push protection is ever disabled, the gitleaks job in CI is
 the backstop — but it only runs after the push, so push protection is the one that

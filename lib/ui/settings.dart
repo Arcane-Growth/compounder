@@ -19,7 +19,7 @@ import 'widgets.dart';
 /// against `pubspec.yaml` — the literal drifted to v0.3.0 while the package was
 /// already at 0.3.2 (audit m8). `package_info_plus` is not a dependency, so
 /// there is no runtime source of truth to read.
-const String appVersionLabel = 'Compounder v0.3.2';
+const String appVersionLabel = 'Compounder v0.4.0';
 
 /// Copy for the import confirmation dialog. Kept as a constant so a test can
 /// pin that it names every table the import wipes (review backup MINOR-2).

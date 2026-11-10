@@ -26,6 +26,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Compounder uses the camera to photograph meals and nutrition labels for macro tracking.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Compounder reads photos you pick so it can attach them to meals and nutrition labels.</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Compounder reads your health data to give your coach better sleep, recovery and training insights.</string>
 	<key>NSHealthUpdateUsageDescription</key>

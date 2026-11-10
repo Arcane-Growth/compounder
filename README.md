@@ -46,18 +46,23 @@ tracking) and expands it into one place for every area of life you want to get 1
 
 ## Trust and privacy
 
-- **No accounts, no cloud, no ads, no trackers.** There is nothing to sign up for and no server of
-  ours holding your life data.
+- **No accounts, no ads, no trackers.** There is nothing to sign up for, and no server of ours
+  stores your life data.
 - **Your data is yours to take.** Everything lives in a local SQLite database on your device, and
   you can export/import a single backup JSON file whenever you want.
 - **Local-only storage** (SQLite via `sqflite` + `shared_preferences`). Health Connect is read
   on-device with Google's local API; no Google account or cloud sync is involved.
-- **Network access is only the AI endpoint.** It exists solely to reach the endpoint *you*
-  configure — meal photos and conversation data go only there.
+- **Two network destinations, both explicit.** (1) The AI endpoint *you* configure — meal photos
+  and conversation data go only there. (2) `gateway.arcanegrowth.com`, used only for the optional
+  Compounder AI subscription: device registration, purchase verification, entitlement and usage.
+  The gateway never receives your database — only the coach conversation you send to Compounder AI
+  (including any summarized health data you asked about) and entitlement metadata.
 - **Health data is opt-in.** When you ask the coach about sleep, heart rate or recovery, summarized
-  health data is sent to your configured AI endpoint. Raw records stay in the local database and
-  can be deleted from Settings.
-- MIT-licensed, auditable Flutter source: the entire network surface is `lib/llm/llm.dart`.
+  health data is sent to the AI endpoint in use — your own endpoint, or the gateway if you are on
+  Compounder AI. Raw records stay in the local database and can be deleted from Settings.
+- MIT-licensed, auditable Flutter source: the network surface is `lib/llm/llm.dart` (chat + vision),
+  `lib/llm/routing.dart` (which endpoint is used) and `lib/subscription/gateway.dart` (subscription
+  endpoints).
 
 ## Getting started
 
@@ -101,7 +106,7 @@ flutter run --dart-define=LLM_BASE_URL=http://192.168.0.117:4000/v1 \
 - **Data** — single `compounder.db` (exercises, workouts, sets, meals, accounts, moods,
   meditations, thought records).
 - **AI** — `llm/llm.dart` (OpenAI-compatible chat + tool calling + vision meal analysis),
-  `coach/agent.dart` (tool loop), `coach/tools.dart` (20 tools across all domains).
+  `coach/agent.dart` (tool loop), `coach/tools.dart` (24 tools across all domains).
 - **Domain** — pure, unit-tested math in `domain/domain.dart` (e1RM, units, wealth, mind streaks).
 - **Services** — JSON backup export/import, on-device daily-notification scheduling.
 
@@ -115,9 +120,11 @@ lib/
 ├── coach/               agent tool loop + health/wealth/mind tools
 ├── health/              Health Connect categories, sync, analysis and local repository
 ├── services/            backup (JSON) + daily coach notifications
-└── ui/                  shell (5 tabs: Health, Macros, Wealth, Mind, Coach)
-                         home, workout, picker, summary, history, progress,
-                         macros, wealth, mind, coach chat, settings, widgets
+├── subscription/        Compounder AI subscription: store, gateway, entitlement
+└── ui/                  shell (bottom bar: Home, Fitness, Macros, Wealth, Coach;
+                          Mind is drawer-only), home, workout, picker, summary,
+                          history, progress, macros, wealth, mind, coach chat,
+                          settings, widgets
 ```
 
 ## License

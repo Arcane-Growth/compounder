@@ -1,4 +1,4 @@
-package dev.compounder.compounder
+package com.arcanegrowth.compounder
 
 import io.flutter.embedding.android.FlutterFragmentActivity
 

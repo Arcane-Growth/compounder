@@ -73,7 +73,10 @@ The current keystore is a placeholder until production keys are supplied; see
    ```
 
    Signed tags (`-s`) are expected; see
-   [branching-and-protection.md](branching-and-protection.md).
+   [branching-and-protection.md](branching-and-protection.md). No tag has been
+   pushed to `origin` yet, and `v0.1.0`–`v0.3.2` predate the policy (lightweight
+   or unsigned annotated). **`v0.4.0` is the first tag that must be signed** —
+   `git tag -v v0.4.0` must print a signature before the tag is pushed.
 5. **Watch the Release workflow.** It builds the signed AAB and APK, proves the
    APK carries the upload certificate (not the debug one), writes
    `SHA256SUMS.txt`, and attaches the AAB, APK, symbol archive and checksums to a
