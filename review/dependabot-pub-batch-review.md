@@ -99,4 +99,130 @@ No merges performed; `main` untouched.
 
 ## Gate verdict
 
-_Pending — Code Reviewer._
+**Reviewer**: Code Reviewer. **Date**: 2026-11-10. Every command below was re-run by me in the
+pinned worktrees; nothing was merged and nothing was pushed. Dev evidence above was read first and
+then independently checked — two numbers in it are stale (noted under PR #2).
+
+### Per-PR verdicts
+
+| PR | Verdict |
+| --- | --- |
+| #4 permission_handler 13.0.2 + compileSdk 37 | **APPROVE WITH FIXES** (2 Minor, non-blocking) |
+| #2 flutter-minor-patch + markdown guard | **APPROVE WITH FIXES** (2 Minor, non-blocking) |
+| #3 flutter_lints 6.0.0 | **APPROVE** |
+| #5 cupertino_icons 2.0.0 | **APPROVE** |
+
+No Blockers, no Majors. Both fixes are proven non-vacuous (quoted failures below).
+
+### Commands run and results
+
+**PR #4 — `/home/barry/.cache/wt-pr4` @ `5f88278`**
+- `git diff 142ffd1..5f88278` → 4 files: `android/app/build.gradle.kts` (`compileSdk = 37`),
+  `android/build.gradle.kts` (plugin alignment 36→37), `pubspec.yaml` (`permission_handler: ^13.0.2`),
+  `pubspec.lock` (permission_handler_android 13.0.1→14.1.1).
+- `flutter analyze` → `No issues found! (ran in 3.5s)`.
+- `flutter build apk --release` → `✓ Built build/app/outputs/flutter-apk/app-release.apk (68.3MB)`
+  (incremental, 4.4s; the clean-build evidence is CI run 42742307714, release job 129587215815).
+- Merged manifest `build/app/intermediates/merged_manifest/release/processReleaseMainManifest/AndroidManifest.xml`
+  → `android:minSdkVersion="26"`, `android:targetSdkVersion="36"`.
+- `aapt2 dump badging app-release.apk` → `compileSdkVersion='37'`, `minSdkVersion:'26'`,
+  `targetSdkVersion:'36'`, `package: name='dev.compounder.compounder'`.
+- **Fix non-vacuity (revert-and-quote)**: set app back to `compileSdk = flutter.compileSdkVersion`
+  and root back to `setProperty("compileSdk", 36)`, rebuilt →
+  `PermissionUtils.java:97: error: cannot find symbol` (also `:612`, `:616`, `:618`),
+  `BUILD FAILED in 5s`. Restored; worktree clean.
+
+**PR #2 — `/home/barry/.cache/wt-pr2` @ `5bf18e1`**
+- `flutter analyze` → `No issues found! (ran in 3.9s)`.
+- `TZ=America/New_York flutter test` → `+534: All tests passed!` (dev file says 530 — stale; 530 + the
+  4 new guard tests).
+- `flutter test test/coach_markdown_render_test.dart` → `+4: All tests passed!`.
+- Baseline parity `/home/barry/.cache/wt-pr2-base` @ `142ffd1` (gpt_markdown 1.2.1, sha256 `42887afa…`):
+  guard → `+4: All tests passed!` ⇒ parity guard, not version-specific. Confirmed PR #2 lock is
+  gpt_markdown 1.3.4 (sha256 `77f5af4b…`).
+- **Guard non-vacuity (quoted)**: replaced the pumped `GptMarkdown(...)` with `const SizedBox.shrink()`
+  (renderer emits no text) → all four tests fail:
+  ```
+  Expected: contains 'Weekly plan'
+    Actual: ''
+     Which: does not contain 'Weekly plan'
+  ...
+  Expected: contains '$5 and $10'
+    Actual: ''
+  ...
+  Expected: contains 'deficit'
+    Actual: ''
+  ...
+  Expected: contains 'Goal:'
+    Actual: ''
+  00:00 +0 -4: Some tests failed.
+  ```
+  Restored → `+4: All tests passed!`.
+- **Coverage probe**: reverted `lib/ui/coach.dart:343` `GptMarkdown(...)` to `Text(m.text)` → guard
+  still `+4: All tests passed!` ⇒ the guard does not cover the app's integration path (finding M1).
+- **LaTeX probe**: added `expect(t, contains('500'))` → fails; rendered text is
+  `Your deficit is ￼ kcal per day.` (U+FFFC placeholder) ⇒ the LaTeX assertion only proves the
+  surrounding prose (finding M2).
+- Transitive delta verified from the lock: dropped `flutter_svg`, `flutter_math_fork`, `path_parsing`,
+  `tuple`, `vector_graphics*`; added `val_latex_flutter` 0.1.4 (useval.io), `val_latex`,
+  `val_highlight`, `val_highlight_flutter`, `cupertino_ui` 1.1.6, `material_ui` 1.2.0
+  (both flutter/packages), `flutter_localizations`. `GptMarkdown(text, style:, isStreaming:)` still
+  compiles (analyze clean) — no API break.
+
+**PR #3 — `/home/barry/.cache/wt-pr3` @ `e933dcb`**
+- `gh pr diff 3` → `pubspec.yaml` + `pubspec.lock` only (flutter_lints 5.0.0→6.0.0, lints 5.1.1→6.1.0).
+- `flutter analyze` → `No issues found! (ran in 2.8s)`.
+- Rule delta verified from the pub cache: `flutter_lints-6.0.0/lib/flutter.yaml` is byte-identical to
+  5.0.0; `lints-6.1.0` adds `no_wildcard_variable_uses`, `unnecessary_underscores`,
+  `use_null_aware_elements` (recommended.yaml) and `strict_top_level_inference` (core.yaml) — four new
+  rules, zero findings on this codebase.
+
+**PR #5 — `/home/barry/.cache/wt-pr5` @ `24df4d6`**
+- `gh pr diff 5` → `pubspec.yaml` + `pubspec.lock` only.
+- `flutter analyze` → `No issues found! (ran in 3.0s)`; `TZ=America/New_York flutter test` →
+  `+530: All tests passed!`.
+- `cupertino_icons-2.0.0/pubspec.yaml` → `family: CupertinoIcons`, `asset: assets/CupertinoIcons.ttf`
+  (file present, 257,628 bytes); `cupertino_ui` is under `dev_dependencies` only; lock delta adds no new
+  package; `grep -rn CupertinoIcons lib/` → no hits.
+
+**CI spot-check** (`gh pr checks`, not re-run): #2 4/4 pass (run 42743120545), #3 4/4 (42716657311),
+#4 4/4 (42742307714), #5 4/4 (42716682571).
+
+### Findings
+
+**PR #4**
+- **Minor (M1)** — `android/build.gradle.kts:19-26`: the comment says "Plugins that pin an older
+  compileSdk are raised to it; plugins that need a newer one … must not be lowered below it", but line
+  30 unconditionally sets 37 for every plugin. A plugin declaring compileSdk 38 would be lowered to 37
+  and fail exactly as permission_handler did. Fix: reword to "every plugin is pinned to 37", or
+  implement `max(37, declared)`.
+- **Minor (M2)** — `android/app/build.gradle.kts:16`: hardcoded 37 while `flutter.compileSdkVersion` is
+  36; nothing enforces the "keep in lockstep" comment. On the next Flutter upgrade the two silently
+  diverge and the pin goes stale. Fix: single source of truth (root `val appCompileSdk = 37` referenced
+  from the app module) or a CI grep assertion.
+- **Nit** — raising plugin compileSdk is safe (AGP only errors when app < dependency); no runtime or
+  permission change: targetSdk stays 36, minSdk stays 26.
+
+**PR #2**
+- **Minor (M1)** — the guard is package-level, not integration-level: reverting `coach.dart` to
+  `Text(m.text)` still passes. Suggest a widget test that pumps the coach screen (or asserts
+  `find.byType(GptMarkdown)` in `lib/ui/coach.dart`).
+- **Minor (M2)** — "renders inline LaTeX through the new maths engine" only asserts `contains('deficit')`;
+  LaTeX renders as U+FFFC, so `contains('500')` fails. The test would pass even if the maths engine
+  rendered nothing. Fix: assert `contains('\uFFFC')` or `find.byType(Math)`.
+- **Nit** — dev evidence line 62 reports `+530` for this head; actual is `+534`.
+- **Nit** — the bump adds runtime transitive packages (`cupertino_ui`, `material_ui`,
+  `val_latex_flutter`); supply-chain surface grew, sources are reputable, no API break.
+
+**PR #3 / PR #5** — no findings.
+
+### Rationale
+
+All four heads analyze clean, tests pass locally, and CI is 4/4 green including the release APK+AAB.
+Both fixes are proven non-vacuous by revert-and-quote. The two APPROVE WITH FIXES verdicts are
+documentation/coverage gaps that do not affect shipped behaviour and can land as follow-ups after merge.
+
+**Worktree hygiene note**: `/home/barry/.cache/wt-pr2` had a pre-existing dirty `pubspec.lock` (only the
+`sdks:` constraint section, bumped by the local Flutter 3.47.0 — no package version changes), so the test
+results above are valid. All my temporary edits were restored; `git status` clean in every worktree I
+touched.
