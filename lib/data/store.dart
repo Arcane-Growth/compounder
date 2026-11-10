@@ -1421,11 +1421,16 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
   /// Creates a block on [day]'s plan. Throws [StoreException] when the title is
   /// blank or too long, or the times are out of range or not increasing, so the
   /// planner dialog and any future coach tool share one validation boundary.
+  ///
+  /// [position] and [createdAt] let an undo restore a deleted block's original
+  /// ordering and creation time instead of appending it at the end of the day.
   Future<int> createPlanBlock({
     required DateTime day,
     required String title,
     required int startMin,
     required int endMin,
+    int? position,
+    int? createdAt,
   }) async {
     final error =
         planBlockError(title: title, startMin: startMin, endMin: endMin);
@@ -1436,7 +1441,7 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
     // `chronological` keeps the order deterministic.
     final posRows = await db.rawQuery(
         'SELECT MAX(position) m FROM plan_blocks WHERE day = ?', [key]);
-    final position = ((posRows.first['m'] as int?) ?? -1) + 1;
+    final nextPosition = position ?? ((posRows.first['m'] as int?) ?? -1) + 1;
     final id = await db.insert('plan_blocks', {
       'day': key,
       'title': title.trim(),
@@ -1444,8 +1449,8 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
       'end_min': endMin,
       'done': 0,
       'done_at': null,
-      'created_at': DateTime.now().millisecondsSinceEpoch,
-      'position': position,
+      'created_at': createdAt ?? DateTime.now().millisecondsSinceEpoch,
+      'position': nextPosition,
     });
     notifyListeners();
     return id;

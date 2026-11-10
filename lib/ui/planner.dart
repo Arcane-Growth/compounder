@@ -22,9 +22,6 @@ const int _defaultDuration = 30;
 /// Shortest block the resize handle can produce.
 const int _minDuration = 15;
 
-/// Height of the resize strip at the bottom of a block card.
-const double _handleHeight = 16;
-
 /// Smallest rendered card height, so a 15-minute block is still tappable.
 const double _minCardHeight = 48;
 
@@ -160,6 +157,36 @@ class _PlannerScreenState extends State<PlannerScreen>
     if (state == AppLifecycleState.resumed) _load();
   }
 
+  /// Last keyboard inset seen, so a rotation or a non-keyboard inset change
+  /// does not yank the grid out from under the owner's scroll.
+  double _lastInsetBottom = 0;
+
+  @override
+  void didChangeMetrics() {
+    // The keyboard opening shrinks the grid's viewport. An inline editor opened
+    // near the bottom of the day would otherwise end up behind the keyboard,
+    // so re-reveal it when the keyboard inset actually grows.
+    final inset = View.of(context).viewInsets.bottom;
+    final grew = inset > _lastInsetBottom;
+    _lastInsetBottom = inset;
+    if (!grew) return;
+    final start = _creatingStart ??
+        (_editingId == null ? null : _blockById(_editingId!)?.startMin);
+    if (start != null) _revealEditor(start);
+  }
+
+  /// Scrolls the grid so an inline editor at [startMin] sits in the upper part
+  /// of the visible viewport, clear of the keyboard.
+  void _revealEditor(int startMin) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      final viewport = _scroll.position.viewportDimension;
+      final target = _topFor(startMin) - viewport * 0.2;
+      _scroll.jumpTo(
+          target.clamp(0.0, _scroll.position.maxScrollExtent).toDouble());
+    });
+  }
+
   Future<void> _load() async {
     final store = _store;
     if (store == null) return;
@@ -190,9 +217,11 @@ class _PlannerScreenState extends State<PlannerScreen>
     if (_scrolledToNow) return;
     final now = _now();
     if (planDayKey(_day) != planDayKey(now)) return;
-    _scrolledToNow = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scroll.hasClients) return;
+      // Only mark it done once the controller is actually attached; otherwise a
+      // load that lands before layout would never retry the scroll.
+      _scrolledToNow = true;
       final minute = now.hour * 60 + now.minute;
       final target = minute / 60 * _hourHeight - 160;
       _scroll.jumpTo(
@@ -209,6 +238,7 @@ class _PlannerScreenState extends State<PlannerScreen>
       _creatingStart = null;
       _editingId = null;
       _dragId = null;
+      _inline.clear();
     });
     _load();
   }
@@ -245,6 +275,7 @@ class _PlannerScreenState extends State<PlannerScreen>
       _editingId = null;
       _inline.text = '';
     });
+    _revealEditor(start);
   }
 
   /// Commits the pending new block. The whole create path is tap, type, Enter:
@@ -261,8 +292,10 @@ class _PlannerScreenState extends State<PlannerScreen>
     if (title.isEmpty) return;
     final error = planBlockError(title: title, startMin: start, endMin: end);
     if (error != null) {
-      // Too long: keep the text so the owner can shorten it.
+      // Too long: keep the text so the owner can shorten it, and keep the
+      // keyboard up so the field is still focused.
       setState(() => _creatingStart = start);
+      _inlineFocus.requestFocus();
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(error)));
@@ -289,6 +322,7 @@ class _PlannerScreenState extends State<PlannerScreen>
       _creatingStart = null;
       _inline.text = block.title;
     });
+    _revealEditor(block.startMin);
   }
 
   /// Renames [block] in place. An emptied field reverts to the stored title
@@ -323,6 +357,14 @@ class _PlannerScreenState extends State<PlannerScreen>
   // ------------------------------------------------------------------ drags
 
   void _beginDrag(PlanBlock block, {required bool resize}) {
+    // Commit any open inline editor first: starting a drag must not silently
+    // drop typed text (the tap paths already commit before switching).
+    if (_creatingStart != null) {
+      _commitCreate();
+    } else if (_editingId != null) {
+      final current = _blockById(_editingId!);
+      if (current != null) _commitEdit(current);
+    }
     setState(() {
       _dragId = block.id;
       _resizing = resize;
@@ -343,7 +385,9 @@ class _PlannerScreenState extends State<PlannerScreen>
     if (_dragId == null) return;
     _dragDelta += deltaMinutes;
     final delta = (_dragDelta / _snapMinutes).round() * _snapMinutes;
-    if (delta == 0) return;
+    // Always recompute from the base, including when the cumulative delta snaps
+    // back to zero: a drag that returns to its origin must restore the original
+    // times, not leave the block at the last intermediate position.
     setState(() {
       if (_resizing) {
         _dragEnd = _clampInt(
@@ -377,8 +421,9 @@ class _PlannerScreenState extends State<PlannerScreen>
   // ----------------------------------------------------------------- writes
 
   /// Runs a store write and reports a failure to the user instead of dropping
-  /// the future, matching the habit screen's contract.
-  Future<void> _runWrite(
+  /// the future, matching the habit screen's contract. Returns whether the
+  /// write succeeded, so callers do not announce success after a failure.
+  Future<bool> _runWrite(
       BuildContext context, Future<void> Function() write) async {
     String? message;
     try {
@@ -388,39 +433,47 @@ class _PlannerScreenState extends State<PlannerScreen>
     } catch (_) {
       message = 'Could not save that change.';
     }
-    if (!mounted) return;
+    if (!mounted) return message == null;
     await _load();
     if (message != null && context.mounted) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(message)));
     }
+    return message == null;
   }
 
   /// Deletes [block] immediately and offers an undo snackbar instead of a
-  /// confirmation dialog: the common path stays one gesture.
+  /// confirmation dialog: the common path stays one gesture. The day the block
+  /// belonged to is captured here, so an undo after a day switch restores it to
+  /// the original day rather than the day now on screen.
   Future<void> _deleteBlock(BuildContext context, PlanBlock block) async {
     final messenger = ScaffoldMessenger.of(context);
-    await _runWrite(context, () => _store!.deletePlanBlock(block.id));
-    if (!mounted) return;
+    final day = _day;
+    final ok =
+        await _runWrite(context, () => _store!.deletePlanBlock(block.id));
+    if (!mounted || !ok) return;
     messenger.showSnackBar(SnackBar(
       content: Text('Deleted "${block.title}"'),
       action: SnackBarAction(
         label: 'Undo',
-        onPressed: () => _undoDelete(block),
+        onPressed: () => _undoDelete(block, day),
       ),
     ));
   }
 
-  /// Recreates a deleted block with its original title, times and done state.
-  Future<void> _undoDelete(PlanBlock block) async {
+  /// Recreates a deleted block on [day] with its original title, times, done
+  /// state, position and creation time.
+  Future<void> _undoDelete(PlanBlock block, DateTime day) async {
     final store = _store;
     if (store == null) return;
     await _runWrite(context, () async {
       final id = await store.createPlanBlock(
-          day: _day,
+          day: day,
           title: block.title,
           startMin: block.startMin,
-          endMin: block.endMin);
+          endMin: block.endMin,
+          position: block.position,
+          createdAt: block.createdAt);
       if (block.done) await store.setPlanBlockDone(id, true);
     });
   }
@@ -543,7 +596,9 @@ class _PlannerScreenState extends State<PlannerScreen>
       child: SizedBox(
         height: minutesPerDay / 60 * _hourHeight,
         child: Stack(children: [
-          _grid(context),
+          // The grid is static between drags; a repaint boundary keeps the
+          // per-event drag rebuild from repainting the 73-widget grid.
+          RepaintBoundary(child: _grid(context)),
           if (isToday) _nowLine(context, nowMinute),
           for (final block in ordered) _positionedBlock(context, block),
           if (_creatingStart != null)
@@ -571,7 +626,9 @@ class _PlannerScreenState extends State<PlannerScreen>
       child: Stack(children: [
         for (var hour = 0; hour <= 24; hour++)
           Positioned(
-            top: _topFor(hour * 60),
+            // The 24:00 divider sits on the grid's last pixel so it is not
+            // clipped by the Stack.
+            top: hour == 24 ? _gridHeight - 1 : _topFor(hour * 60),
             left: 0,
             right: 0,
             child: Divider(
@@ -593,7 +650,7 @@ class _PlannerScreenState extends State<PlannerScreen>
           ),
         for (var hour = 0; hour <= 24; hour++)
           Positioned(
-            top: _topFor(hour * 60) + 2,
+            top: hour == 24 ? _gridHeight - 14 : _topFor(hour * 60) + 2,
             left: 4,
             child: Text(
               formatPlanTime(hour * 60),
@@ -636,6 +693,15 @@ class _PlannerScreenState extends State<PlannerScreen>
     );
   }
 
+  /// Full grid height in logical pixels.
+  double get _gridHeight => minutesPerDay / 60 * _hourHeight;
+
+  /// Clamps a card's top so its bottom stays inside the grid. Without this a
+  /// block or editor at 23:45 is laid out past the grid's extent and clipped by
+  /// the Stack, leaving its resize handle unreachable.
+  double _clampTop(double top, double height) =>
+      top.clamp(0.0, (_gridHeight - height).clamp(0.0, _gridHeight)).toDouble();
+
   Widget _positionedBlock(BuildContext context, PlanBlock block) {
     final dragging = _dragId == block.id;
     final start = dragging ? _dragStart : block.startMin;
@@ -643,7 +709,7 @@ class _PlannerScreenState extends State<PlannerScreen>
     final height =
         _topFor(end - start).clamp(_minCardHeight, double.infinity).toDouble();
     return Positioned(
-      top: _topFor(start),
+      top: _clampTop(_topFor(start), height),
       left: 56,
       right: 8,
       height: height,
@@ -655,7 +721,7 @@ class _PlannerScreenState extends State<PlannerScreen>
       {PlanBlock? block, required int start, required int end}) {
     final height = _topFor(end - start).clamp(64.0, double.infinity).toDouble();
     return Positioned(
-      top: _topFor(start),
+      top: _clampTop(_topFor(start), height),
       left: 56,
       right: 8,
       height: height,
@@ -681,6 +747,10 @@ class _PlannerScreenState extends State<PlannerScreen>
         '${formatPlanDuration(duration)}';
     final showTimes = height >= 40;
     final compact = height < 56;
+    // The resize strip is the only way to resize, so its hit area is 48dp tall
+    // whenever the card has room. A 48dp card cannot host two 48dp targets, so
+    // there the strip takes the bottom half and the body keeps the top half.
+    final handleHit = (height - 24).clamp(24.0, 48.0).toDouble();
 
     return Semantics(
       label: '${block.title}, ${formatPlanTime(start)} to '
@@ -688,6 +758,7 @@ class _PlannerScreenState extends State<PlannerScreen>
           '${block.done ? ', done' : ''}',
       button: true,
       child: Material(
+        key: ValueKey('plan-card-${block.id}'),
         color: current ? scheme.primaryContainer : scheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(12),
         clipBehavior: Clip.antiAlias,
@@ -703,7 +774,7 @@ class _PlannerScreenState extends State<PlannerScreen>
             left: 44,
             top: 0,
             right: 0,
-            bottom: _handleHeight,
+            bottom: handleHit,
             child: GestureDetector(
               key: ValueKey('plan-block-${block.id}'),
               behavior: HitTestBehavior.opaque,
@@ -726,6 +797,7 @@ class _PlannerScreenState extends State<PlannerScreen>
                         // puts the time beside the title on one line.
                         ? Row(children: [
                             Expanded(
+                              flex: 3,
                               child: Text(
                                 block.title,
                                 style: t.bodyMedium?.copyWith(
@@ -739,19 +811,23 @@ class _PlannerScreenState extends State<PlannerScreen>
                             ),
                             if (showTimes) ...[
                               const SizedBox(width: 6),
-                              Text(
-                                dragging
-                                    ? formatPlanDuration(duration)
-                                    : timeLabel,
-                                key: dragging
-                                    ? ValueKey('plan-drag-readout-${block.id}')
-                                    : null,
-                                style: t.labelSmall?.copyWith(
-                                    color: current
-                                        ? scheme.onPrimaryContainer
-                                        : scheme.onSurfaceVariant),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                              Flexible(
+                                flex: 2,
+                                child: Text(
+                                  dragging
+                                      ? formatPlanDuration(duration)
+                                      : timeLabel,
+                                  key: dragging
+                                      ? ValueKey(
+                                          'plan-drag-readout-${block.id}')
+                                      : null,
+                                  style: t.labelSmall?.copyWith(
+                                      color: current
+                                          ? scheme.onPrimaryContainer
+                                          : scheme.onSurfaceVariant),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
                             ],
                           ])
@@ -798,24 +874,33 @@ class _PlannerScreenState extends State<PlannerScreen>
             left: 44,
             right: 0,
             bottom: 0,
-            height: _handleHeight,
+            height: handleHit,
             child: Semantics(
               label: 'Resize ${block.title}',
+              onIncrease: () => _resizeBy(block, _snapMinutes),
+              onDecrease: () => _resizeBy(block, -_snapMinutes),
               child: GestureDetector(
                 key: ValueKey('plan-resize-${block.id}'),
                 behavior: HitTestBehavior.opaque,
                 dragStartBehavior: DragStartBehavior.down,
+                // The strip is part of the card, so a tap on it renames too
+                // instead of being a dead zone.
+                onTap: () => _startEdit(block),
                 onVerticalDragStart: (_) => _beginDrag(block, resize: true),
                 onVerticalDragUpdate: (details) =>
                     _updateDrag(details.primaryDelta! / _hourHeight * 60),
                 onVerticalDragEnd: (_) => _endDrag(),
-                child: Center(
-                  child: Container(
-                    width: 28,
-                    height: 3,
-                    decoration: BoxDecoration(
-                      color: scheme.onSurfaceVariant.withValues(alpha: 0.5),
-                      borderRadius: BorderRadius.circular(2),
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Container(
+                      width: 28,
+                      height: 3,
+                      decoration: BoxDecoration(
+                        color: scheme.onSurfaceVariant.withValues(alpha: 0.5),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
                   ),
                 ),
@@ -827,15 +912,27 @@ class _PlannerScreenState extends State<PlannerScreen>
     );
   }
 
+  /// Screen-reader resize: extends or shrinks [block] by [deltaMinutes],
+  /// clamped to the day and the minimum duration.
+  Future<void> _resizeBy(PlanBlock block, int deltaMinutes) async {
+    final end = _clampInt(block.endMin + deltaMinutes,
+        block.startMin + _minDuration, minutesPerDay);
+    if (end == block.endMin) return;
+    await _runWrite(
+        context, () => _store!.updatePlanBlock(block.id, endMin: end));
+  }
+
   /// One-tap done toggle. Spans the card's full height so the target is at
   /// least 48dp tall on a default-length block.
   Widget _doneToggle(BuildContext context, PlanBlock block,
       {required bool current}) {
     final scheme = Theme.of(context).colorScheme;
     return Semantics(
-      // Name the control, not the action: the icon already reports its state,
-      // so "Mark X done, checked" would announce the action and state twice.
+      // Name the control and report its state, so a screen reader announces
+      // "Deep work, checked" rather than just the title.
       label: block.title,
+      button: true,
+      checked: block.done,
       child: InkResponse(
         key: ValueKey('plan-done-${block.id}'),
         radius: 24,
