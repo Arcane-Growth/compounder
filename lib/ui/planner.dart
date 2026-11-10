@@ -24,6 +24,8 @@ const int _defaultDuration = 30;
 const int _minDuration = 15;
 
 /// Smallest rendered card height, so a 15-minute block is still tappable.
+/// A card followed by another block in its lane is clamped to that block's top
+/// instead (see [_positionedBlock]), which can take a 15-minute card to 22dp.
 const double _minCardHeight = 48;
 
 /// Smallest resize-strip hit area. A card that cannot afford a full 48dp strip
@@ -706,6 +708,23 @@ class _PlannerScreenState extends State<PlannerScreen>
             start: _dragId == block.id ? _dragStart : block.startMin,
             end: _dragId == block.id ? _dragEnd : block.endMin),
     ]);
+    // The next block in each lane, by live start minute. A card that has to
+    // grow past its slot must stop where that block begins, otherwise the
+    // later card paints over this card's resize strip.
+    final nextInLane = <int, int>{};
+    final laneStarts = <int, List<({int id, int start})>>{};
+    for (final block in ordered) {
+      final start = _dragId == block.id ? _dragStart : block.startMin;
+      laneStarts
+          .putIfAbsent(lanes[block.id]!.lane, () => [])
+          .add((id: block.id, start: start));
+    }
+    for (final lane in laneStarts.values) {
+      lane.sort((a, b) => a.start.compareTo(b.start));
+      for (var i = 0; i + 1 < lane.length; i++) {
+        nextInLane[lane[i].id] = lane[i + 1].start;
+      }
+    }
     return SingleChildScrollView(
       controller: _scroll,
       child: SizedBox(
@@ -718,7 +737,8 @@ class _PlannerScreenState extends State<PlannerScreen>
             RepaintBoundary(child: _grid(context)),
             if (isToday) _nowLine(context, nowMinute),
             for (final block in ordered)
-              _positionedBlock(context, block, lanes[block.id]!, width: width),
+              _positionedBlock(context, block, lanes[block.id]!,
+                  width: width, nextStart: nextInLane[block.id]),
             if (_creatingStart != null)
               _positionedEditor(context,
                   start: _creatingStart!,
@@ -855,6 +875,10 @@ class _PlannerScreenState extends State<PlannerScreen>
   /// afford it renders [_cardGap] shorter than its slot and back-to-back
   /// blocks are visually separated. A slot shorter than [_minCardHeight] (a
   /// 15-minute block) keeps the 48dp floor and grows past its slot instead.
+  ///
+  /// This is the height the card wants. When a later block starts in the same
+  /// lane, [_positionedBlock] clamps it so the next card cannot cover the
+  /// resize strip; the body clips in that case rather than the strip.
   double _cardHeight(BuildContext context, int duration) {
     final content = _bodyContentHeights(context).compact;
     final needed = content + _minHandleHit + _minBodySlack;
@@ -879,17 +903,26 @@ class _PlannerScreenState extends State<PlannerScreen>
 
   Widget _positionedBlock(
       BuildContext context, PlanBlock block, PlannerLane placement,
-      {required double width}) {
+      {required double width, int? nextStart}) {
     final dragging = _dragId == block.id;
     final start = dragging ? _dragStart : block.startMin;
     final end = dragging ? _dragEnd : block.endMin;
-    final height = _cardHeight(context, end - start);
+    final natural = _cardHeight(context, end - start);
     final geometry = _laneGeometry(placement.lane, placement.lanes, width);
+    // The gap is an inset inside the slot: the card's top is half a gap below
+    // the block's real start, and its height is a gap shorter, so the card
+    // never claims a minute it does not own.
+    final top = _topFor(start) + _cardGap / 2;
+    // A card that cannot fit its text grows past its slot. When a later block
+    // starts in the same lane it paints over this card's bottom edge, burying
+    // the resize strip. Clamp the card to end half a gap above that block's
+    // top: the strip stays reachable and the body clips instead of the strip.
+    final height = nextStart == null
+        ? natural
+        : math.min(
+            natural, math.max(0.0, _topFor(nextStart) - _cardGap / 2 - top));
     return Positioned(
-      // The gap is an inset inside the slot: the card's top is half a gap below
-      // the block's real start, and its height is a gap shorter, so the card
-      // never claims a minute it does not own.
-      top: _clampTop(_topFor(start) + _cardGap / 2, height),
+      top: _clampTop(top, height),
       left: geometry.left,
       width: geometry.width,
       height: height,

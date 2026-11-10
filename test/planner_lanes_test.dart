@@ -423,4 +423,111 @@ void main() {
       expect(find.text('First'), findsWidgets);
     });
   });
+
+  // A card that cannot fit its text grows past its slot. When another block
+  // starts where it ends, the later card used to paint over the earlier card's
+  // resize strip, so the strip was unreachable by touch. The card is now
+  // clamped to the next block's top; these rect assertions are the guard.
+  group('back-to-back short blocks keep the earlier resize strip reachable',
+      () {
+    testWidgets('15-minute blocks at 1.0: strip A is clear of card B',
+        (tester) async {
+      await tester.binding.setSurfaceSize(const Size(400, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      late int a, b;
+      await tester.runAsync(() async {
+        a = await addBlock('First', 360, 375);
+        b = await addBlock('Second', 375, 390);
+      });
+      await tester.pumpWidget(host());
+      await settle(tester);
+      await scrollToTop(tester);
+
+      final rectA = card(tester, a);
+      final rectB = card(tester, b);
+      final stripA = handle(tester, a);
+      expect(stripA.bottom, lessThanOrEqualTo(rectB.top),
+          reason: 'card B must not cover A\'s resize strip: '
+              'strip ${stripA.top}..${stripA.bottom} vs B top ${rectB.top}');
+      expect(stripA.height, greaterThanOrEqualTo(16),
+          reason: 'the strip must stay a real touch target');
+      expect(stripA.top, greaterThanOrEqualTo(rectA.top));
+      expect(stripA.bottom, lessThanOrEqualTo(rectA.bottom));
+
+      await tester.tapAt(stripA.center);
+      await tester.pumpAndSettle();
+      expect(find.byKey(ValueKey('plan-inline-done-$a')), findsOneWidget,
+          reason: 'tapping A\'s strip must open A\'s editor, not B\'s');
+      expect(find.byKey(ValueKey('plan-inline-done-$b')), findsNothing);
+
+      final stored = await store.planBlocksForDay(day);
+      expect(stored.firstWhere((block) => block.id == a).endMin, 375,
+          reason: 'the clamp is visual: A still ends at 06:15');
+      expect(stored.firstWhere((block) => block.id == b).startMin, 375,
+          reason: 'the clamp is visual: B still starts at 06:15');
+    });
+
+    testWidgets('30-minute blocks at 2.0: strip A is clear of card B',
+        (tester) async {
+      await tester.binding.setSurfaceSize(const Size(400, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      late int a, b;
+      await tester.runAsync(() async {
+        a = await addBlock('First', 360, 390);
+        b = await addBlock('Second', 390, 420);
+      });
+      await tester.pumpWidget(host(textScaler: 2.0));
+      await settle(tester);
+      await scrollToTop(tester);
+
+      final rectA = card(tester, a);
+      final rectB = card(tester, b);
+      final stripA = handle(tester, a);
+      expect(stripA.bottom, lessThanOrEqualTo(rectB.top),
+          reason: 'at 2.0 card B must not cover A\'s resize strip: '
+              'strip ${stripA.top}..${stripA.bottom} vs B top ${rectB.top}');
+      expect(stripA.height, greaterThanOrEqualTo(16),
+          reason: 'the strip must stay a real touch target');
+      expect(stripA.top, greaterThanOrEqualTo(rectA.top));
+      expect(stripA.bottom, lessThanOrEqualTo(rectA.bottom));
+
+      await tester.tapAt(stripA.center);
+      await tester.pumpAndSettle();
+      expect(find.byKey(ValueKey('plan-inline-done-$a')), findsOneWidget,
+          reason: 'tapping A\'s strip must open A\'s editor, not B\'s');
+      expect(find.byKey(ValueKey('plan-inline-done-$b')), findsNothing);
+
+      final stored = await store.planBlocksForDay(day);
+      expect(stored.firstWhere((block) => block.id == a).endMin, 390);
+      expect(stored.firstWhere((block) => block.id == b).startMin, 390);
+    });
+
+    testWidgets(
+        'a resize drag on the clamped strip keeps the 96px/hour mapping',
+        (tester) async {
+      await tester.binding.setSurfaceSize(const Size(400, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      late int a, b;
+      await tester.runAsync(() async {
+        a = await addBlock('First', 360, 375);
+        b = await addBlock('Second', 375, 390);
+      });
+      await tester.pumpWidget(host());
+      await settle(tester);
+      await scrollToTop(tester);
+
+      // 48px is 30 minutes: 06:00-06:15 becomes 06:00-06:45, overlapping B.
+      await tester.drag(
+          find.byKey(ValueKey('plan-resize-$a')), const Offset(0, 48));
+      await settle(tester);
+
+      final stored = await store.planBlocksForDay(day);
+      expect(stored.firstWhere((block) => block.id == a).startMin, 360,
+          reason: 'a resize must not move the start');
+      expect(stored.firstWhere((block) => block.id == a).endMin, 405,
+          reason: 'a 48px drag must extend the block by exactly 30 minutes');
+      expect(stored.firstWhere((block) => block.id == b).startMin, 375,
+          reason: 'resizing A must not touch B');
+    });
+  });
 }
