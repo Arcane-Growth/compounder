@@ -80,7 +80,7 @@ class NotifyService {
       tz.setLocalLocation(tz.UTC);
     }
     await _plugin.initialize(
-      const InitializationSettings(
+      settings: const InitializationSettings(
           android: AndroidInitializationSettings('@mipmap/ic_launcher')),
     );
     await _plugin
@@ -173,7 +173,7 @@ class NotifyService {
   Future<void> rescheduleDaily(AppStore store) async {
     await init();
     if (!store.coachEnabled) {
-      await _plugin.cancel(_id);
+      await _plugin.cancel(id: _id);
       return;
     }
     final now = DateTime.now();
@@ -194,27 +194,23 @@ class NotifyService {
   Future<void> _scheduleDigest(tz.TZDateTime when, String body) async {
     try {
       await _plugin.zonedSchedule(
-        _id,
-        'Compounder coach',
-        body,
-        when,
-        const NotificationDetails(android: _channel),
+        id: _id,
+        title: 'Compounder coach',
+        body: body,
+        scheduledDate: when,
+        notificationDetails: const NotificationDetails(android: _channel),
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-        uiLocalNotificationDateInterpretation:
-            UILocalNotificationDateInterpretation.absoluteTime,
         matchDateTimeComponents: DateTimeComponents.time,
       );
     } catch (_) {
       // Exact alarms can be denied by the OS; fall back to an inexact schedule.
       await _plugin.zonedSchedule(
-        _id,
-        'Compounder coach',
-        body,
-        when,
-        const NotificationDetails(android: _channel),
+        id: _id,
+        title: 'Compounder coach',
+        body: body,
+        scheduledDate: when,
+        notificationDetails: const NotificationDetails(android: _channel),
         androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-        uiLocalNotificationDateInterpretation:
-            UILocalNotificationDateInterpretation.absoluteTime,
         matchDateTimeComponents: DateTimeComponents.time,
       );
     }
@@ -222,10 +218,10 @@ class NotifyService {
 
   Future<void> _showNow(String body) async {
     await _plugin.show(
-      _id + 1,
-      'Compounder coach',
-      body,
-      const NotificationDetails(android: _channel),
+      id: _id + 1,
+      title: 'Compounder coach',
+      body: body,
+      notificationDetails: const NotificationDetails(android: _channel),
     );
   }
 
@@ -237,32 +233,28 @@ class NotifyService {
     final tzWhen = tz.TZDateTime.from(when, tz.local);
     try {
       await _plugin.zonedSchedule(
-        1000 + reminder.id,
-        'Compounder reminder',
-        reminder.text,
-        tzWhen,
-        details,
+        id: 1000 + reminder.id,
+        title: 'Compounder reminder',
+        body: reminder.text,
+        scheduledDate: tzWhen,
+        notificationDetails: details,
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-        uiLocalNotificationDateInterpretation:
-            UILocalNotificationDateInterpretation.absoluteTime,
       );
     } catch (_) {
       await _plugin.zonedSchedule(
-        1000 + reminder.id,
-        'Compounder reminder',
-        reminder.text,
-        tzWhen,
-        details,
+        id: 1000 + reminder.id,
+        title: 'Compounder reminder',
+        body: reminder.text,
+        scheduledDate: tzWhen,
+        notificationDetails: details,
         androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-        uiLocalNotificationDateInterpretation:
-            UILocalNotificationDateInterpretation.absoluteTime,
       );
     }
   }
 
   Future<void> cancelReminder(int reminderId) async {
     await init();
-    await _plugin.cancel(1000 + reminderId);
+    await _plugin.cancel(id: 1000 + reminderId);
   }
 
   /// Re-schedules every pending reminder in [store].
