@@ -44,3 +44,28 @@ updates:
       actions:
         patterns:
           - "*"
+
+  # AGP, Kotlin, desugaring and the Gradle wrapper are real dependencies with
+  # their own advisories; without this entry they are invisible to Dependabot.
+  - package-ecosystem: "gradle"
+    directory: "/android"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "gradle"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # Minor/patch bumps arrive together; AGP and Kotlin majors stay separate
+      # because they need a human decision and a build.
+      gradle-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"

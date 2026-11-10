@@ -79,16 +79,18 @@ symbolicated (`flutter symbolize -i <stack> -d build/symbols/app.android-arm64.s
 Both are gitignored (`app.*.symbols`, `app.*.map.json`), so CI must upload them
 as build artifacts rather than commit them.
 
-CI (`release.yml`, owned by DevOps) should run exactly:
+CI (`release.yml`) runs exactly:
 
 ```bash
 flutter build appbundle --release --obfuscate --split-debug-info=build/symbols
+flutter build apk --release --obfuscate --split-debug-info=build/symbols
 ```
 
-and upload `build/app/outputs/bundle/release/app-release.aab` plus
-`build/symbols/` as artifacts. The keystore and `key.properties` must be
-materialised from CI secrets before the build; the build fails loudly if they
-are absent.
+then proves the APK carries the upload certificate (not the debug key), writes
+`SHA256SUMS.txt`, uploads the AAB, APK and `build/symbols/` as workflow
+artifacts, and publishes them to a GitHub Release. The keystore and
+`key.properties` are materialised from CI secrets before the build; the build
+fails loudly if they are absent.
 
 ## iOS
 
@@ -125,7 +127,9 @@ TMPDIR=/home/barry/.cache/flutter-tmp flutter test
 flutter build apk --release
 flutter build appbundle --release
 adb install -r build/app/outputs/flutter-apk/app-release.apk
-adb shell dumpsys activity activities | grep -m1 mResumedActivity
+# Android 17 renamed the field to `ResumedActivity` (no `m` prefix); the
+# optional `m` keeps this working on older devices too.
+adb shell dumpsys activity activities | grep -m1 -E 'm?ResumedActivity'
 adb logcat -d | grep -E "FATAL|AndroidRuntime"
 ```
 

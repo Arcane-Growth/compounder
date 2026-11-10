@@ -303,3 +303,29 @@ false failures.
 - **Whoever pushed:** m9 — decide whether the three pushed commits were
   intentional; if not, note it and keep the remaining two local until the gate
   clears.
+
+## Status update — 2026-11-10 (settings applied, docs reconciled)
+
+The findings above are the record of the state at review time. The repository has
+since been made **public** and the settings were applied; re-verified with `gh api`
+on 2026-11-10:
+
+- **M1 resolved** — `branches/main/protection` now returns a rule: 1 required
+  approval, Code Owners review, dismiss stale approvals, approval of the latest
+  push, four required checks (`Secret scan (gitleaks)`, `Format check`,
+  `Analyze and test`, `Release build (ephemeral CI key)`), strict up-to-date,
+  conversation resolution, signed commits, linear history, no force-push, no
+  deletion, enforced for admins.
+- **M2 resolved** — `security_and_analysis.secret_scanning` and
+  `.secret_scanning_push_protection` are `enabled`; `secret-scanning/alerts` is
+  `[]` (no open alerts). Non-provider patterns and validity checks remain off.
+- **M3 resolved** — private vulnerability reporting is now `{"enabled":true}`;
+  the `security/advisories/new` link works.
+- **m1 resolved** — squash-only (`allow_merge_commit: false`,
+  `allow_rebase_merge: false`, `delete_branch_on_merge: true`).
+- **Tag protection** — ruleset `Protect release tags (v*)` is active for
+  `refs/tags/v*` (deletion + non-fast-forward blocked). No tag is pushed to
+  `origin` yet; `v0.4.0` is the first tag that must be signed.
+- **m2/m3/m4/m5/m6/m7/m8** — corrected in `README.md`, `SECURITY.md`,
+  `docs/branching-and-protection.md`, `docs/release-build.md`,
+  `docs/release-process.md` and `.github/dependabot.yml`.
