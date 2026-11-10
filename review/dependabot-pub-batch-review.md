@@ -257,3 +257,116 @@ documentation/coverage gaps that do not affect shipped behaviour and can land as
 `sdks:` constraint section, bumped by the local Flutter 3.47.0 — no package version changes), so the test
 results above are valid. All my temporary edits were restored; `git status` clean in every worktree I
 touched.
+
+## Gate verdict — round 2
+
+**Reviewer**: Code Reviewer. **Date**: 2026-11-10. Every gate below was re-run by me in the pinned
+worktrees at the new heads; the dev's round-2 claims were checked, not trusted. Nothing merged, nothing
+pushed.
+
+### Per-PR round-2 verdicts
+
+| PR | Head | Round-2 verdict |
+| --- | --- | --- |
+| #4 permission_handler 13.0.2 + compileSdk floor | `189697c` | **APPROVE** — M1 and M2 closed, both proven non-vacuous |
+| #2 flutter-minor-patch + markdown guard | `7686d83` | **APPROVE** — M2 closed and proven non-vacuous; M1 accepted as a follow-up (non-blocking) |
+| #3 flutter_lints 6.0.0 | `e933dcb` | **APPROVE** (unchanged) |
+| #5 cupertino_icons 2.0.0 | `24df4d6` | **APPROVE** (unchanged) |
+
+No Blockers, no Majors, and no Minor still blocks.
+
+### PR #4 — `/home/barry/.cache/wt-pr4` @ `189697c`
+
+Delta `5f88278..189697c` touches `android/app/build.gradle.kts` and `android/build.gradle.kts` only.
+
+Commands and results:
+- `flutter analyze` → `No issues found! (ran in 2.8s)`.
+- `flutter build apk --release` → `✓ Built build/app/outputs/flutter-apk/app-release.apk (68.3MB)`.
+- Merged manifest `build/app/intermediates/merged_manifest/release/processReleaseMainManifest/AndroidManifest.xml`
+  → `android:minSdkVersion="26"`, `android:targetSdkVersion="36"`.
+- `aapt2` (build-tools 36.0.0) `dump badging app-release.apk` → `compileSdkVersion='37'`,
+  `minSdkVersion:'26'`, `targetSdkVersion:'36'`, `package: name='dev.compounder.compounder'`.
+- `getProperty("compileSdk")` probe (temporary `println` in `afterEvaluate`, removed afterwards): 18
+  plugins reported, `permission_handler_android declared=37` (left alone), the other 17 declared 34–36
+  (`flutter_local_notifications` 34, `flutter_timezone`/`jni`/`jni_flutter`/`pdfx` 35, the rest 36) and
+  were raised. Matches the dev's claim exactly; the read returns `java.lang.Integer`, so the `as? Int`
+  cast is sound, and a null/non-Int read falls back to raising to 37 — the safe direction.
+
+**Non-vacuity (revert-and-quote), two builds:**
+- Guard intact, floor temporarily lowered to 36 (the original break level) → `✓ Built … (68.3MB)`:
+  `permission_handler_android` stayed at 37, so the build survived.
+- Guard replaced with the old unconditional `setProperty("compileSdk", 36)` →
+  ```
+  permission_handler_android-14.1.1/…/PermissionUtils.java:97: error: cannot find symbol
+  …:612: error: cannot find symbol
+  …:616: error: cannot find symbol
+  …:618: error: cannot find symbol
+  BUILD FAILED in 1s
+  ```
+  ⇒ the `declared < 37` branch is what prevents the regression; it is not decorative.
+
+**M2 judgment**: `maxOf(37, flutter.compileSdkVersion)` closes M2 for the realistic case. If Flutter's
+compileSdk moves to 38, the app moves to 38 while plugins stay at the 37 floor — app ≥ plugin, which AGP
+accepts. The remaining divergence (root floor hardcoded 37 vs app derived) fails **loudly**, not silently:
+raising the root floor above the app's compileSdk makes AGP error at configuration time ("dependency
+requires compileSdk X"). So the trap is moved to a loud failure, which is acceptable. Residual **Nit**: the
+literal 37 is still duplicated in two files; a shared `val` would be cleaner but is not required.
+compileSdk is compile-time only — targetSdk 36 and minSdk 26 are unchanged, so no runtime/permission change.
+
+### PR #2 — `/home/barry/.cache/wt-pr2` @ `7686d83`
+
+Delta `5bf18e1..7686d83` touches `test/coach_markdown_render_test.dart` only.
+
+Commands and results:
+- `flutter analyze` → `No issues found! (ran in 3.3s)`.
+- `TZ=America/New_York flutter test test/coach_markdown_render_test.dart` → `+4: All tests passed!`.
+- `TZ=America/New_York flutter test` (full suite) → `+534: All tests passed!`.
+
+**Non-vacuity (quoted)**: replaced the pumped markdown with plain prose `'Your deficit is 500 kcal per day.'`
+(no LaTeX) →
+```
+Expected: contains '￼'
+  Actual: 'Your deficit is 500 kcal per day.'
+   Which: does not contain '￼'
+…
+file:///home/barry/.cache/wt-pr2/test/coach_markdown_render_test.dart line 77
+00:00 +2 -1: Some tests failed.
+```
+Restored → `+4: All tests passed!`.
+
+**Provenance probe**: added `expect(text, contains('500'))` on the LaTeX case →
+```
+Expected: contains '500'
+  Actual: 'Your deficit is ￼ kcal per day.'
+```
+⇒ the U+FFFC is exactly the formula placeholder; the assertion bites on the maths path, not on the
+surrounding prose. **M2 closed.**
+
+Residual **Nit**: U+FFFC is gpt_markdown's generic embedded-widget placeholder
+(`gpt_markdown-1.3.4/lib/custom_widgets/bidi_rich_text.dart:73`), so the assertion proves the formula was
+routed to a widget, not that `Math.tex` (val_latex_flutter 0.1.4) painted glyphs. `takeException()` isNull
+covers a throw; an engine that renders empty would still pass. A stronger assertion would be
+`find.byType(Math)` (`Math` is a `StatefulWidget` in val_latex_flutter). Non-blocking.
+
+**M1 (integration-level guard)**: accepted as a follow-up, does not block. The guard is package-level;
+reverting `lib/ui/coach.dart:343` to `Text(m.text)` still passes (round-1 probe). It does not affect shipped
+behaviour and CI's release build covers the compile path. Follow-up: a widget test that pumps the coach
+screen and asserts `find.byType(GptMarkdown)`.
+
+### CI spot-check (not re-run)
+
+- `gh pr checks 2` → 4/4 pass (run 42745665088; release job 129598050618, 8m24s).
+- `gh pr checks 4` → 4/4 pass (run 42745638782; release job 129597980868, 8m57s).
+
+Matches the dev's numbers.
+
+### Remaining risks
+
+- PR #4: duplicated 37 literal (Nit); a plugin declaring a compileSdk above the app's fails loudly at AGP
+  configuration time — acceptable.
+- PR #2: the U+FFFC assertion does not prove the maths engine paints (Nit); integration guard deferred
+  (M1 follow-up).
+- Worktree hygiene: `wt-pr2` has the pre-existing dirty `pubspec.lock` (`sdks:` section only, local Flutter
+  3.47.0); all my temporary edits were restored and `wt-pr4` is clean.
+
+**No merges, no pushes.** Both PRs are ready for the human to merge.
