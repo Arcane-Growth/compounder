@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -7,8 +8,29 @@ import '../data/store.dart';
 import '../domain/plan.dart';
 import 'widgets.dart';
 
-/// Chronological day planner: a timed to-do list for one local day, with day
-/// navigation, add/edit/delete, a done toggle and a "now" marker on today.
+/// Vertical pixels per hour on the day grid. 96dp keeps a 15-minute slot at
+/// 24dp, so a 30-minute block is a 48dp card — the minimum touch target.
+const double _hourHeight = 96;
+
+/// Every gesture on the grid snaps to this many minutes.
+const int _snapMinutes = 15;
+
+/// A block created by tapping an empty slot starts at this length; the owner
+/// resizes it afterwards by dragging the bottom edge.
+const int _defaultDuration = 30;
+
+/// Shortest block the resize handle can produce.
+const int _minDuration = 15;
+
+/// Height of the resize strip at the bottom of a block card.
+const double _handleHeight = 16;
+
+/// Smallest rendered card height, so a 15-minute block is still tappable.
+const double _minCardHeight = 48;
+
+/// Chronological day planner as a direct-manipulation timeline: tap an empty
+/// slot to type a one-liner, drag a block's bottom edge to resize it, drag its
+/// body to move it, tap it to rename, long-press to delete with undo.
 ///
 /// Planning the day is one of the app's five pillars, so this screen is the
 /// place the Home checklist's "Day plan" row and the "Plan your day" card lead
@@ -56,6 +78,34 @@ class _PlannerScreenState extends State<PlannerScreen>
   /// still detects the transition.
   bool _showedToday = false;
 
+  /// Scrolls the grid to the current time once per day, so opening the planner
+  /// lands on the part of the day the owner is actually in.
+  final ScrollController _scroll = ScrollController();
+  bool _scrolledToNow = false;
+
+  /// Inline editor state. [_creatingStart] is the snapped minute of a pending
+  /// new block; [_editingId] is the block being renamed. At most one is set.
+  int? _creatingStart;
+  int? _editingId;
+  final TextEditingController _inline = TextEditingController();
+  final FocusNode _inlineFocus = FocusNode();
+
+  /// Live drag state: the block being dragged, whether the drag is a resize,
+  /// and the candidate times. Kept in state so the card follows the finger and
+  /// shows a duration readout before the write lands.
+  int? _dragId;
+  bool _resizing = false;
+  int _dragStart = 0;
+  int _dragEnd = 0;
+  int _dragBaseStart = 0;
+  int _dragBaseEnd = 0;
+
+  /// Cumulative vertical drag distance in minutes since the gesture started.
+  /// The gesture reports per-event deltas, so they must be summed before the
+  /// snap is applied; snapping each event separately would lose sub-snap
+  /// movement and make a slow drag never move the block.
+  double _dragDelta = 0;
+
   DateTime _now() => widget.now?.call() ?? DateTime.now();
 
   @override
@@ -97,6 +147,9 @@ class _PlannerScreenState extends State<PlannerScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _clock?.cancel();
+    _scroll.dispose();
+    _inline.dispose();
+    _inlineFocus.dispose();
     super.dispose();
   }
 
@@ -121,6 +174,7 @@ class _PlannerScreenState extends State<PlannerScreen>
         _blocks = blocks;
         _loaded = true;
       });
+      _scrollToNow();
     } catch (_) {
       // A closed database (test teardown) or a transient query failure must not
       // take the screen down: the last known plan stays on screen.
@@ -129,11 +183,32 @@ class _PlannerScreenState extends State<PlannerScreen>
     }
   }
 
+  /// Jumps the grid to the current time once per selected day. Runs after the
+  /// frame that laid the scroll view out, so [ScrollController.position] is
+  /// attached; a no-op for a past or future day.
+  void _scrollToNow() {
+    if (_scrolledToNow) return;
+    final now = _now();
+    if (planDayKey(_day) != planDayKey(now)) return;
+    _scrolledToNow = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      final minute = now.hour * 60 + now.minute;
+      final target = minute / 60 * _hourHeight - 160;
+      _scroll.jumpTo(
+          target.clamp(0.0, _scroll.position.maxScrollExtent).toDouble());
+    });
+  }
+
   void _setDay(DateTime day) {
     setState(() {
       _day = DateTime(day.year, day.month, day.day);
       _blocks = const [];
       _loaded = false;
+      _scrolledToNow = false;
+      _creatingStart = null;
+      _editingId = null;
+      _dragId = null;
     });
     _load();
   }
@@ -152,6 +227,226 @@ class _PlannerScreenState extends State<PlannerScreen>
     );
     if (picked != null) _setDay(picked);
   }
+
+  // ------------------------------------------------------------ inline entry
+
+  /// Opens the inline one-liner at [startMin]. Any editor already open is
+  /// committed first, so typed text is never silently dropped.
+  void _startCreate(int startMin) {
+    if (_creatingStart != null) {
+      _commitCreate();
+    } else if (_editingId != null) {
+      final block = _blockById(_editingId!);
+      if (block != null) _commitEdit(block);
+    }
+    final start = _snap(startMin);
+    setState(() {
+      _creatingStart = start;
+      _editingId = null;
+      _inline.text = '';
+    });
+  }
+
+  /// Commits the pending new block. The whole create path is tap, type, Enter:
+  /// the title comes from the inline field and the duration is the default.
+  Future<void> _commitCreate() async {
+    final start = _creatingStart;
+    if (start == null) return;
+    final title = _inline.text.trim();
+    final end = _clampInt(start + _defaultDuration, 0, minutesPerDay);
+    // Clear the editor synchronously so a second tap on the grid cannot race
+    // this commit.
+    setState(() => _creatingStart = null);
+    _inlineFocus.unfocus();
+    if (title.isEmpty) return;
+    final error = planBlockError(title: title, startMin: start, endMin: end);
+    if (error != null) {
+      // Too long: keep the text so the owner can shorten it.
+      setState(() => _creatingStart = start);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error)));
+      }
+      return;
+    }
+    await _runWrite(
+        context,
+        () => _store!.createPlanBlock(
+            day: _day, title: title, startMin: start, endMin: end));
+  }
+
+  /// Opens the inline editor on [block] with its current title. An editor
+  /// already open on another block is committed first.
+  void _startEdit(PlanBlock block) {
+    if (_creatingStart != null) {
+      _commitCreate();
+    } else if (_editingId != null && _editingId != block.id) {
+      final current = _blockById(_editingId!);
+      if (current != null) _commitEdit(current);
+    }
+    setState(() {
+      _editingId = block.id;
+      _creatingStart = null;
+      _inline.text = block.title;
+    });
+  }
+
+  /// Renames [block] in place. An emptied field reverts to the stored title
+  /// rather than deleting the block.
+  Future<void> _commitEdit(PlanBlock block) async {
+    final title = _inline.text.trim();
+    setState(() => _editingId = null);
+    _inlineFocus.unfocus();
+    if (title.isEmpty || title == block.title) return;
+    final error = planBlockError(
+        title: title, startMin: block.startMin, endMin: block.endMin);
+    if (error != null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error)));
+      }
+      return;
+    }
+    await _runWrite(
+        context, () => _store!.updatePlanBlock(block.id, title: title));
+  }
+
+  void _cancelInline() {
+    setState(() {
+      _creatingStart = null;
+      _editingId = null;
+    });
+    _inline.clear();
+    _inlineFocus.unfocus();
+  }
+
+  // ------------------------------------------------------------------ drags
+
+  void _beginDrag(PlanBlock block, {required bool resize}) {
+    setState(() {
+      _dragId = block.id;
+      _resizing = resize;
+      _dragStart = block.startMin;
+      _dragEnd = block.endMin;
+      _dragBaseStart = block.startMin;
+      _dragBaseEnd = block.endMin;
+      _dragDelta = 0;
+      _creatingStart = null;
+      _editingId = null;
+    });
+  }
+
+  /// Applies a cumulative drag delta (in minutes, from the gesture start) to
+  /// the live candidate times, snapped to [_snapMinutes]. A resize moves the
+  /// end only; a move shifts the whole block and keeps its duration.
+  void _updateDrag(double deltaMinutes) {
+    if (_dragId == null) return;
+    _dragDelta += deltaMinutes;
+    final delta = (_dragDelta / _snapMinutes).round() * _snapMinutes;
+    if (delta == 0) return;
+    setState(() {
+      if (_resizing) {
+        _dragEnd = _clampInt(
+            _dragBaseEnd + delta, _dragStart + _minDuration, minutesPerDay);
+      } else {
+        final duration = _dragBaseEnd - _dragBaseStart;
+        final start =
+            _clampInt(_dragBaseStart + delta, 0, minutesPerDay - duration);
+        _dragStart = start;
+        _dragEnd = start + duration;
+      }
+    });
+  }
+
+  /// Persists the dragged times. A drag that snapped back to the original
+  /// times writes nothing.
+  Future<void> _endDrag() async {
+    final id = _dragId;
+    final start = _dragStart;
+    final end = _dragEnd;
+    final changed = start != _dragBaseStart || end != _dragBaseEnd;
+    setState(() {
+      _dragId = null;
+      _resizing = false;
+    });
+    if (id == null || !changed) return;
+    await _runWrite(context,
+        () => _store!.updatePlanBlock(id, startMin: start, endMin: end));
+  }
+
+  // ----------------------------------------------------------------- writes
+
+  /// Runs a store write and reports a failure to the user instead of dropping
+  /// the future, matching the habit screen's contract.
+  Future<void> _runWrite(
+      BuildContext context, Future<void> Function() write) async {
+    String? message;
+    try {
+      await write();
+    } on StoreException catch (e) {
+      message = e.message;
+    } catch (_) {
+      message = 'Could not save that change.';
+    }
+    if (!mounted) return;
+    await _load();
+    if (message != null && context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
+    }
+  }
+
+  /// Deletes [block] immediately and offers an undo snackbar instead of a
+  /// confirmation dialog: the common path stays one gesture.
+  Future<void> _deleteBlock(BuildContext context, PlanBlock block) async {
+    final messenger = ScaffoldMessenger.of(context);
+    await _runWrite(context, () => _store!.deletePlanBlock(block.id));
+    if (!mounted) return;
+    messenger.showSnackBar(SnackBar(
+      content: Text('Deleted "${block.title}"'),
+      action: SnackBarAction(
+        label: 'Undo',
+        onPressed: () => _undoDelete(block),
+      ),
+    ));
+  }
+
+  /// Recreates a deleted block with its original title, times and done state.
+  Future<void> _undoDelete(PlanBlock block) async {
+    final store = _store;
+    if (store == null) return;
+    await _runWrite(context, () async {
+      final id = await store.createPlanBlock(
+          day: _day,
+          title: block.title,
+          startMin: block.startMin,
+          endMin: block.endMin);
+      if (block.done) await store.setPlanBlockDone(id, true);
+    });
+  }
+
+  PlanBlock? _blockById(int id) {
+    for (final block in _blocks) {
+      if (block.id == id) return block;
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------- helpers
+
+  /// Snaps [minute] down to the nearest [_snapMinutes] boundary inside the day.
+  int _snap(int minute) => _clampInt(
+      (minute ~/ _snapMinutes) * _snapMinutes, 0, minutesPerDay - _minDuration);
+
+  /// The minute offset for a y position inside the grid.
+  int _minuteAt(double dy) => (dy / _hourHeight * 60).floor();
+
+  int _clampInt(int value, int low, int high) =>
+      value < low ? low : (value > high ? high : value);
+
+  double _topFor(int minute) => minute / 60 * _hourHeight;
+
+  // ------------------------------------------------------------------ build
 
   @override
   Widget build(BuildContext context) {
@@ -179,368 +474,447 @@ class _PlannerScreenState extends State<PlannerScreen>
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        key: const ValueKey('plan-add'),
-        onPressed: () => _editBlock(context, null),
-        icon: const Icon(Icons.add),
-        label: const Text('Add block'),
-        tooltip: 'Add block',
-      ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 96),
-        children: [
-          Row(children: [
-            IconButton(
-              key: const ValueKey('plan-prev'),
-              icon: const Icon(Icons.chevron_left),
-              tooltip: 'Previous day',
-              onPressed: () => _shiftDay(-1),
-            ),
-            Expanded(
-              child: Text(
-                formatDate(_day.millisecondsSinceEpoch),
-                style: t.titleMedium,
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            IconButton(
-              key: const ValueKey('plan-next'),
-              icon: const Icon(Icons.chevron_right),
-              tooltip: 'Next day',
-              onPressed: () => _shiftDay(1),
-            ),
-          ]),
-          const SizedBox(height: 8),
-          if (_loaded && _blocks.isEmpty)
-            const EmptyState(
-              icon: Icons.event_note,
-              title: 'Nothing planned for this day',
-              subtitle: 'Add a block to plan your day.',
-            )
-          else
-            ..._timeline(context, isToday: isToday, nowMinute: nowMinute),
-          if (_blocks.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Text(
-              '${_blocks.where((b) => b.done).length} of ${_blocks.length} '
-              'blocks done',
+      body: Column(children: [
+        _dayBar(context),
+        if (_loaded && _blocks.isEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: Text(
+              'Nothing planned for this day. Tap a time to add a block.',
               style: t.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
             ),
-          ],
-        ],
-      ),
+          ),
+        Expanded(
+            child: _timeline(context, isToday: isToday, nowMinute: nowMinute)),
+        if (_blocks.isNotEmpty) _progress(context),
+      ]),
     );
   }
 
-  /// The day's blocks in chronological order, with a "now" marker inserted at
-  /// the current minute when the screen is showing today.
-  List<Widget> _timeline(BuildContext context,
-      {required bool isToday, required int nowMinute}) {
-    final ordered = chronological(_blocks);
-    final widgets = <Widget>[];
-    var markerPlaced = false;
-    for (final block in ordered) {
-      if (isToday && !markerPlaced && block.endMin > nowMinute) {
-        widgets.add(_nowMarker(context, nowMinute));
-        markerPlaced = true;
-      }
-      widgets.add(_blockTile(context, block,
-          current: isToday &&
-              nowMinute >= block.startMin &&
-              nowMinute < block.endMin));
-    }
-    if (isToday && !markerPlaced) {
-      widgets.add(_nowMarker(context, nowMinute));
-    }
-    return widgets;
+  Widget _dayBar(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    return Row(children: [
+      IconButton(
+        key: const ValueKey('plan-prev'),
+        icon: const Icon(Icons.chevron_left),
+        tooltip: 'Previous day',
+        onPressed: () => _shiftDay(-1),
+      ),
+      Expanded(
+        child: Text(
+          formatDate(_day.millisecondsSinceEpoch),
+          style: t.titleMedium,
+          textAlign: TextAlign.center,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+      IconButton(
+        key: const ValueKey('plan-next'),
+        icon: const Icon(Icons.chevron_right),
+        tooltip: 'Next day',
+        onPressed: () => _shiftDay(1),
+      ),
+    ]);
   }
 
-  Widget _nowMarker(BuildContext context, int nowMinute) {
+  Widget _progress(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final t = Theme.of(context).textTheme;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Semantics(
-        label: 'Current time ${formatPlanTime(nowMinute)}',
-        child: Row(children: [
-          Expanded(child: Divider(color: scheme.primary, height: 1)),
-          Flexible(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Text(
-                'Now ${formatPlanTime(nowMinute)}',
-                style: t.labelSmall?.copyWith(color: scheme.primary),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ),
-          Expanded(child: Divider(color: scheme.primary, height: 1)),
+      padding: const EdgeInsets.fromLTRB(20, 6, 20, 10),
+      child: Text(
+        '${_blocks.where((b) => b.done).length} of ${_blocks.length} '
+        'blocks done',
+        style: t.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+      ),
+    );
+  }
+
+  /// The full-day grid with the day's blocks positioned on it. The grid is the
+  /// bottom layer, so a tap on a block reaches the block and a tap on empty
+  /// space reaches the grid.
+  Widget _timeline(BuildContext context,
+      {required bool isToday, required int nowMinute}) {
+    final ordered = chronological(_blocks);
+    final editing = _editingId == null ? null : _blockById(_editingId!);
+    return SingleChildScrollView(
+      controller: _scroll,
+      child: SizedBox(
+        height: minutesPerDay / 60 * _hourHeight,
+        child: Stack(children: [
+          _grid(context),
+          if (isToday) _nowLine(context, nowMinute),
+          for (final block in ordered) _positionedBlock(context, block),
+          if (_creatingStart != null)
+            _positionedEditor(context,
+                start: _creatingStart!,
+                end: _clampInt(
+                    _creatingStart! + _defaultDuration, 0, minutesPerDay)),
+          if (editing != null)
+            _positionedEditor(context,
+                block: editing, start: editing.startMin, end: editing.endMin),
         ]),
       ),
     );
   }
 
-  Widget _blockTile(BuildContext context, PlanBlock block,
-      {required bool current}) {
+  /// Hour lines, half-hour ticks and hour labels. Tapping anywhere on it opens
+  /// the inline one-liner at the snapped minute under the finger.
+  Widget _grid(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final t = Theme.of(context).textTheme;
-    final timeLabel = '${formatPlanTime(block.startMin)}–'
-        '${formatPlanTime(block.endMin)} · '
-        '${formatPlanDuration(block.durationMinutes)}';
-    return Card(
-      color: current ? scheme.primaryContainer : scheme.surfaceContainerLow,
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      child: InkWell(
-        onTap: () => _editBlock(context, block),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            MergeSemantics(
-              child: Semantics(
-                // Name the control, not the action: the checkbox already
-                // reports its checked state, so "Mark X done, checked" would
-                // announce the action and the state twice.
-                label: block.title,
-                child: Checkbox(
-                  key: ValueKey('plan-done-${block.id}'),
-                  value: block.done,
-                  onChanged: (value) => _runWrite(context,
-                      () => _store!.setPlanBlockDone(block.id, value ?? false)),
+    return GestureDetector(
+      key: const ValueKey('plan-grid'),
+      behavior: HitTestBehavior.opaque,
+      onTapUp: (details) => _startCreate(_minuteAt(details.localPosition.dy)),
+      child: Stack(children: [
+        for (var hour = 0; hour <= 24; hour++)
+          Positioned(
+            top: _topFor(hour * 60),
+            left: 0,
+            right: 0,
+            child: Divider(
+              height: 1,
+              thickness: 1,
+              color: scheme.outlineVariant.withValues(alpha: 0.6),
+            ),
+          ),
+        for (var hour = 0; hour < 24; hour++)
+          Positioned(
+            top: _topFor(hour * 60 + 30),
+            left: 56,
+            right: 0,
+            child: Divider(
+              height: 1,
+              thickness: 1,
+              color: scheme.outlineVariant.withValues(alpha: 0.25),
+            ),
+          ),
+        for (var hour = 0; hour <= 24; hour++)
+          Positioned(
+            top: _topFor(hour * 60) + 2,
+            left: 4,
+            child: Text(
+              formatPlanTime(hour * 60),
+              style: t.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+          ),
+      ]),
+    );
+  }
+
+  /// The "now" marker, drawn above the grid and below the blocks. Ignored by
+  /// hit testing so it never swallows a tap meant for the grid.
+  Widget _nowLine(BuildContext context, int nowMinute) {
+    final scheme = Theme.of(context).colorScheme;
+    final t = Theme.of(context).textTheme;
+    return Positioned(
+      top: _topFor(nowMinute),
+      left: 0,
+      right: 0,
+      child: IgnorePointer(
+        child: Semantics(
+          label: 'Current time ${formatPlanTime(nowMinute)}',
+          child: Row(children: [
+            Expanded(child: Divider(color: scheme.primary, height: 1)),
+            Flexible(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text(
+                  'Now ${formatPlanTime(nowMinute)}',
+                  style: t.labelSmall?.copyWith(color: scheme.primary),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    block.title,
-                    style: t.titleMedium?.copyWith(
-                      decoration:
-                          block.done ? TextDecoration.lineThrough : null,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    current ? 'Now · $timeLabel' : timeLabel,
-                    style: t.bodySmall?.copyWith(
-                        color: current
-                            ? scheme.onPrimaryContainer
-                            : scheme.onSurfaceVariant),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-            PopupMenuButton<String>(
-              key: ValueKey('plan-menu-${block.id}'),
-              tooltip: 'Block actions',
-              onSelected: (value) async {
-                switch (value) {
-                  case 'edit':
-                    await _editBlock(context, block);
-                  case 'delete':
-                    await _deleteBlock(context, block);
-                }
-              },
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'edit', child: Text('Edit')),
-                PopupMenuItem(value: 'delete', child: Text('Delete')),
-              ],
-            ),
+            Expanded(child: Divider(color: scheme.primary, height: 1)),
           ]),
         ),
       ),
     );
   }
 
-  /// Runs a store write and reports a failure to the user instead of dropping
-  /// the future, matching the habit screen's contract.
-  Future<void> _runWrite(
-      BuildContext context, Future<void> Function() write) async {
-    String? message;
-    try {
-      await write();
-    } on StoreException catch (e) {
-      message = e.message;
-    } catch (_) {
-      message = 'Could not save that change.';
-    }
-    if (!mounted) return;
-    await _load();
-    if (message != null && context.mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(message)));
-    }
-  }
-
-  Future<void> _deleteBlock(BuildContext context, PlanBlock block) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Delete "${block.title}"?'),
-        content: const Text('This block will be removed from the day.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Delete')),
-        ],
-      ),
+  Widget _positionedBlock(BuildContext context, PlanBlock block) {
+    final dragging = _dragId == block.id;
+    final start = dragging ? _dragStart : block.startMin;
+    final end = dragging ? _dragEnd : block.endMin;
+    final height =
+        _topFor(end - start).clamp(_minCardHeight, double.infinity).toDouble();
+    return Positioned(
+      top: _topFor(start),
+      left: 56,
+      right: 8,
+      height: height,
+      child: _blockCard(context, block, height: height, dragging: dragging),
     );
-    if (confirmed != true || !context.mounted) return;
-    await _runWrite(context, () => _store!.deletePlanBlock(block.id));
   }
 
-  /// Add ([block] null) or edit a block. Validation lives in the dialog so it
-  /// can show the error inline; the store re-validates as the single write
-  /// boundary.
-  Future<void> _editBlock(BuildContext context, PlanBlock? block) async {
-    final store = _store;
-    if (store == null) return;
-    await showDialog<void>(
-      context: context,
-      builder: (_) => _BlockEditorDialog(block: block, day: _day, store: store),
+  Widget _positionedEditor(BuildContext context,
+      {PlanBlock? block, required int start, required int end}) {
+    final height = _topFor(end - start).clamp(64.0, double.infinity).toDouble();
+    return Positioned(
+      top: _topFor(start),
+      left: 56,
+      right: 8,
+      height: height,
+      child: _inlineEditor(context, block: block, start: start, end: end),
     );
-    if (mounted) await _load();
-  }
-}
-
-/// Add/edit dialog. A StatefulWidget owns the [TextEditingController] so it is
-/// disposed with the route, not while the dialog is still animating out (which
-/// threw "A TextEditingController was used after being disposed").
-class _BlockEditorDialog extends StatefulWidget {
-  final PlanBlock? block;
-  final DateTime day;
-  final AppStore store;
-
-  const _BlockEditorDialog({
-    required this.block,
-    required this.day,
-    required this.store,
-  });
-
-  @override
-  State<_BlockEditorDialog> createState() => _BlockEditorDialogState();
-}
-
-class _BlockEditorDialogState extends State<_BlockEditorDialog> {
-  late final TextEditingController _title;
-  late int _start;
-  late int _end;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _title = TextEditingController(text: widget.block?.title ?? '');
-    _start = widget.block?.startMin ?? 9 * 60;
-    _end = widget.block?.endMin ?? 10 * 60;
   }
 
-  @override
-  void dispose() {
-    _title.dispose();
-    super.dispose();
-  }
+  /// A block card: done toggle on the left, title and times in the middle, a
+  /// resize strip along the bottom edge. The body drags to move, taps to
+  /// rename, long-presses to delete.
+  Widget _blockCard(BuildContext context, PlanBlock block,
+      {required double height, required bool dragging}) {
+    final scheme = Theme.of(context).colorScheme;
+    final t = Theme.of(context).textTheme;
+    final now = _now();
+    final current = planDayKey(_day) == planDayKey(now) &&
+        now.hour * 60 + now.minute >= block.startMin &&
+        now.hour * 60 + now.minute < block.endMin;
+    final start = dragging ? _dragStart : block.startMin;
+    final end = dragging ? _dragEnd : block.endMin;
+    final duration = end - start;
+    final timeLabel = '${formatPlanTime(start)}–${formatPlanTime(end)} · '
+        '${formatPlanDuration(duration)}';
+    final showTimes = height >= 40;
+    final compact = height < 56;
 
-  Future<void> _pick(bool isStart) async {
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay(
-          hour: (isStart ? _start : _end) ~/ 60,
-          minute: (isStart ? _start : _end) % 60),
-    );
-    if (picked == null || !mounted) return;
-    setState(() {
-      if (isStart) {
-        _start = picked.hour * 60 + picked.minute;
-      } else {
-        _end = picked.hour * 60 + picked.minute;
-      }
-    });
-  }
-
-  Future<void> _save() async {
-    final message =
-        planBlockError(title: _title.text, startMin: _start, endMin: _end);
-    if (message != null) {
-      setState(() => _error = message);
-      return;
-    }
-    try {
-      final block = widget.block;
-      if (block == null) {
-        await widget.store.createPlanBlock(
-            day: widget.day,
-            title: _title.text,
-            startMin: _start,
-            endMin: _end);
-      } else {
-        await widget.store.updatePlanBlock(block.id,
-            title: _title.text, startMin: _start, endMin: _end);
-      }
-      if (mounted) Navigator.pop(context);
-    } on StoreException catch (e) {
-      // The dialog can be dismissed while the write is in flight; setState on
-      // a disposed State throws.
-      if (mounted) setState(() => _error = e.message);
-    } catch (_) {
-      // A closed or failed database throws something that is not a
-      // StoreException; report it instead of leaving the dialog open silently.
-      if (mounted) setState(() => _error = 'Could not save that block.');
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.block == null ? 'New block' : 'Edit block'),
-      content: SingleChildScrollView(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(
-            key: const ValueKey('plan-title'),
-            controller: _title,
-            autofocus: true,
-            decoration: const InputDecoration(labelText: 'Title'),
+    return Semantics(
+      label: '${block.title}, ${formatPlanTime(start)} to '
+          '${formatPlanTime(end)}, ${formatPlanDuration(duration)}'
+          '${block.done ? ', done' : ''}',
+      button: true,
+      child: Material(
+        color: current ? scheme.primaryContainer : scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(12),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(children: [
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: 44,
+            child: _doneToggle(context, block, current: current),
           ),
-          const SizedBox(height: 12),
-          OutlinedButton(
-            key: const ValueKey('plan-start'),
-            onPressed: () => _pick(true),
-            child: Text('Start ${formatPlanTime(_start)}'),
+          Positioned(
+            left: 44,
+            top: 0,
+            right: 0,
+            bottom: _handleHeight,
+            child: GestureDetector(
+              key: ValueKey('plan-block-${block.id}'),
+              behavior: HitTestBehavior.opaque,
+              dragStartBehavior: DragStartBehavior.down,
+              onTap: () => _startEdit(block),
+              onLongPress: () => _deleteBlock(context, block),
+              onVerticalDragStart: (_) => _beginDrag(block, resize: false),
+              onVerticalDragUpdate: (details) =>
+                  _updateDrag(details.primaryDelta! / _hourHeight * 60),
+              onVerticalDragEnd: (_) => _endDrag(),
+              child: ClipRect(
+                child: OverflowBox(
+                  alignment: Alignment.topLeft,
+                  maxHeight: double.infinity,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(4, 2, 8, 2),
+                    child: compact
+                        // A 30-minute block is 48dp tall; a two-line stack
+                        // would clip its own time label, so the compact card
+                        // puts the time beside the title on one line.
+                        ? Row(children: [
+                            Expanded(
+                              child: Text(
+                                block.title,
+                                style: t.bodyMedium?.copyWith(
+                                  decoration: block.done
+                                      ? TextDecoration.lineThrough
+                                      : null,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (showTimes) ...[
+                              const SizedBox(width: 6),
+                              Text(
+                                dragging
+                                    ? formatPlanDuration(duration)
+                                    : timeLabel,
+                                key: dragging
+                                    ? ValueKey('plan-drag-readout-${block.id}')
+                                    : null,
+                                style: t.labelSmall?.copyWith(
+                                    color: current
+                                        ? scheme.onPrimaryContainer
+                                        : scheme.onSurfaceVariant),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ])
+                        : Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                block.title,
+                                style: t.bodyMedium?.copyWith(
+                                  decoration: block.done
+                                      ? TextDecoration.lineThrough
+                                      : null,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              if (showTimes) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  dragging
+                                      ? formatPlanDuration(duration)
+                                      : timeLabel,
+                                  key: dragging
+                                      ? ValueKey(
+                                          'plan-drag-readout-${block.id}')
+                                      : null,
+                                  style: t.bodySmall?.copyWith(
+                                      color: current
+                                          ? scheme.onPrimaryContainer
+                                          : scheme.onSurfaceVariant),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ],
+                          ),
+                  ),
+                ),
+              ),
+            ),
           ),
-          const SizedBox(height: 8),
-          OutlinedButton(
-            key: const ValueKey('plan-end'),
-            onPressed: () => _pick(false),
-            child: Text('End ${formatPlanTime(_end)}'),
+          Positioned(
+            left: 44,
+            right: 0,
+            bottom: 0,
+            height: _handleHeight,
+            child: Semantics(
+              label: 'Resize ${block.title}',
+              child: GestureDetector(
+                key: ValueKey('plan-resize-${block.id}'),
+                behavior: HitTestBehavior.opaque,
+                dragStartBehavior: DragStartBehavior.down,
+                onVerticalDragStart: (_) => _beginDrag(block, resize: true),
+                onVerticalDragUpdate: (details) =>
+                    _updateDrag(details.primaryDelta! / _hourHeight * 60),
+                onVerticalDragEnd: (_) => _endDrag(),
+                child: Center(
+                  child: Container(
+                    width: 28,
+                    height: 3,
+                    decoration: BoxDecoration(
+                      color: scheme.onSurfaceVariant.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ),
-          if (_error != null) ...[
-            const SizedBox(height: 12),
-            Text(_error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error)),
-          ],
         ]),
       ),
-      actions: [
-        TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel')),
-        FilledButton(
-          key: const ValueKey('plan-save'),
-          onPressed: _save,
-          child: const Text('Save'),
+    );
+  }
+
+  /// One-tap done toggle. Spans the card's full height so the target is at
+  /// least 48dp tall on a default-length block.
+  Widget _doneToggle(BuildContext context, PlanBlock block,
+      {required bool current}) {
+    final scheme = Theme.of(context).colorScheme;
+    return Semantics(
+      // Name the control, not the action: the icon already reports its state,
+      // so "Mark X done, checked" would announce the action and state twice.
+      label: block.title,
+      child: InkResponse(
+        key: ValueKey('plan-done-${block.id}'),
+        radius: 24,
+        onTap: () => _runWrite(
+            context, () => _store!.setPlanBlockDone(block.id, !block.done)),
+        child: Center(
+          child: Icon(
+            block.done ? Icons.check_circle : Icons.radio_button_unchecked,
+            size: 20,
+            color: current ? scheme.onPrimaryContainer : scheme.primary,
+          ),
         ),
-      ],
+      ),
+    );
+  }
+
+  /// The inline one-liner. Rendered in place on the grid — no dialog, no sheet.
+  /// Enter commits; the close button cancels.
+  Widget _inlineEditor(BuildContext context,
+      {PlanBlock? block, required int start, required int end}) {
+    final scheme = Theme.of(context).colorScheme;
+    final t = Theme.of(context).textTheme;
+    return Material(
+      color: scheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: OverflowBox(
+        alignment: Alignment.topLeft,
+        maxHeight: double.infinity,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Row(children: [
+            Text(
+              formatPlanTime(start),
+              style: t.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                key: const ValueKey('plan-inline'),
+                controller: _inline,
+                focusNode: _inlineFocus,
+                autofocus: true,
+                textInputAction: TextInputAction.done,
+                maxLength: planTitleMaxLength,
+                buildCounter: (_,
+                        {required currentLength,
+                        required isFocused,
+                        required maxLength}) =>
+                    null,
+                style: t.bodyMedium,
+                decoration: const InputDecoration(
+                  isDense: true,
+                  border: InputBorder.none,
+                  hintText: 'What is this?',
+                ),
+                onSubmitted: (_) =>
+                    block == null ? _commitCreate() : _commitEdit(block),
+              ),
+            ),
+            if (block != null)
+              IconButton(
+                key: ValueKey('plan-inline-done-${block.id}'),
+                tooltip: block.done ? 'Mark not done' : 'Mark done',
+                icon: Icon(block.done
+                    ? Icons.check_circle
+                    : Icons.radio_button_unchecked),
+                onPressed: () => _runWrite(context,
+                    () => _store!.setPlanBlockDone(block.id, !block.done)),
+              ),
+            IconButton(
+              key: const ValueKey('plan-inline-cancel'),
+              tooltip: 'Cancel',
+              icon: const Icon(Icons.close),
+              onPressed: _cancelInline,
+            ),
+          ]),
+        ),
+      ),
     );
   }
 }

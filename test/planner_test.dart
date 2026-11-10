@@ -8,8 +8,10 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
-/// Day planner widget proofs: empty state, add/edit/complete/delete flows, and
-/// the 320dp / 2.0 text-scale overflow guard.
+/// Day planner widget proofs: the direct-manipulation timeline — tap-to-create
+/// with an inline one-liner, drag-to-resize, drag-to-move, delete with undo —
+/// plus the now marker, the stale-query guard and the 320dp / 2.0 overflow
+/// guard.
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -55,68 +57,207 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('shows an empty state that prompts planning', (tester) async {
+  /// Scrolls the grid back to midnight. The screen auto-scrolls to the current
+  /// time on open, so a test that wants an early-morning block on screen has to
+  /// undo that first.
+  Future<void> scrollToTop(WidgetTester tester) async {
+    await tester.drag(
+        find.byKey(const ValueKey('plan-grid')), const Offset(0, 3000));
+    await tester.pumpAndSettle();
+  }
+
+  /// The global y of [minute] on the grid, using the grid's real rect so the
+  /// test does not depend on the day bar's height.
+  double gridY(WidgetTester tester, int minute) {
+    final rect = tester.getRect(find.byKey(const ValueKey('plan-grid')));
+    return rect.top + minute / 60 * 96;
+  }
+
+  testWidgets('shows the empty hint and a full-day grid', (tester) async {
     await tester.pumpWidget(host());
     await settle(tester);
 
-    expect(find.text('Nothing planned for this day'), findsOneWidget);
-    expect(find.text('Add a block to plan your day.'), findsOneWidget);
-    expect(find.text('Add block'), findsOneWidget);
+    expect(find.textContaining('Nothing planned for this day'), findsOneWidget);
+    expect(find.byKey(const ValueKey('plan-grid')), findsOneWidget);
+    // Hour labels cover the whole day, including the 24:00 end.
+    expect(find.text('00:00'), findsOneWidget);
+    expect(find.text('24:00'), findsOneWidget);
+    // The old dialog-based add button is gone.
+    expect(find.byKey(const ValueKey('plan-add')), findsNothing);
   });
 
-  testWidgets('adds a block through the dialog', (tester) async {
+  testWidgets('tap, type, Enter creates a block with the default duration',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(host());
     await settle(tester);
+    await scrollToTop(tester);
 
-    await tester.tap(find.byKey(const ValueKey('plan-add')));
+    // Tap an empty slot at 06:15 (375 minutes from midnight).
+    await tester.tapAt(Offset(200, gridY(tester, 375)));
     await tester.pumpAndSettle();
+
+    // Inline field, in place: no dialog, no bottom sheet.
+    expect(find.byKey(const ValueKey('plan-inline')), findsOneWidget);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(BottomSheet), findsNothing);
+
     await tester.enterText(
-        find.byKey(const ValueKey('plan-title')), 'Deep work');
-    await tester.tap(find.byKey(const ValueKey('plan-save')));
+        find.byKey(const ValueKey('plan-inline')), 'Deep work');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
     await settle(tester);
 
     final blocks = await store.planBlocksForDay(day);
     expect(blocks, hasLength(1));
     expect(blocks.single.title, 'Deep work');
-    expect(blocks.single.startMin, 9 * 60);
-    expect(blocks.single.endMin, 10 * 60);
+    expect(blocks.single.startMin, 375,
+        reason: 'the block must start at the tapped slot');
+    expect(blocks.single.endMin, 405,
+        reason: 'a new block defaults to 30 minutes');
     expect(find.text('Deep work'), findsOneWidget);
-    expect(find.text('09:00–10:00 · 1h'), findsOneWidget);
+    expect(find.text('06:15–06:45 · 30 min'), findsOneWidget);
     expect(find.text('0 of 1 blocks done'), findsOneWidget);
   });
 
-  testWidgets('rejects a blank title inline without writing', (tester) async {
+  testWidgets('a blank inline entry writes nothing', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(host());
     await settle(tester);
+    await scrollToTop(tester);
 
-    await tester.tap(find.byKey(const ValueKey('plan-add')));
+    await tester.tapAt(Offset(200, gridY(tester, 375)));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('plan-save')));
-    await tester.pumpAndSettle();
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await settle(tester);
 
-    expect(find.text('Enter a title for this block.'), findsOneWidget);
     expect(await store.planBlocksForDay(day), isEmpty);
+    expect(find.byKey(const ValueKey('plan-inline')), findsNothing);
   });
 
-  testWidgets('edits a block', (tester) async {
+  testWidgets('dragging the bottom edge resizes and snaps to 15 minutes',
+      (tester) async {
     late int id;
     await tester.runAsync(() async {
       id = await store.createPlanBlock(
-          day: day, title: 'Deep work', startMin: 540, endMin: 600);
+          day: day, title: 'Deep work', startMin: 60, endMin: 120);
     });
     await tester.pumpWidget(host());
     await settle(tester);
+    await scrollToTop(tester);
 
-    await tester.tap(find.text('Deep work'));
+    // 96px is one hour: 01:00-02:00 becomes 01:00-03:00.
+    await tester.drag(
+        find.byKey(ValueKey('plan-resize-$id')), const Offset(0, 96));
+    await settle(tester);
+
+    final blocks = await store.planBlocksForDay(day);
+    expect(blocks.single.startMin, 60,
+        reason: 'a resize must not move the start');
+    expect(blocks.single.endMin, 180,
+        reason: 'a 96px drag must extend the block by exactly one hour');
+    expect(blocks.single.durationMinutes, 120);
+  });
+
+  testWidgets('a resize drag snaps to the nearest 15-minute boundary',
+      (tester) async {
+    late int id;
+    await tester.runAsync(() async {
+      id = await store.createPlanBlock(
+          day: day, title: 'Deep work', startMin: 60, endMin: 120);
+    });
+    await tester.pumpWidget(host());
+    await settle(tester);
+    await scrollToTop(tester);
+
+    // 40px is 25 minutes: the end must land on 02:30, not 02:25.
+    await tester.drag(
+        find.byKey(ValueKey('plan-resize-$id')), const Offset(0, 40));
+    await settle(tester);
+
+    final blocks = await store.planBlocksForDay(day);
+    expect(blocks.single.endMin, 150,
+        reason: '25 minutes of drag must snap to the 30-minute mark');
+    expect(blocks.single.endMin % 15, 0);
+  });
+
+  testWidgets('dragging the block body moves it in time', (tester) async {
+    late int id;
+    await tester.runAsync(() async {
+      id = await store.createPlanBlock(
+          day: day, title: 'Deep work', startMin: 60, endMin: 120);
+    });
+    await tester.pumpWidget(host());
+    await settle(tester);
+    await scrollToTop(tester);
+
+    await tester.drag(
+        find.byKey(ValueKey('plan-block-$id')), const Offset(0, 96));
+    await settle(tester);
+
+    final blocks = await store.planBlocksForDay(day);
+    expect(blocks.single.startMin, 120,
+        reason: 'a 96px body drag must move the block one hour later');
+    expect(blocks.single.endMin, 180,
+        reason: 'a move must keep the block duration');
+  });
+
+  testWidgets('long-press deletes with an undo that restores the block',
+      (tester) async {
+    late int id;
+    await tester.runAsync(() async {
+      id = await store.createPlanBlock(
+          day: day, title: 'Deep work', startMin: 60, endMin: 120);
+    });
+    await tester.pumpWidget(host());
+    await settle(tester);
+    await scrollToTop(tester);
+
+    await tester.longPress(find.byKey(ValueKey('plan-block-$id')));
+    await settle(tester);
+
+    expect(await store.planBlocksForDay(day), isEmpty);
+    expect(find.text('Deleted "Deep work"'), findsOneWidget);
+    expect(find.text('Undo'), findsOneWidget);
+
+    await tester.tap(find.text('Undo'));
+    await settle(tester);
+
+    final restored = await store.planBlocksForDay(day);
+    expect(restored, hasLength(1));
+    expect(restored.single.title, 'Deep work');
+    expect(restored.single.startMin, 60);
+    expect(restored.single.endMin, 120);
+    expect(find.text('Deep work'), findsOneWidget);
+  });
+
+  testWidgets('tapping a block edits its one-liner in place', (tester) async {
+    late int id;
+    await tester.runAsync(() async {
+      id = await store.createPlanBlock(
+          day: day, title: 'Deep work', startMin: 60, endMin: 120);
+    });
+    await tester.pumpWidget(host());
+    await settle(tester);
+    await scrollToTop(tester);
+
+    await tester.tap(find.byKey(ValueKey('plan-block-$id')));
     await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('plan-inline')), findsOneWidget);
+    expect(find.byType(AlertDialog), findsNothing);
+
     await tester.enterText(
-        find.byKey(const ValueKey('plan-title')), 'Deep work v2');
-    await tester.tap(find.byKey(const ValueKey('plan-save')));
+        find.byKey(const ValueKey('plan-inline')), 'Deep work v2');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
     await settle(tester);
 
     final blocks = await store.planBlocksForDay(day);
     expect(blocks.single.id, id);
     expect(blocks.single.title, 'Deep work v2');
+    expect(blocks.single.startMin, 60,
+        reason: 'renaming must not touch the times');
     expect(find.text('Deep work v2'), findsOneWidget);
   });
 
@@ -124,10 +265,11 @@ void main() {
     late int id;
     await tester.runAsync(() async {
       id = await store.createPlanBlock(
-          day: day, title: 'Deep work', startMin: 540, endMin: 600);
+          day: day, title: 'Deep work', startMin: 60, endMin: 120);
     });
     await tester.pumpWidget(host());
     await settle(tester);
+    await scrollToTop(tester);
 
     await tester.tap(find.byKey(ValueKey('plan-done-$id')));
     await settle(tester);
@@ -138,37 +280,7 @@ void main() {
     expect(find.text('1 of 1 blocks done'), findsOneWidget);
   });
 
-  testWidgets('deletes a block after confirmation', (tester) async {
-    late int id;
-    await tester.runAsync(() async {
-      id = await store.createPlanBlock(
-          day: day, title: 'Deep work', startMin: 540, endMin: 600);
-    });
-    await tester.pumpWidget(host());
-    await settle(tester);
-
-    await tester.tap(find.byKey(ValueKey('plan-menu-$id')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Delete'));
-    await tester.pumpAndSettle();
-
-    // The confirmation dialog is up; cancelling must keep the block.
-    await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
-    await tester.pumpAndSettle();
-    expect(await store.planBlocksForDay(day), hasLength(1));
-
-    await tester.tap(find.byKey(ValueKey('plan-menu-$id')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Delete'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
-    await settle(tester);
-
-    expect(await store.planBlocksForDay(day), isEmpty);
-    expect(find.text('Nothing planned for this day'), findsOneWidget);
-  });
-
-  testWidgets('shows the next block and a now marker on today', (tester) async {
+  testWidgets('shows a now marker on today', (tester) async {
     await tester.runAsync(() async {
       await store.createPlanBlock(
           day: day, title: 'Afternoon', startMin: 13 * 60, endMin: 14 * 60);
@@ -283,7 +395,7 @@ void main() {
 
     expect(tester.takeException(), isNull,
         reason: 'the planner must not overflow at 320dp / 2.0');
-    expect(find.text('Add block'), findsOneWidget);
+    expect(find.byKey(const ValueKey('plan-grid')), findsOneWidget);
   });
 
   testWidgets('empty state does not overflow at 320dp with 2.0 text scale',
@@ -295,6 +407,6 @@ void main() {
     await settle(tester);
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Nothing planned for this day'), findsOneWidget);
+    expect(find.textContaining('Nothing planned for this day'), findsOneWidget);
   });
 }
