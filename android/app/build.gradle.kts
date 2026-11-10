@@ -8,7 +8,12 @@ plugins {
 
 android {
     namespace = "dev.compounder.compounder"
-    compileSdk = flutter.compileSdkVersion
+    // Pinned above Flutter's default (36): permission_handler_android 14.x
+    // compiles against API 37 constants (ACCESS_LOCAL_NETWORK,
+    // VERSION_CODES.CINNAMON_BUN), and AGP refuses to build an app whose
+    // compileSdk is lower than a dependency's. targetSdk stays on Flutter's
+    // default (36) and minSdk stays 26.
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
