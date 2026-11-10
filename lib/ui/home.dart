@@ -265,17 +265,27 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
                       Icon(Icons.chevron_right, color: scheme.primary),
                     ]),
                     const SizedBox(height: 12),
-                    ActivityHeatmap(
-                      days: _days,
-                      start:
-                          DateTime(_today.year, _today.month, _today.day - 83),
-                      end: _today,
-                      cellSize: 6,
-                      gap: 2,
-                      showMonthLabels: false,
-                      showWeekdayLabels: false,
-                      scrollable: false,
-                    ),
+                    // The preview is a fixed 12-week window, so its column
+                    // count is known: size the squares to the card instead of
+                    // a hardcoded 6dp cell, which filled only half the width.
+                    LayoutBuilder(builder: (context, constraints) {
+                      final start =
+                          DateTime(_today.year, _today.month, _today.day - 83);
+                      final columns =
+                          ActivityHeatmap.weeksFor(start, _today).length;
+                      final metrics =
+                          _previewGridMetrics(constraints.maxWidth, columns);
+                      return ActivityHeatmap(
+                        days: _days,
+                        start: start,
+                        end: _today,
+                        cellSize: metrics.cellSize,
+                        gap: metrics.gap,
+                        showMonthLabels: false,
+                        showWeekdayLabels: false,
+                        scrollable: false,
+                      );
+                    }),
                     const SizedBox(height: 10),
                     Text(
                       streak == 0
@@ -394,6 +404,29 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
     Navigator.of(context)
         .push(MaterialPageRoute(builder: (_) => WorkoutScreen(workoutId: id)));
   }
+}
+
+/// Smallest square the home preview will draw before it gives up the gap.
+const double _minPreviewCell = 4;
+
+/// Cell size and gap for the home preview grid so it spans [width].
+///
+/// The preview is a fixed 12-week window, so [columns] is known and the grid
+/// can be sized to the card instead of a hardcoded cell size. Cells stay
+/// square. The gap collapses to zero before the cells would drop below
+/// [_minPreviewCell], so a narrow card (split screen, small phone) can never
+/// overflow. The cell is floored to 0.01dp so floating-point rounding cannot
+/// push the row past its constraint.
+({double cellSize, double gap}) _previewGridMetrics(double width, int columns) {
+  if (columns <= 0 || width <= 0) return (cellSize: 0, gap: 0);
+  const gap = 2.0;
+  var cell = (width - gap * columns) / columns;
+  var effectiveGap = gap;
+  if (cell < _minPreviewCell) {
+    effectiveGap = 0;
+    cell = width / columns;
+  }
+  return (cellSize: (cell * 100).floorToDouble() / 100, gap: effectiveGap);
 }
 
 class _TodayHeader extends StatelessWidget {

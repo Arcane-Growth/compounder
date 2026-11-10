@@ -1062,6 +1062,126 @@ void main() {
       expect(tester.takeException(), isNull,
           reason: 'the heatmap legend must not overflow at 248dp/2.0');
     });
+
+    /// The Activity card's content box: the card's own margin (4dp) plus its
+    /// inner padding (16dp) sit between the card's outer box and the grid.
+    ///
+    /// Measured from the day squares, not from the [ActivityHeatmap] widget:
+    /// its inner [Row] fills the available width even when the squares only
+    /// cover half of it, so a widget-box assertion would pass on the old
+    /// fixed-cell layout.
+    void expectGridFillsCard(WidgetTester tester, String size) {
+      final cells = find.byType(HeatmapCell);
+      expect(cells, findsWidgets);
+      final card = find
+          .ancestor(
+              of: find.byType(ActivityHeatmap), matching: find.byType(Card))
+          .first;
+      final cardRect = tester.getRect(card);
+      final contentLeft = cardRect.left + 20;
+      final contentRight = cardRect.right - 20;
+
+      var minLeft = double.infinity;
+      var maxRight = -double.infinity;
+      for (var i = 0; i < cells.evaluate().length; i++) {
+        final rect = tester.getRect(cells.at(i));
+        if (rect.left < minLeft) minLeft = rect.left;
+        if (rect.right > maxRight) maxRight = rect.right;
+      }
+
+      expect(minLeft, closeTo(contentLeft, 1.0),
+          reason: 'the preview grid must start at the card content edge at '
+              '$size');
+      expect(maxRight, lessThanOrEqualTo(contentRight + 0.5),
+          reason: 'the preview grid must not overflow the card at $size');
+      expect(maxRight - minLeft,
+          greaterThanOrEqualTo(contentRight - contentLeft - 3),
+          reason: 'the preview squares must span the full card content width '
+              'at $size, not the old fixed 6dp cell (~112dp)');
+    }
+
+    testWidgets('home preview grid spans the card width at 360dp',
+        (tester) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(host(now: () => DateTime(2026, 11, 9, 12)));
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)));
+      await tester.pump();
+
+      await tester.scrollUntilVisible(find.text('Last 12 weeks'), 200);
+      await tester.pump();
+
+      expectGridFillsCard(tester, '360dp');
+      expect(tester.takeException(), isNull,
+          reason: 'the width-filling preview must not overflow at 360dp');
+    });
+
+    testWidgets('home preview grid spans the card width at 320dp/2.0',
+        (tester) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AppStore>.value(value: store),
+          ChangeNotifierProvider<HealthService>.value(value: health),
+          Provider<NotifyService>.value(value: NotifyService()),
+        ],
+        child: MaterialApp(
+          theme: CompounderTheme.light(),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context)
+                .copyWith(textScaler: const TextScaler.linear(2.0)),
+            child: child!,
+          ),
+          home: ShellNav(
+            openDrawer: () {},
+            selectTab: (_) {},
+            child: HomeTab(now: () => DateTime(2026, 11, 9, 12)),
+          ),
+        ),
+      ));
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)));
+      await tester.pump();
+
+      await tester.scrollUntilVisible(find.text('Last 12 weeks'), 200);
+      await tester.pump();
+
+      expectGridFillsCard(tester, '320dp/2.0');
+      expect(tester.takeException(), isNull,
+          reason: 'the width-filling preview must not overflow at 320dp/2.0');
+    });
+
+    testWidgets('full-screen heatmap stays scrollable at cellSize 14',
+        (tester) async {
+      await tester.pumpWidget(ChangeNotifierProvider<AppStore>.value(
+        value: store,
+        child: MaterialApp(
+          theme: CompounderTheme.light(),
+          home: HeatmapScreen(now: () => DateTime(2026, 11, 9, 12)),
+        ),
+      ));
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)));
+      await tester.pump();
+      await tester.pump();
+
+      final grid = tester.widget<ActivityHeatmap>(find.byType(ActivityHeatmap));
+      expect(grid.scrollable, isTrue,
+          reason: 'the 52-week screen must stay horizontally scrollable');
+      expect(grid.cellSize, 14,
+          reason: 'the home preview sizing must not leak into the full screen');
+      expect(grid.gap, 3);
+      expect(grid.showMonthLabels, isTrue);
+      expect(grid.showWeekdayLabels, isTrue);
+    });
   });
 
   group('heatmap widget', () {
