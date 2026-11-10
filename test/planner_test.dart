@@ -667,14 +667,69 @@ void main() {
     handle.dispose();
   });
 
-  testWidgets('a compact block does not overflow at 320dp with 2.0 text scale',
+  /// The card body is the region above the resize strip. A ClipRect hides any
+  /// overflow without throwing, so the only honest proof that a label is
+  /// readable is its rendered rect staying inside that region.
+  void expectCardTextInsideBody(
+      WidgetTester tester, int id, String title, String label) {
+    final card = tester.getRect(find.byKey(ValueKey('plan-card-$id')));
+    final body = tester.getRect(find.byKey(ValueKey('plan-block-$id')));
+    final titleRect = tester.getRect(find.text(title));
+    final labelRect = tester.getRect(find.text(label));
+
+    expect(body.bottom, lessThanOrEqualTo(card.bottom),
+        reason: 'the body must sit above the resize strip');
+    expect(titleRect.top, greaterThanOrEqualTo(body.top),
+        reason: 'the title must start inside the body');
+    expect(titleRect.bottom, lessThanOrEqualTo(body.bottom),
+        reason: 'the title must not be clipped by the card body');
+    expect(labelRect.top, greaterThanOrEqualTo(body.top),
+        reason: 'the time label must start inside the body');
+    expect(labelRect.bottom, lessThanOrEqualTo(body.bottom),
+        reason: 'the time label must not be clipped by the card body');
+  }
+
+  String blockLabel(int start, int duration) =>
+      '${formatPlanTime(start)}–${formatPlanTime(start + duration)} · '
+      '${formatPlanDuration(duration)}';
+
+  // A 35-53 minute block is 56-85dp tall, so the body left after the resize
+  // strip is short. The card must still show its own time label there instead
+  // of letting the ClipRect cut it off.
+  for (final scale in [1.0, 2.0]) {
+    for (final duration in [35, 40, 45, 50, 53]) {
+      testWidgets(
+          'a $duration-minute block shows its full time label at $scale scale',
+          (tester) async {
+        await tester.binding.setSurfaceSize(const Size(400, 900));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        late int id;
+        await tester.runAsync(() async {
+          id = await store.createPlanBlock(
+              day: day,
+              title: 'Block $duration',
+              startMin: 540,
+              endMin: 540 + duration);
+        });
+
+        await tester.pumpWidget(host(textScaler: scale));
+        await settle(tester);
+
+        expectCardTextInsideBody(
+            tester, id, 'Block $duration', blockLabel(540, duration));
+      });
+    }
+  }
+
+  testWidgets('a compact block keeps its text inside the body at 320dp / 2.0',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(320, 640));
     addTearDown(() => tester.binding.setSurfaceSize(null));
+    late int id;
     await tester.runAsync(() async {
       // 30 minutes takes the compact card path, which the 60-minute test above
       // never exercises.
-      await store.createPlanBlock(
+      id = await store.createPlanBlock(
           day: day,
           title: 'A deliberately long block title that must ellipsize',
           startMin: 540,
@@ -687,6 +742,11 @@ void main() {
     expect(tester.takeException(), isNull,
         reason: 'the compact card must not overflow at 320dp / 2.0');
     expect(find.byKey(const ValueKey('plan-grid')), findsOneWidget);
+    expectCardTextInsideBody(
+        tester,
+        id,
+        'A deliberately long block title that must ellipsize',
+        blockLabel(540, 30));
   });
 
   testWidgets('does not overflow at 320dp with 2.0 text scale', (tester) async {

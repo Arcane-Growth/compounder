@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -24,6 +25,16 @@ const int _minDuration = 15;
 
 /// Smallest rendered card height, so a 15-minute block is still tappable.
 const double _minCardHeight = 48;
+
+/// Smallest resize-strip hit area. A card that cannot afford a full 48dp strip
+/// without eating the body it has to show gets this instead.
+const double _minHandleHit = 16;
+
+/// Gap kept between the card body's text and the resize strip.
+const double _minBodySlack = 2;
+
+/// Padding around the card body's text.
+const EdgeInsets _cardBodyPadding = EdgeInsets.fromLTRB(4, 2, 8, 2);
 
 /// Chronological day planner as a direct-manipulation timeline: tap an empty
 /// slot to type a one-liner, drag a block's bottom edge to resize it, drag its
@@ -702,12 +713,46 @@ class _PlannerScreenState extends State<PlannerScreen>
   double _clampTop(double top, double height) =>
       top.clamp(0.0, (_gridHeight - height).clamp(0.0, _gridHeight)).toDouble();
 
+  /// Height of one line of [style] at the current text scale, plus a pixel of
+  /// headroom so paragraph rounding cannot push the last line past the body.
+  double _lineHeight(BuildContext context, TextStyle? style) {
+    final painter = TextPainter(
+      text: TextSpan(text: '00:00', style: style),
+      textDirection: TextDirection.ltr,
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout();
+    final height = painter.height.ceilToDouble() + 1;
+    painter.dispose();
+    return height;
+  }
+
+  /// Body content height for the two card layouts at the current text scale:
+  /// the one-line compact row and the two-line column.
+  ({double compact, double column}) _bodyContentHeights(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final title = _lineHeight(context, t.bodyMedium);
+    final label = _lineHeight(context, t.labelSmall);
+    final times = _lineHeight(context, t.bodySmall);
+    return (
+      compact: math.max(title, label) + _cardBodyPadding.vertical,
+      column: title + 2 + times + _cardBodyPadding.vertical,
+    );
+  }
+
+  /// Card height for a [duration]-minute block. A card is never shorter than
+  /// its own text: at large text scales a 30-minute block has to grow past its
+  /// slot, otherwise the body would have to clip the title or the time label.
+  double _cardHeight(BuildContext context, int duration) {
+    final content = _bodyContentHeights(context).compact;
+    final needed = content + _minHandleHit + _minBodySlack;
+    return math.max(_topFor(duration), math.max(_minCardHeight, needed));
+  }
+
   Widget _positionedBlock(BuildContext context, PlanBlock block) {
     final dragging = _dragId == block.id;
     final start = dragging ? _dragStart : block.startMin;
     final end = dragging ? _dragEnd : block.endMin;
-    final height =
-        _topFor(end - start).clamp(_minCardHeight, double.infinity).toDouble();
+    final height = _cardHeight(context, end - start);
     return Positioned(
       top: _clampTop(_topFor(start), height),
       left: 56,
@@ -745,12 +790,18 @@ class _PlannerScreenState extends State<PlannerScreen>
     final duration = end - start;
     final timeLabel = '${formatPlanTime(start)}–${formatPlanTime(end)} · '
         '${formatPlanDuration(duration)}';
-    final showTimes = height >= 40;
-    final compact = height < 56;
-    // The resize strip is the only way to resize, so its hit area is 48dp tall
-    // whenever the card has room. A 48dp card cannot host two 48dp targets, so
-    // there the strip takes the bottom half and the body keeps the top half.
-    final handleHit = (height - 24).clamp(24.0, 48.0).toDouble();
+    // The body is what the user reads, so the layout is chosen from the body
+    // height left after the resize strip — not from the card height, which is
+    // what let a 35-53 minute card clip its own time label. The strip keeps
+    // 48dp whenever the card can afford it and shrinks to [_minHandleHit]
+    // before it would eat the text.
+    final content = _bodyContentHeights(context);
+    final columnFits = height >= content.column + 2 + 48 + _minBodySlack;
+    final compact = !columnFits;
+    final bodyContent = columnFits ? content.column : content.compact;
+    final handleHit = (height - bodyContent - _minBodySlack)
+        .clamp(_minHandleHit, 48.0)
+        .toDouble();
 
     return Semantics(
       label: '${block.title}, ${formatPlanTime(start)} to '
@@ -790,14 +841,13 @@ class _PlannerScreenState extends State<PlannerScreen>
                   alignment: Alignment.topLeft,
                   maxHeight: double.infinity,
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(4, 2, 8, 2),
+                    padding: _cardBodyPadding,
                     child: compact
-                        // A 30-minute block is 48dp tall; a two-line stack
-                        // would clip its own time label, so the compact card
-                        // puts the time beside the title on one line.
+                        // A card that cannot host two lines puts the time
+                        // beside the title on one line.
                         ? Row(children: [
                             Expanded(
-                              flex: 3,
+                              flex: 2,
                               child: Text(
                                 block.title,
                                 style: t.bodyMedium?.copyWith(
@@ -809,27 +859,24 @@ class _PlannerScreenState extends State<PlannerScreen>
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ),
-                            if (showTimes) ...[
-                              const SizedBox(width: 6),
-                              Flexible(
-                                flex: 2,
-                                child: Text(
-                                  dragging
-                                      ? formatPlanDuration(duration)
-                                      : timeLabel,
-                                  key: dragging
-                                      ? ValueKey(
-                                          'plan-drag-readout-${block.id}')
-                                      : null,
-                                  style: t.labelSmall?.copyWith(
-                                      color: current
-                                          ? scheme.onPrimaryContainer
-                                          : scheme.onSurfaceVariant),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              flex: 3,
+                              child: Text(
+                                dragging
+                                    ? formatPlanDuration(duration)
+                                    : timeLabel,
+                                key: dragging
+                                    ? ValueKey('plan-drag-readout-${block.id}')
+                                    : null,
+                                style: t.labelSmall?.copyWith(
+                                    color: current
+                                        ? scheme.onPrimaryContainer
+                                        : scheme.onSurfaceVariant),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                               ),
-                            ],
+                            ),
                           ])
                         : Column(
                             mainAxisSize: MainAxisSize.min,
@@ -845,24 +892,21 @@ class _PlannerScreenState extends State<PlannerScreen>
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
-                              if (showTimes) ...[
-                                const SizedBox(height: 2),
-                                Text(
-                                  dragging
-                                      ? formatPlanDuration(duration)
-                                      : timeLabel,
-                                  key: dragging
-                                      ? ValueKey(
-                                          'plan-drag-readout-${block.id}')
-                                      : null,
-                                  style: t.bodySmall?.copyWith(
-                                      color: current
-                                          ? scheme.onPrimaryContainer
-                                          : scheme.onSurfaceVariant),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ],
+                              const SizedBox(height: 2),
+                              Text(
+                                dragging
+                                    ? formatPlanDuration(duration)
+                                    : timeLabel,
+                                key: dragging
+                                    ? ValueKey('plan-drag-readout-${block.id}')
+                                    : null,
+                                style: t.bodySmall?.copyWith(
+                                    color: current
+                                        ? scheme.onPrimaryContainer
+                                        : scheme.onSurfaceVariant),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ],
                           ),
                   ),
