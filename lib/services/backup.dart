@@ -36,11 +36,12 @@ class BackupService {
       'workouts': await db.query('workouts'),
       'workoutExercises': await db.query('workout_exercises'),
       'workoutSets': await db.query('workout_sets'),
-      // `workout_sets` carries the schema-v12 PR columns (`is_pr`,
-      // `pr_e1rm_kg`) with no extra key: the whole row is exported, and import
-      // keeps only the columns the target schema has. An older build drops the
-      // two PR columns and restores the sets as non-PR; a newer build restores
-      // the flags exactly as they were recorded, so history stays stable.
+      // `workout_sets` carries the PR columns (`is_pr`, `pr_e1rm_kg` from
+      // schema v12 and `pr_reps` from v14) with no extra key: the whole row is
+      // exported, and import keeps only the columns the target schema has. An
+      // older build drops the PR columns it does not know and restores the sets
+      // as non-PR; a newer build restores the flags exactly as they were
+      // recorded, so history stays stable.
       // The full catalog, not just the custom rows: import has to resolve
       // every `workout_exercises.exercise_id` by NAME, and a workout may
       // reference a built-in whose id differs on the target device.

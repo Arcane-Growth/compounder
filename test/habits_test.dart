@@ -359,7 +359,7 @@ void main() {
         () async {
       final prefs = await SharedPreferences.getInstance();
       final store = await AppStore.open(prefs, path: path);
-      expect(await store.db.getVersion(), 13);
+      expect(await store.db.getVersion(), 14);
       expect(await tables(store), containsAll(['habits', 'habit_completions']));
       await store.db.close();
     });
@@ -396,7 +396,7 @@ void main() {
       await store.db.close();
 
       store = await AppStore.open(prefs, path: path);
-      expect(await store.db.getVersion(), 13);
+      expect(await store.db.getVersion(), 14);
       expect(await tables(store), containsAll(['habits', 'habit_completions']));
 
       // No data loss in the pre-existing tables.
@@ -424,7 +424,7 @@ void main() {
       await store.db.close();
 
       store = await AppStore.open(prefs, path: path);
-      expect(await store.db.getVersion(), 13);
+      expect(await store.db.getVersion(), 14);
       expect(store.habits, hasLength(1));
       expect(store.habitCompletions, hasLength(1),
           reason: 'IF NOT EXISTS must not drop the existing rows');

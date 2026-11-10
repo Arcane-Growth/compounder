@@ -431,15 +431,24 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
     );
   }
 
-  /// The personal-record badge shown under a qualifying set. The e1RM snapshot
-  /// is rendered in the unit the user selected in Settings.
+  /// The personal-record badge shown under a qualifying set. A weighted PR
+  /// renders its e1RM snapshot in the unit the user selected in Settings; a
+  /// bodyweight (0 kg) PR renders its rep snapshot instead.
   Widget _prBadge(ColorScheme scheme, TextTheme t, WorkoutSet set) {
     final unit = _store!.unit;
+    final reps = set.prReps;
     final snapshot = set.prE1rmKg;
     final value = snapshot == null ? null : trimZero(fromKg(snapshot, unit));
-    final label = value == null
-        ? 'Personal record'
-        : 'Personal record: $value ${unit.label} estimated 1RM';
+    final label = reps != null
+        ? 'Personal record: $reps reps'
+        : value == null
+            ? 'Personal record'
+            : 'Personal record: $value ${unit.label} estimated 1RM';
+    final text = reps != null
+        ? 'PR · $reps reps'
+        : value == null
+            ? 'PR'
+            : 'PR · $value ${unit.label} e1RM';
     return Semantics(
       container: true,
       label: label,
@@ -455,7 +464,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
                 size: 14, color: scheme.onTertiaryContainer),
             const SizedBox(width: 4),
             Text(
-              value == null ? 'PR' : 'PR · $value ${unit.label} e1RM',
+              text,
               style: t.labelSmall?.copyWith(
                   color: scheme.onTertiaryContainer,
                   fontWeight: FontWeight.w700),

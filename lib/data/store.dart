@@ -63,28 +63,43 @@ class WorkoutDetail {
       .map((s) => (weightKg: s.weightKg, reps: s.reps, isWarmup: s.isWarmup)));
 }
 
-/// One exercise's personal-record outcome for a session: the best e1RM the
+/// One exercise's personal-record outcome for a session: the best record the
 /// user hit this session, the best they had before it, and the difference.
 ///
-/// [previousBestKg] is 0 when the exercise had no prior finished session, in
-/// which case the session established the baseline.
+/// A weighted PR is reported as an e1RM ([newBestKg]); a bodyweight (0 kg) PR is
+/// reported as reps ([newBestReps]) because a 0 kg set has no e1RM signal. The
+/// two are mutually exclusive: [isRepBased] tells the UI which shape to render.
+///
+/// [previousBestKg] / [previousBestReps] are 0 when the exercise had no prior
+/// finished session of that kind, in which case the session established the
+/// baseline.
 class PrSummary {
   final int exerciseId;
   final String exerciseName;
   final double previousBestKg;
   final double newBestKg;
+  final int? previousBestReps;
+  final int? newBestReps;
 
   const PrSummary({
     required this.exerciseId,
     required this.exerciseName,
     required this.previousBestKg,
     required this.newBestKg,
+    this.previousBestReps,
+    this.newBestReps,
   });
+
+  /// True when this PR is a bodyweight rep record rather than an e1RM record.
+  bool get isRepBased => newBestReps != null;
 
   double get deltaKg => newBestKg - previousBestKg;
 
+  int get deltaReps => (newBestReps ?? 0) - (previousBestReps ?? 0);
+
   /// True when this session established the exercise's first baseline.
-  bool get isBaseline => previousBestKg <= 0;
+  bool get isBaseline =>
+      isRepBased ? (previousBestReps ?? 0) <= 0 : previousBestKg <= 0;
 }
 
 /// Single source of truth: owns the database, cached lists and settings.
@@ -118,7 +133,7 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
       {String? path, SecretStore? secretStore}) async {
     path ??= p.join(await getDatabasesPath(), 'compounder.db');
     final db = await openDatabase(path,
-        version: 13,
+        version: 14,
         onConfigure: _configureSchema,
         onCreate: _createSchema,
         onUpgrade: _upgradeSchema);
@@ -163,7 +178,7 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
       REFERENCES workout_exercises(id) ON DELETE CASCADE,
       position INTEGER NOT NULL, weight_kg REAL NOT NULL, reps INTEGER NOT NULL,
       completed_at INTEGER, is_warmup INTEGER NOT NULL DEFAULT 0,
-      is_pr INTEGER NOT NULL DEFAULT 0, pr_e1rm_kg REAL)''');
+      is_pr INTEGER NOT NULL DEFAULT 0, pr_e1rm_kg REAL, pr_reps INTEGER)''');
     await db.execute('''CREATE TABLE meals(
       id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp INTEGER NOT NULL, image_path TEXT NOT NULL DEFAULT '',
       dish TEXT NOT NULL, description TEXT, calories REAL NOT NULL, protein REAL NOT NULL,
@@ -320,6 +335,15 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
       // habit and health record. Existing days simply have no plan. IF NOT
       // EXISTS makes the step safe to re-run on a partially applied migration.
       await _createV13Tables(db);
+    }
+    if (oldVersion < 14) {
+      // Bodyweight rep PRs. One additive nullable column on workout_sets: the
+      // rep snapshot a bodyweight (0 kg) PR was set at. Every existing row keeps
+      // its weight, reps, completion state and PR flag; the new column reads
+      // back null, so a v13 history can never show a false rep PR (the same
+      // guarantee the 11->12 step made for e1RM PRs). `_addColumnIfMissing`
+      // makes the step safe to re-run on a partially applied migration.
+      await _addColumnIfMissing(db, 'workout_sets', 'pr_reps', 'INTEGER');
     }
   }
 
@@ -843,6 +867,24 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
 
   // ------------------------------------------------------ personal records
 
+  /// SQL fragment and arguments that bound "prior sessions" to those that
+  /// finished before [workoutId], tie-broken by id. Empty when the target
+  /// session is still in progress: every finished session then counts as prior.
+  Future<(String, List<Object?>)> _priorScope(
+      DatabaseExecutor ex, int workoutId) async {
+    final target = await ex.query('workouts',
+        columns: ['ended_at'],
+        where: 'id = ?',
+        whereArgs: [workoutId],
+        limit: 1);
+    final endedAt = target.isEmpty ? null : target.first['ended_at'] as int?;
+    if (endedAt == null) return ('', const <Object?>[]);
+    return (
+      'AND (w.ended_at < ? OR (w.ended_at = ? AND w.id < ?))',
+      <Object?>[endedAt, endedAt, workoutId]
+    );
+  }
+
   /// Best e1RM for [exerciseId] across sessions that finished before
   /// [workoutId]. Zero when the exercise has no prior history.
   ///
@@ -858,31 +900,45 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
   /// in [_recomputePrFlags].
   Future<double> _priorBestKg(
       DatabaseExecutor ex, int exerciseId, int workoutId) async {
-    final target = await ex.query('workouts',
-        columns: ['ended_at'],
-        where: 'id = ?',
-        whereArgs: [workoutId],
-        limit: 1);
-    final endedAt = target.isEmpty ? null : target.first['ended_at'] as int?;
-    final args = <Object?>[exerciseId, workoutId];
-    var scope = '';
-    if (endedAt != null) {
-      scope = 'AND (w.ended_at < ? OR (w.ended_at = ? AND w.id < ?))';
-      args.addAll([endedAt, endedAt, workoutId]);
-    }
+    final (scope, scopeArgs) = await _priorScope(ex, workoutId);
     final rows = await ex.rawQuery('''
         SELECT s.weight_kg, s.reps FROM workouts w
         JOIN workout_exercises we ON we.workout_id = w.id
         JOIN workout_sets s ON s.workout_exercise_id = we.id
         WHERE we.exercise_id = ? AND w.ended_at IS NOT NULL AND w.id != ?
           AND s.is_warmup = 0 AND s.reps >= 1 AND s.completed_at IS NOT NULL
-          $scope''', args);
+          $scope''', [exerciseId, workoutId, ...scopeArgs]);
     return formatE1rm(e1rmMaxOf(rows
         .map((r) => (
               (r['weight_kg'] as num).toDouble(),
               r['reps'] as int,
             ))
         .toList()));
+  }
+
+  /// Best reps for [exerciseId]'s bodyweight (0 kg) sets across sessions that
+  /// finished before [workoutId]. Zero when there is no bodyweight history.
+  ///
+  /// Weighted sets are excluded on both sides of the comparison, so a 0 kg set
+  /// is measured only against bodyweight work and can never fake an e1RM PR.
+  /// The same performed-set filters as [_priorBestKg] apply.
+  Future<int> _priorBestReps(
+      DatabaseExecutor ex, int exerciseId, int workoutId) async {
+    final (scope, scopeArgs) = await _priorScope(ex, workoutId);
+    final rows = await ex.rawQuery('''
+        SELECT s.reps FROM workouts w
+        JOIN workout_exercises we ON we.workout_id = w.id
+        JOIN workout_sets s ON s.workout_exercise_id = we.id
+        WHERE we.exercise_id = ? AND w.ended_at IS NOT NULL AND w.id != ?
+          AND s.is_warmup = 0 AND s.reps >= 1 AND s.completed_at IS NOT NULL
+          AND s.weight_kg = 0
+          $scope''', [exerciseId, workoutId, ...scopeArgs]);
+    var best = 0;
+    for (final r in rows) {
+      final reps = r['reps'] as int;
+      if (reps > best) best = reps;
+    }
+    return best;
   }
 
   Future<int?> _workoutIdForEntry(int entryId) async {
@@ -929,6 +985,11 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
   /// Only completed sets are flagged: an untouched placeholder is not a
   /// performed set, and completing it is what triggers the celebration.
   ///
+  /// Bodyweight (0 kg) sets go through the same pass: [assessPr] assesses them
+  /// on reps against the prior bodyweight best and the earlier bodyweight sets
+  /// in this session, and the rep snapshot is persisted in `pr_reps` while
+  /// `pr_e1rm_kg` stays null.
+  ///
   /// Runs in a transaction so a mid-pass failure cannot leave the session with
   /// a half-updated set of flags.
   Future<void> _recomputePrFlags(int workoutId) async {
@@ -947,6 +1008,7 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
       }
       for (final group in byExercise.entries) {
         final prior = await _priorBestKg(txn, group.key, workoutId);
+        final priorReps = await _priorBestReps(txn, group.key, workoutId);
         final sets = [...group.value]..sort((a, b) {
             final ac = a.completedAt;
             final bc = b.completedAt;
@@ -962,14 +1024,24 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
             reps: set.reps,
             isWarmup: set.isWarmup,
             priorBestKg: prior,
+            priorBestReps: priorReps,
             earlierSets: earlier,
           );
           final isPr = set.completedAt != null && assessment.isPr;
           final prE1rm = isPr ? assessment.e1rmKg : null;
-          if (set.isPr != isPr || set.prE1rmKg != prE1rm) {
+          final prReps = isPr ? assessment.prReps : null;
+          if (set.isPr != isPr ||
+              set.prE1rmKg != prE1rm ||
+              set.prReps != prReps) {
             await txn.update(
-                'workout_sets', {'is_pr': isPr ? 1 : 0, 'pr_e1rm_kg': prE1rm},
-                where: 'id = ?', whereArgs: [set.id]);
+                'workout_sets',
+                {
+                  'is_pr': isPr ? 1 : 0,
+                  'pr_e1rm_kg': prE1rm,
+                  'pr_reps': prReps,
+                },
+                where: 'id = ?',
+                whereArgs: [set.id]);
           }
           if (!set.isWarmup && set.reps >= 1 && set.weightKg >= 0) {
             // Only performed sets count as "earlier in this session": a heavier
@@ -986,32 +1058,61 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
   /// prior-session best and the delta.
   ///
   /// Reads the persisted flags rather than recomputing, so the summary and the
-  /// history agree with what the user was shown at the time.
+  /// history agree with what the user was shown at the time. A weighted PR is
+  /// reported as an e1RM; a bodyweight (0 kg) PR is reported as reps. When an
+  /// exercise somehow has both in one session, the weighted record wins: it is
+  /// the stronger signal, and one row per exercise is the documented shape.
   Future<List<PrSummary>> prSummary(int workoutId) async {
     final rows = await db.rawQuery('''
-        SELECT we.exercise_id, e.name, s.pr_e1rm_kg
+        SELECT we.exercise_id, e.name, s.pr_e1rm_kg, s.pr_reps
         FROM workout_exercises we
         JOIN exercises e ON e.id = we.exercise_id
         JOIN workout_sets s ON s.workout_exercise_id = we.id
-        WHERE we.workout_id = ? AND s.is_pr = 1 AND s.pr_e1rm_kg IS NOT NULL
+        WHERE we.workout_id = ? AND s.is_pr = 1
+          AND (s.pr_e1rm_kg IS NOT NULL OR s.pr_reps IS NOT NULL)
         ORDER BY we.position, s.position, s.id''', [workoutId]);
-    final byExercise = <int, ({String name, double best})>{};
+    // Insertion order keeps the summary in exercise order, as before.
+    final byExercise = <int, ({String name, double? bestKg, int? bestReps})>{};
     for (final r in rows) {
       final id = r['exercise_id'] as int;
-      final value = (r['pr_e1rm_kg'] as num).toDouble();
+      final name = r['name'] as String;
+      final e1rm = (r['pr_e1rm_kg'] as num?)?.toDouble();
+      final reps = (r['pr_reps'] as num?)?.toInt();
       final existing = byExercise[id];
-      if (existing == null || value > existing.best) {
-        byExercise[id] = (name: r['name'] as String, best: value);
-      }
+      final bestKg = existing?.bestKg;
+      final bestReps = existing?.bestReps;
+      byExercise[id] = (
+        name: name,
+        bestKg:
+            e1rm != null && (bestKg == null || e1rm > bestKg) ? e1rm : bestKg,
+        bestReps: reps != null && (bestReps == null || reps > bestReps)
+            ? reps
+            : bestReps,
+      );
     }
     final summaries = <PrSummary>[];
     for (final entry in byExercise.entries) {
-      final previous = await _priorBestKg(db, entry.key, workoutId);
+      final bestKg = entry.value.bestKg;
+      if (bestKg != null) {
+        final previous = await _priorBestKg(db, entry.key, workoutId);
+        summaries.add(PrSummary(
+          exerciseId: entry.key,
+          exerciseName: entry.value.name,
+          previousBestKg: previous,
+          newBestKg: bestKg,
+        ));
+        continue;
+      }
+      final bestReps = entry.value.bestReps;
+      if (bestReps == null) continue;
+      final previous = await _priorBestReps(db, entry.key, workoutId);
       summaries.add(PrSummary(
         exerciseId: entry.key,
         exerciseName: entry.value.name,
-        previousBestKg: previous,
-        newBestKg: entry.value.best,
+        previousBestKg: 0,
+        newBestKg: 0,
+        previousBestReps: previous,
+        newBestReps: bestReps,
       ));
     }
     return summaries;

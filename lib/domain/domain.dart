@@ -41,6 +41,13 @@ class E1RmPoint {
 }
 
 /// One row per finished session for an exercise: best working-set e1RM.
+///
+/// A session whose best e1RM is 0 carries no strength signal — every set in it
+/// was bodyweight (0 kg) or zero-rep — so it is dropped rather than plotted as
+/// a point on the floor. A bodyweight-only exercise therefore has no e1RM
+/// points at all, and the progress screen shows its "not enough data" state
+/// instead of a flat 0 kg line. Sessions that mix bodyweight and weighted sets
+/// keep their weighted e1RM.
 List<E1RmPoint> sessionPoints(
     List<({int workoutId, int date, double weightKg, int reps, bool isWarmup})>
         sets) {
@@ -60,13 +67,15 @@ List<E1RmPoint> sessionPoints(
     if (s.reps < 1) continue;
     byWorkout.putIfAbsent(s.workoutId, () => []).add(s);
   }
-  final points = byWorkout.entries.map((e) {
+  final points = <E1RmPoint>[];
+  for (final e in byWorkout.entries) {
     final value = formatE1rm(
         e1rmMaxOf(e.value.map((s) => (s.weightKg, s.reps)).toList()));
+    if (value <= 0) continue;
     final date = e.value.map((s) => s.date).reduce(math.min);
-    return E1RmPoint(e.key, date, value);
-  }).toList()
-    ..sort((a, b) => a.date.compareTo(b.date));
+    points.add(E1RmPoint(e.key, date, value));
+  }
+  points.sort((a, b) => a.date.compareTo(b.date));
   return points;
 }
 
@@ -82,53 +91,98 @@ class PrAssessment {
   final bool isPr;
 
   /// The e1RM snapshot to persist with the set when [isPr] is true, otherwise
-  /// null.
+  /// null. Always null for a bodyweight (0 kg) PR: a 0 kg set has no e1RM
+  /// signal, so its record is stored as reps instead.
   final double? e1rmKg;
+
+  /// The rep snapshot to persist with a bodyweight PR, otherwise null. A
+  /// weighted PR leaves this null and carries [e1rmKg] instead.
+  final int? prReps;
 
   /// The best e1RM for this exercise across prior finished sessions, or 0 when
   /// the exercise has no history.
   final double previousBestKg;
 
-  const PrAssessment(
-      {required this.isPr, this.e1rmKg, required this.previousBestKg});
+  /// The best reps for this exercise's bodyweight sets across prior finished
+  /// sessions, or 0 when there is no bodyweight history.
+  final int previousBestReps;
+
+  const PrAssessment({
+    required this.isPr,
+    this.e1rmKg,
+    this.prReps,
+    required this.previousBestKg,
+    this.previousBestReps = 0,
+  });
 }
 
 /// Decides whether a set is a personal record.
 ///
 /// [priorBestKg] is the best e1RM for the exercise across every *finished*
 /// session before this one (0 when the exercise has no history).
+/// [priorBestReps] is the best rep count for the exercise's *bodyweight* sets
+/// across those same sessions (0 when there is no bodyweight history).
 /// [earlierSets] are the sets already logged earlier in the same session.
 ///
 /// Rules (owner-specified):
-///  * a set qualifies only when its e1RM is strictly greater than both the
-///    prior-session best and every earlier set in this session;
+///  * a weighted set qualifies only when its e1RM is strictly greater than both
+///    the prior-session best and every earlier set in this session;
+///  * a bodyweight set (0 kg) is assessed on reps instead: it qualifies only
+///    when its reps are strictly greater than the prior-session bodyweight best
+///    and every earlier bodyweight set in this session. Its record is stored as
+///    reps, never as an e1RM, so a 0 kg set can never fake an e1RM PR;
 ///  * the first-ever set for an exercise establishes the baseline and counts
-///    as a PR;
+///    as a PR, weighted or bodyweight;
 ///  * zero-rep sets never qualify (audit B4), and neither do warm-up sets;
-///  * negative weights carry no e1RM signal.
+///  * negative weights carry no signal at all.
 ///
 /// The e1RM is [formatE1rm]ed before comparison so the stored snapshot and the
 /// displayed value agree, and so two sets that round to the same half-kilo
-/// cannot both claim a PR. A set whose e1RM is 0 (0 kg logged) carries no
-/// signal and never flags, matching [e1rmMaxOf]'s treatment of empty input.
+/// cannot both claim a PR.
 PrAssessment assessPr({
   required double weightKg,
   required int reps,
   required bool isWarmup,
   required double priorBestKg,
   required List<(double weightKg, int reps)> earlierSets,
+  int priorBestReps = 0,
 }) {
   final prior = formatE1rm(priorBestKg);
   if (isWarmup || reps < 1 || weightKg < 0) {
-    return PrAssessment(isPr: false, previousBestKg: prior);
+    return PrAssessment(
+        isPr: false, previousBestKg: prior, previousBestReps: priorBestReps);
+  }
+  if (weightKg == 0) {
+    // Bodyweight: the only meaningful record is the rep count, and it is
+    // compared against bodyweight history alone. Weighted sets are excluded
+    // from both sides so a 0 kg set can neither borrow nor fake an e1RM.
+    final sessionBest = earlierSets
+        .where((s) => s.$1 == 0)
+        .fold<int>(0, (best, s) => s.$2 > best ? s.$2 : best);
+    final beatsPrior = priorBestReps <= 0 || reps > priorBestReps;
+    if (!beatsPrior || reps <= sessionBest) {
+      return PrAssessment(
+          isPr: false, previousBestKg: prior, previousBestReps: priorBestReps);
+    }
+    return PrAssessment(
+      isPr: true,
+      prReps: reps,
+      previousBestKg: prior,
+      previousBestReps: priorBestReps,
+    );
   }
   final value = formatE1rm(epley(weightKg, reps));
   final sessionBest = formatE1rm(e1rmMaxOf(earlierSets));
   final beatsPrior = prior <= 0 || value > prior;
   if (!beatsPrior || value <= sessionBest) {
-    return PrAssessment(isPr: false, previousBestKg: prior);
+    return PrAssessment(
+        isPr: false, previousBestKg: prior, previousBestReps: priorBestReps);
   }
-  return PrAssessment(isPr: true, e1rmKg: value, previousBestKg: prior);
+  return PrAssessment(
+      isPr: true,
+      e1rmKg: value,
+      previousBestKg: prior,
+      previousBestReps: priorBestReps);
 }
 
 class Volume {

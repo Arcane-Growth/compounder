@@ -281,7 +281,7 @@ void main() {
       () async {
     final prefs = await SharedPreferences.getInstance();
     final store = await AppStore.open(prefs, path: path);
-    expect(await store.db.getVersion(), 13);
+    expect(await store.db.getVersion(), 14);
 
     await _expectIndexesOnTables(store.db, _indexes);
     expect(await _indexTable(store.db, 'idx_workout_sets_exercise'), isNull,
@@ -381,7 +381,7 @@ void main() {
     await store.db.close();
 
     store = await AppStore.open(prefs, path: path);
-    expect(await store.db.getVersion(), 13);
+    expect(await store.db.getVersion(), 14);
 
     // No data loss: the seeded rows are all still there.
     expect(await store.db.query('workouts'), hasLength(1));
@@ -500,7 +500,7 @@ void main() {
     await store.db.close();
 
     store = await AppStore.open(prefs, path: path);
-    expect(await store.db.getVersion(), 13);
+    expect(await store.db.getVersion(), 14);
 
     // The v9 step must have replaced both index shapes.
     expect(await _indexTable(store.db, 'idx_balance_snapshots_taken'),
@@ -592,7 +592,7 @@ void main() {
     await store.db.close();
 
     store = await AppStore.open(prefs, path: path);
-    expect(await store.db.getVersion(), 13);
+    expect(await store.db.getVersion(), 14);
     await _expectIndexesOnTables(store.db, _v11Indexes);
 
     // No data loss: every seeded row survives the migration.
@@ -613,7 +613,7 @@ void main() {
     await store.db.close();
 
     store = await AppStore.open(prefs, path: path);
-    expect(await store.db.getVersion(), 13);
+    expect(await store.db.getVersion(), 14);
     await store.db.close();
   });
 
@@ -762,7 +762,7 @@ void main() {
     await store.db.close();
 
     store = await AppStore.open(prefs, path: path);
-    expect(await store.db.getVersion(), 13);
+    expect(await store.db.getVersion(), 14);
 
     // The v13 step creates the planner table and its index.
     expect(await _indexTable(store.db, 'idx_plan_blocks_day_start'),
@@ -792,7 +792,7 @@ void main() {
     await store.db.close();
 
     store = await AppStore.open(prefs, path: path);
-    expect(await store.db.getVersion(), 13);
+    expect(await store.db.getVersion(), 14);
     await store.db.close();
   });
 }
