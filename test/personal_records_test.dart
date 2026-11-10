@@ -179,16 +179,19 @@ void main() {
       expect(result.isPr, isFalse);
     });
 
-    test('a zero-e1RM set (0 kg logged) never flags', () {
+    test('a bodyweight (0 kg) set is assessed on reps, not e1RM', () {
       final result = assessPr(
         weightKg: 0,
-        reps: 5,
+        reps: 10,
         isWarmup: false,
         priorBestKg: 0,
         earlierSets: const [],
       );
-      expect(result.isPr, isFalse,
-          reason: '0 kg carries no signal, matching e1rmMaxOf on empty input');
+      expect(result.isPr, isTrue,
+          reason: 'the first-ever bodyweight set establishes the rep baseline');
+      expect(result.prReps, 10);
+      expect(result.e1rmKg, isNull,
+          reason: 'a 0 kg set has no e1RM signal to store');
     });
 
     test('negative weights never qualify', () {
@@ -510,12 +513,13 @@ void main() {
       // Rewind to a genuine v11 shape: no PR columns at all.
       await store.db.execute('ALTER TABLE workout_sets DROP COLUMN is_pr');
       await store.db.execute('ALTER TABLE workout_sets DROP COLUMN pr_e1rm_kg');
+      await store.db.execute('ALTER TABLE workout_sets DROP COLUMN pr_reps');
       await store.db.setVersion(11);
       await store.db.close();
 
       store = await AppStore.open(await SharedPreferences.getInstance(),
           path: path);
-      expect(await store.db.getVersion(), 13);
+      expect(await store.db.getVersion(), 14);
 
       final sets = await store.db.query('workout_sets');
       expect(sets, hasLength(2), reason: 'every set must survive the upgrade');
@@ -523,6 +527,8 @@ void main() {
         expect(set['is_pr'], 0,
             reason: 'a migrated row must never be marked as a PR');
         expect(set['pr_e1rm_kg'], isNull);
+        expect(set['pr_reps'], isNull,
+            reason: 'a migrated row must never gain a rep snapshot');
       }
       // The values themselves are untouched.
       final activeSet = sets.firstWhere((s) => s['weight_kg'] == 120.0);

@@ -101,9 +101,13 @@ class WorkoutSet {
   /// recomputing against a moving baseline.
   final bool isPr;
 
-  /// The e1RM snapshot stored with a PR set, in kg. Null for non-PR sets and
-  /// for rows written before schema v12.
+  /// The e1RM snapshot stored with a PR set, in kg. Null for non-PR sets, for
+  /// bodyweight rep PRs and for rows written before schema v12.
   final double? prE1rmKg;
+
+  /// The rep snapshot stored with a bodyweight (0 kg) PR. Null for non-PR sets,
+  /// for weighted PRs and for rows written before schema v14.
+  final int? prReps;
 
   const WorkoutSet({
     required this.id,
@@ -115,6 +119,7 @@ class WorkoutSet {
     this.isWarmup = false,
     this.isPr = false,
     this.prE1rmKg,
+    this.prReps,
   });
 
   Map<String, Object?> toMap() => {
@@ -127,6 +132,7 @@ class WorkoutSet {
         'is_warmup': isWarmup ? 1 : 0,
         'is_pr': isPr ? 1 : 0,
         'pr_e1rm_kg': prE1rmKg,
+        'pr_reps': prReps,
       };
 
   factory WorkoutSet.fromMap(Map<String, Object?> m) => WorkoutSet(
@@ -141,6 +147,8 @@ class WorkoutSet {
         // columns; treat it as a non-PR set rather than throwing.
         isPr: (m['is_pr'] as int? ?? 0) == 1,
         prE1rmKg: (m['pr_e1rm_kg'] as num?)?.toDouble(),
+        // Likewise for the v14 rep snapshot.
+        prReps: (m['pr_reps'] as num?)?.toInt(),
       );
 }
 

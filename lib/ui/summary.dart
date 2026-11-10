@@ -199,6 +199,16 @@ class _SummaryScreenState extends State<SummaryScreen> {
   }
 
   String _prDetail(PrSummary pr, WeightUnit unit) {
+    if (pr.isRepBased) {
+      // A bodyweight PR is a rep record: there is no e1RM to show for a 0 kg
+      // set, so the row reads in reps.
+      final newBest = '${pr.newBestReps} reps';
+      if (pr.isBaseline) return 'First PR · $newBest';
+      final previous = '${pr.previousBestReps} reps';
+      final delta = pr.deltaReps;
+      return 'Previous best $previous → new best $newBest '
+          '(${delta >= 0 ? '+' : ''}$delta reps)';
+    }
     final newBest = '${trimZero(fromKg(pr.newBestKg, unit))} ${unit.label}';
     if (pr.isBaseline) return 'First PR · $newBest';
     final previous =
@@ -288,10 +298,16 @@ class _SummaryScreenState extends State<SummaryScreen> {
     final weight = trimZero(fromKg(set.weightKg, store.unit));
     final detail = '$weight ${store.unit.label} × ${set.reps} reps';
     final status = done ? 'Completed' : 'Not completed';
-    final prLabel = set.isPr
-        ? ', personal record'
-            '${set.prE1rmKg == null ? '' : ' at ${trimZero(fromKg(set.prE1rmKg!, store.unit))} ${store.unit.label} estimated 1RM'}'
-        : '';
+    // A bodyweight PR is a rep record; a weighted one carries an e1RM snapshot.
+    final prLabel = !set.isPr
+        ? ''
+        : set.prReps != null
+            ? ', personal record at ${set.prReps} reps'
+            : set.prE1rmKg == null
+                ? ', personal record'
+                : ', personal record at '
+                    '${trimZero(fromKg(set.prE1rmKg!, store.unit))} '
+                    '${store.unit.label} estimated 1RM';
 
     return Semantics(
       container: true,
